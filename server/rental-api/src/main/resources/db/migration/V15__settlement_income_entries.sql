@@ -1,0 +1,23 @@
+CREATE TABLE settlement_income_entry (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  entry_no VARCHAR(64) NOT NULL,
+  order_id BIGINT NOT NULL,
+  snapshot_id BIGINT NOT NULL,
+  merchant_id BIGINT NOT NULL,
+  store_id BIGINT NOT NULL,
+  beneficiary_type VARCHAR(32) NOT NULL,
+  beneficiary_id BIGINT NULL,
+  line_type VARCHAR(64) NOT NULL,
+  amount DECIMAL(12,2) NOT NULL,
+  entry_status VARCHAR(32) NOT NULL,
+  remark VARCHAR(255) NULL,
+  settled_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_settlement_entry_line (snapshot_id, beneficiary_type, beneficiary_id, line_type),
+  UNIQUE KEY uk_settlement_entry_no (entry_no),
+  KEY idx_settlement_entry_order (order_id),
+  KEY idx_settlement_entry_beneficiary (beneficiary_type, beneficiary_id),
+  KEY idx_settlement_entry_store (store_id),
+  KEY idx_settlement_entry_status (entry_status)
+);

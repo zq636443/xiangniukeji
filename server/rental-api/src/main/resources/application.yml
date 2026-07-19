@@ -1,0 +1,62 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rental-api
+  datasource:
+    url: jdbc:mysql://localhost:3306/xniu_rental?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+mybatis:
+  mapper-locations: classpath*:mappers/**/*.xml
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+xniu:
+  alipay:
+    app-id: ${ALIPAY_APP_ID:}
+    private-key: ${ALIPAY_PRIVATE_KEY:}
+    alipay-public-key: ${ALIPAY_PUBLIC_KEY:}
+    notify-url: ${ALIPAY_NOTIFY_URL:}
+    agreement-notify-url: ${ALIPAY_AGREEMENT_NOTIFY_URL:}
+    agreement-return-url: ${ALIPAY_AGREEMENT_RETURN_URL:}
+    agreement-personal-product-code: ${ALIPAY_AGREEMENT_PERSONAL_PRODUCT_CODE:}
+    agreement-sign-scene: ${ALIPAY_AGREEMENT_SIGN_SCENE:}
+    fund-auth-notify-url: ${ALIPAY_FUND_AUTH_NOTIFY_URL:}
+    fund-auth-product-code: ${ALIPAY_FUND_AUTH_PRODUCT_CODE:PRE_AUTH_ONLINE}
+    fund-auth-scene-code: ${ALIPAY_FUND_AUTH_SCENE_CODE:RENT_CAR}
+    fund-auth-pay-product-code: ${ALIPAY_FUND_AUTH_PAY_PRODUCT_CODE:PRE_AUTH}
+    fund-auth-pay-scene: ${ALIPAY_FUND_AUTH_PAY_SCENE:bar_code}
+    mini-app-store-page: ${ALIPAY_MINI_APP_STORE_PAGE:pages/index/index}
+    mini-app-qr-size: ${ALIPAY_MINI_APP_QR_SIZE:s}
+    server-url: ${ALIPAY_SERVER_URL:https://openapi.alipay.com/gateway.do}
+    charset: UTF-8
+    sign-type: RSA2
+  voucher:
+    mock-enabled: ${VOUCHER_MOCK_ENABLED:true}
+    douyin-prepare-url: ${DOUYIN_CERTIFICATE_PREPARE_URL:}
+    douyin-verify-url: ${DOUYIN_CERTIFICATE_VERIFY_URL:}
+    douyin-query-url: ${DOUYIN_CERTIFICATE_QUERY_URL:}
+    meituan-prepare-url: ${MEITUAN_COUPON_PREPARE_URL:}
+    meituan-consume-url: ${MEITUAN_COUPON_CONSUME_URL:}
+    meituan-query-url: ${MEITUAN_COUPON_QUERY_URL:}

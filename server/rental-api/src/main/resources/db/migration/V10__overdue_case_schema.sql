@@ -1,0 +1,40 @@
+CREATE TABLE rental_overdue_case (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  case_no VARCHAR(64) NOT NULL,
+  stat_month VARCHAR(7) NOT NULL,
+  order_id BIGINT NOT NULL,
+  bill_id BIGINT NOT NULL,
+  user_account_id BIGINT NULL,
+  merchant_id BIGINT NOT NULL,
+  store_id BIGINT NOT NULL,
+  store_sku_id BIGINT NOT NULL,
+  sku_id BIGINT NOT NULL,
+  overdue_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  unpaid_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  fail_count INT NOT NULL DEFAULT 0,
+  last_fail_reason VARCHAR(255) NULL,
+  last_deduct_at DATETIME NULL,
+  overdue_status VARCHAR(32) NOT NULL,
+  collection_status VARCHAR(32) NOT NULL,
+  collection_remark VARCHAR(500) NULL,
+  resolved_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_overdue_case_no (case_no),
+  UNIQUE KEY uk_overdue_case_bill (bill_id),
+  KEY idx_overdue_month (stat_month),
+  KEY idx_overdue_order (order_id),
+  KEY idx_overdue_store (store_id),
+  KEY idx_overdue_status (overdue_status),
+  KEY idx_overdue_collection_status (collection_status)
+);
+
+CREATE TABLE rental_overdue_collection_log (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  overdue_case_id BIGINT NOT NULL,
+  collection_status VARCHAR(32) NOT NULL,
+  operator_account_id BIGINT NULL,
+  remark VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_overdue_collection_case (overdue_case_id)
+);

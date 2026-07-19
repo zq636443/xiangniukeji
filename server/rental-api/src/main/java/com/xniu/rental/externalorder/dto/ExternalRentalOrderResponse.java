@@ -1,0 +1,48 @@
+package com.xniu.rental.externalorder.dto;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+
+public record ExternalRentalOrderResponse(
+    Long id,
+    String recordNo,
+    String sourcePlatform,
+    String externalOrderNo,
+    Long merchantId,
+    String merchantName,
+    Long storeId,
+    String storeName,
+    Long storeSkuId,
+    String storeSkuDisplayName,
+    Long skuId,
+    String skuName,
+    Long packageId,
+    String packageName,
+    String customerName,
+    String customerPhone,
+    Long frameAssetId,
+    String frameAssetSerialNo,
+    Long batteryAssetId,
+    String batteryAssetSerialNo,
+    String orderStatus,
+    BigDecimal externalRentalAmount,
+    BigDecimal signFeeAmount,
+    BigDecimal depositAmount,
+    String leaseUnit,
+    Integer leaseValue,
+    Integer totalPeriods,
+    LocalDateTime rentStartedAt,
+    LocalDateTime expectedReturnAt,
+    LocalDateTime finishedAt,
+    Long returnStoreId,
+    String returnStoreName,
+    String terminationReason,
+    String remark,
+    Long createdByAccountId,
+    Long updatedByAccountId,
+    LocalDateTime createdAt,
+    LocalDateTime updatedAt,
+    List<ExternalRentalOrderLogResponse> logs
+) {
+}

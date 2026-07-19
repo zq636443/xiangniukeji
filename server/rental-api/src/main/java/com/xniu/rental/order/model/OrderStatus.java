@@ -1,0 +1,17 @@
+package com.xniu.rental.order.model;
+
+public enum OrderStatus {
+    PENDING_PAYMENT,
+    PENDING_REAL_NAME,
+    PENDING_AGREEMENT,
+    PENDING_DEPOSIT_AUTH,
+    PENDING_VERIFY,
+    PENDING_PICKUP,
+    RENTING,
+    PENDING_RETURN,
+    OVERDUE,
+    PENDING_SUPPLEMENT,
+    COMPLETED,
+    CANCELLED,
+    EXCEPTION
+}

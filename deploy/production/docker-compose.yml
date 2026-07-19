@@ -1,0 +1,76 @@
+services:
+  xniu-mysql:
+    image: docker.m.daocloud.io/library/mysql:8.0
+    container_name: xniu-mysql-prod
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-xniu_root_2026}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-xniu_rental}
+      MYSQL_USER: ${MYSQL_USER:-xniu}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-xniu_app_2026}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - xniu_mysql_data:/var/lib/mysql
+    networks:
+      - xniu-net
+
+  xniu-redis:
+    image: docker.m.daocloud.io/library/redis:7-alpine
+    container_name: xniu-redis-prod
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - xniu_redis_data:/data
+    networks:
+      - xniu-net
+
+  xniu-api:
+    build:
+      context: ./api
+    container_name: xniu-api-prod
+    restart: unless-stopped
+    depends_on:
+      - xniu-mysql
+      - xniu-redis
+    environment:
+      SERVER_PORT: 8080
+      SPRING_DATASOURCE_URL: jdbc:mysql://xniu-mysql:3306/${MYSQL_DATABASE:-xniu_rental}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-xniu}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-xniu_app_2026}
+      SPRING_DATA_REDIS_HOST: xniu-redis
+      SPRING_DATA_REDIS_PORT: 6379
+      ALIPAY_APP_ID: ${ALIPAY_APP_ID:-}
+      ALIPAY_PRIVATE_KEY: ${ALIPAY_PRIVATE_KEY:-}
+      ALIPAY_PUBLIC_KEY: ${ALIPAY_PUBLIC_KEY:-}
+      ALIPAY_NOTIFY_URL: ${ALIPAY_NOTIFY_URL:-}
+      ALIPAY_AGREEMENT_NOTIFY_URL: ${ALIPAY_AGREEMENT_NOTIFY_URL:-}
+      ALIPAY_AGREEMENT_RETURN_URL: ${ALIPAY_AGREEMENT_RETURN_URL:-}
+      ALIPAY_AGREEMENT_PERSONAL_PRODUCT_CODE: ${ALIPAY_AGREEMENT_PERSONAL_PRODUCT_CODE:-}
+      ALIPAY_AGREEMENT_SIGN_SCENE: ${ALIPAY_AGREEMENT_SIGN_SCENE:-}
+      ALIPAY_FUND_AUTH_NOTIFY_URL: ${ALIPAY_FUND_AUTH_NOTIFY_URL:-}
+      ALIPAY_MINI_APP_STORE_PAGE: ${ALIPAY_MINI_APP_STORE_PAGE:-pages/index/index}
+    ports:
+      - "8090:8080"
+    networks:
+      - xniu-net
+
+  xniu-admin:
+    build:
+      context: ./admin
+    container_name: xniu-admin-prod
+    restart: unless-stopped
+    depends_on:
+      - xniu-api
+    ports:
+      - "8088:80"
+    networks:
+      - xniu-net
+
+networks:
+  xniu-net:
+
+volumes:
+  xniu_mysql_data:
+  xniu_redis_data:
