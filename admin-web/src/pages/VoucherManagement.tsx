@@ -5,6 +5,7 @@ import { http } from '../services/request';
 import type { StoreSku, VoucherRecord } from '../types/api';
 
 type ExceptionForm = { reason: string };
+type VerificationAmountForm = { verificationAmount: number };
 type XianyuIssueForm = {
   voucherCode: string;
   storeSkuId: number;
@@ -18,12 +19,15 @@ export function VoucherManagement() {
   const [storeSkus, setStoreSkus] = useState<StoreSku[]>([]);
   const [selected, setSelected] = useState<VoucherRecord | null>(null);
   const [exceptionOpen, setExceptionOpen] = useState(false);
+  const [amountOpen, setAmountOpen] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [issuing, setIssuing] = useState(false);
+  const [amountSaving, setAmountSaving] = useState(false);
   const [platform, setPlatform] = useState<string>();
   const [status, setStatus] = useState<string>();
   const [form] = Form.useForm<ExceptionForm>();
+  const [amountForm] = Form.useForm<VerificationAmountForm>();
   const [issueForm] = Form.useForm<XianyuIssueForm>();
 
   async function loadData() {
@@ -71,6 +75,22 @@ export function VoucherManagement() {
       message.error(error instanceof Error ? error.message : '闲鱼核销码下发失败');
     } finally {
       setIssuing(false);
+    }
+  }
+
+  async function updateVerificationAmount(values: VerificationAmountForm) {
+    if (!selected) return;
+    setAmountSaving(true);
+    try {
+      await http.post(`/api/admin/vouchers/${selected.id}/verification-amount`, values);
+      setAmountOpen(false);
+      amountForm.resetFields();
+      message.success('核销金额已更新');
+      await loadData();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '核销金额更新失败');
+    } finally {
+      setAmountSaving(false);
     }
   }
 
@@ -132,15 +152,30 @@ export function VoucherManagement() {
             { title: '门店', dataIndex: 'storeId' },
             { title: '订单', dataIndex: 'orderId', render: (value) => value || '-' },
             { title: '签单费账单', dataIndex: 'signFeeBillId', render: (value) => value || '-' },
-            { title: '核销金额', dataIndex: 'voucherAmount', render: money },
+            { title: '参考金额', dataIndex: 'voucherAmount', render: money },
+            { title: '核销金额', dataIndex: 'verificationAmount', render: (value) => value == null ? <Tag color="orange">待补录</Tag> : money(value) },
             { title: '签单费', dataIndex: 'signFeeAmount', render: money },
             { title: '失败原因', dataIndex: 'failureReason', render: (value) => value || '-' },
             {
               title: '操作',
               render: (_, record) => (
-                <Button size="small" onClick={() => { setSelected(record); setExceptionOpen(true); }}>
-                  标异常
-                </Button>
+                <Space>
+                  {!record.orderId && !['CONSUMING', 'CONSUMED'].includes(record.verifyStatus) && (
+                    <Button size="small" onClick={() => {
+                      setSelected(record);
+                      amountForm.resetFields();
+                      if (record.verificationAmount != null) {
+                        amountForm.setFieldValue('verificationAmount', record.verificationAmount);
+                      }
+                      setAmountOpen(true);
+                    }}>
+                      填核销金额
+                    </Button>
+                  )}
+                  <Button size="small" onClick={() => { setSelected(record); setExceptionOpen(true); }}>
+                    标异常
+                  </Button>
+                </Space>
               )
             }
           ]}
@@ -149,6 +184,20 @@ export function VoucherManagement() {
       <Modal title="标记异常核销" open={exceptionOpen} onCancel={() => setExceptionOpen(false)} onOk={() => form.submit()} destroyOnHidden>
         <Form form={form} layout="vertical" onFinish={markException}>
           <Form.Item name="reason" label="异常原因" rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        title="填写核销金额"
+        open={amountOpen}
+        onCancel={() => setAmountOpen(false)}
+        onOk={() => amountForm.submit()}
+        confirmLoading={amountSaving}
+        destroyOnHidden
+      >
+        <Form form={amountForm} layout="vertical" onFinish={updateVerificationAmount}>
+          <Form.Item name="verificationAmount" label="实际核销金额" rules={[{ required: true, message: '请输入实际核销金额' }]}>
+            <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+          </Form.Item>
         </Form>
       </Modal>
       <Modal
@@ -174,7 +223,7 @@ export function VoucherManagement() {
               }}
             />
           </Form.Item>
-          <Form.Item name="packageId" label="套餐" rules={[{ required: true, message: '请选择套餐' }]}>
+          <Form.Item name="packageId" label="SKU" rules={[{ required: true, message: '请选择 SKU' }]}>
             <Select
               showSearch
               optionFilterProp="label"
@@ -185,11 +234,11 @@ export function VoucherManagement() {
               }}
             />
           </Form.Item>
-          <Form.Item name="voucherAmount" label="闲鱼成交金额" rules={[{ required: true, message: '请输入闲鱼成交金额' }]}>
+          <Form.Item name="voucherAmount" label="闲鱼成交/核销金额" rules={[{ required: true, message: '请输入闲鱼成交金额' }]}>
             <InputNumber min={0} precision={2} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="voucherTitle" label="标题">
-            <Input placeholder="可空，默认使用门店商品和套餐名称" />
+            <Input placeholder="可空，默认使用门店商品和 SKU 名称" />
           </Form.Item>
         </Form>
       </Modal>
@@ -197,7 +246,7 @@ export function VoucherManagement() {
   );
 }
 
-function money(value: number) {
+function money(value?: number | null) {
   return `¥${Number(value || 0).toFixed(2)}`;
 }
 

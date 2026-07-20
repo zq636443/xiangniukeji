@@ -24,6 +24,7 @@ import com.xniu.rental.merchant.repository.MerchantRepository;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.pay.config.AlipayProperties;
 import com.xniu.rental.pay.service.AlipayGatewayClient;
+import com.xniu.rental.settlement.service.SettlementService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -42,6 +43,7 @@ public class MerchantService {
     private final PasswordHasher passwordHasher;
     private final AlipayGatewayClient alipayGatewayClient;
     private final AlipayProperties alipayProperties;
+    private final SettlementService settlementService;
 
     public MerchantService(
         MerchantRepository merchantRepository,
@@ -52,7 +54,8 @@ public class MerchantService {
         AuthorizationService authorizationService,
         PasswordHasher passwordHasher,
         AlipayGatewayClient alipayGatewayClient,
-        AlipayProperties alipayProperties
+        AlipayProperties alipayProperties,
+        SettlementService settlementService
     ) {
         this.merchantRepository = merchantRepository;
         this.storeRepository = storeRepository;
@@ -63,6 +66,7 @@ public class MerchantService {
         this.passwordHasher = passwordHasher;
         this.alipayGatewayClient = alipayGatewayClient;
         this.alipayProperties = alipayProperties;
+        this.settlementService = settlementService;
     }
 
     public List<MerchantResponse> listMerchants(String keyword) {
@@ -128,6 +132,7 @@ public class MerchantService {
             request.latitude(),
             qrContent
         );
+        settlementService.initializeStoreProfitRule(store.id());
         return toResponse(store);
     }
 
@@ -164,7 +169,6 @@ public class MerchantService {
         addBlocker(blockers, "员工账号", storeRepository.countBoundAccounts(id));
         addBlocker(blockers, "账号门店授权", storeRepository.countStoreScopes(id));
         addBlocker(blockers, "门店商品", storeRepository.countStoreSkus(id));
-        addBlocker(blockers, "分润规则", storeRepository.countSettlementRules(id));
         addBlocker(blockers, "在库资产", storeRepository.countCurrentAssets(id));
         addBlocker(blockers, "租赁订单", storeRepository.countOrders(id));
         addBlocker(blockers, "补录订单", storeRepository.countExternalOrders(id));
@@ -175,6 +179,7 @@ public class MerchantService {
         if (!blockers.isEmpty()) {
             throw BusinessException.badRequest("门店仍存在关联数据，暂不可删除：" + String.join("、", blockers));
         }
+        settlementService.deleteStoreProfitRules(id);
         storeRepository.deleteById(id);
     }
 

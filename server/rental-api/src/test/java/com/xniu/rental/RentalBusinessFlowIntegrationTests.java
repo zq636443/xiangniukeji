@@ -2,32 +2,53 @@ package com.xniu.rental;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 import com.xniu.rental.asset.dto.AssetMaintenancePartRequest;
 import com.xniu.rental.asset.dto.AssetMaintenanceRequest;
 import com.xniu.rental.asset.dto.AssetPickupRequest;
+import com.xniu.rental.asset.dto.AssetReplaceRequest;
 import com.xniu.rental.asset.dto.AssetReturnRequest;
 import com.xniu.rental.asset.dto.SparePartStockAdjustRequest;
 import com.xniu.rental.asset.service.AssetFulfillmentService;
 import com.xniu.rental.asset.service.MaintenanceService;
 import com.xniu.rental.auth.dto.CurrentAccountResponse;
+import com.xniu.rental.auth.dto.StoreScopeResponse;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.CurrentAccount;
+import com.xniu.rental.bill.model.BillStatus;
+import com.xniu.rental.bill.model.BillType;
+import com.xniu.rental.bill.repository.BillRepository;
 import com.xniu.rental.bill.service.BillService;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.order.dto.OrderCreateRequest;
 import com.xniu.rental.order.dto.OrderTransitionRequest;
+import com.xniu.rental.order.service.OrderRenewalService;
 import com.xniu.rental.order.service.OrderService;
+import com.xniu.rental.pay.service.AlipayGatewayClient;
+import com.xniu.rental.pay.service.AgreementDeductService;
 import com.xniu.rental.settlement.service.SettlementIncomeService;
+import com.xniu.rental.settlement.service.SettlementService;
 import com.xniu.rental.settlement.service.SettlementStatementService;
+import com.xniu.rental.settlement.dto.SettlementPreviewRequest;
+import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
+import com.xniu.rental.settlement.dto.StoreProfitRuleUpdateRequest;
+import com.xniu.rental.voucher.dto.VoucherPrepareRequest;
+import com.xniu.rental.voucher.dto.VoucherVerificationAmountRequest;
+import com.xniu.rental.voucher.service.VoucherService;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Map;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +65,18 @@ class RentalBusinessFlowIntegrationTests {
     private BillService billService;
 
     @Autowired
+    private BillRepository billRepository;
+
+    @Autowired
+    private OrderRenewalService orderRenewalService;
+
+    @Autowired
+    private AgreementDeductService agreementDeductService;
+
+    @MockBean
+    private AlipayGatewayClient alipayGatewayClient;
+
+    @Autowired
     private AssetFulfillmentService assetFulfillmentService;
 
     @Autowired
@@ -53,7 +86,13 @@ class RentalBusinessFlowIntegrationTests {
     private SettlementIncomeService settlementIncomeService;
 
     @Autowired
+    private SettlementService settlementService;
+
+    @Autowired
     private SettlementStatementService settlementStatementService;
+
+    @Autowired
+    private VoucherService voucherService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -86,8 +125,16 @@ class RentalBusinessFlowIntegrationTests {
 
     @Test
     void rentalOrderBillingAssetReturnAndIncomeLedgerStayConsistent() {
+        jdbcTemplate.update(
+            "UPDATE sys_account SET display_name = ?, phone = ? WHERE id = ?",
+            "张三",
+            "13800138000",
+            1001L
+        );
         var order = orderService.createOrder(new OrderCreateRequest(
             1001L,
+            "张三",
+            "13800138000",
             1L,
             3L,
             1L,
@@ -96,8 +143,38 @@ class RentalBusinessFlowIntegrationTests {
         ));
 
         assertThat(order.orderStatus()).isEqualTo("PENDING_PAYMENT");
+        assertThat(order.customerName()).isEqualTo("张三");
+        assertThat(order.customerPhone()).isEqualTo("13800138000");
+        assertThat(order.storeName()).isEqualTo("演示门店");
+        assertThat(order.storeSkuName()).isNotBlank();
+        assertThat(order.packageName()).isNotBlank();
+        assertThat(order.frameAssetCode()).isEqualTo("A-frame-demo-001");
+        assertThat(order.frameSerialNo()).isEqualTo("FRAME-DEMO-001");
+        assertThat(order.batteryAssetCode()).isEqualTo("A-battery-demo-001");
+        assertThat(order.batterySerialNo()).isEqualTo("BATTERY-DEMO-001");
         assertThat(order.payableAmount()).isEqualByComparingTo(new BigDecimal("1029.00"));
         assertThat(order.settlementSnapshotId()).isNotNull();
+        var snapshot = jdbcTemplate.queryForMap(
+            """
+            SELECT calculation_version, source_channel, settlement_base_amount,
+                   channel_fee_amount, platform_fee_amount, distributable_amount,
+                   store_operation_amount, maintenance_fund_amount, channel_referral_amount,
+                   investor_share_amount
+            FROM settlement_rule_snapshot
+            WHERE id = ?
+            """,
+            order.settlementSnapshotId()
+        );
+        assertThat(snapshot.get("calculation_version")).isEqualTo("PROFIT_V2");
+        assertThat(snapshot.get("source_channel")).isEqualTo("DIRECT");
+        assertThat(snapshot.get("settlement_base_amount")).isEqualTo(new BigDecimal("999.00"));
+        assertThat(snapshot.get("channel_fee_amount")).isEqualTo(new BigDecimal("49.95"));
+        assertThat(snapshot.get("platform_fee_amount")).isEqualTo(new BigDecimal("29.97"));
+        assertThat(snapshot.get("distributable_amount")).isEqualTo(new BigDecimal("919.08"));
+        assertThat(snapshot.get("store_operation_amount")).isEqualTo(new BigDecimal("137.86"));
+        assertThat(snapshot.get("maintenance_fund_amount")).isEqualTo(new BigDecimal("91.91"));
+        assertThat(snapshot.get("channel_referral_amount")).isEqualTo(new BigDecimal("183.82"));
+        assertThat(snapshot.get("investor_share_amount")).isEqualTo(new BigDecimal("505.49"));
         assertThat(order.items())
             .extracting("itemType")
             .containsExactlyInAnyOrder("SKU", "SIGN_FEE", "ASSET_FRAME", "ASSET_BATTERY");
@@ -144,13 +221,27 @@ class RentalBusinessFlowIntegrationTests {
         assertThat(income.entries())
             .extracting("lineType")
             .contains(
-                "MERCHANT_ORDER_FEE",
-                "MERCHANT_RENT_SHARE",
-                "PLATFORM_RENT_SHARE",
-                "PLATFORM_OPERATION_FEE",
-                "MAINTENANCE_FEE",
-                "INVESTOR_NET_RENT"
+                "CHANNEL_VERIFICATION_FEE",
+                "PLATFORM_SERVICE_FEE",
+                "STORE_OPERATION_SHARE",
+                "MAINTENANCE_FUND_SHARE",
+                "CHANNEL_REFERRAL_SHARE",
+                "INVESTOR_SHARE"
             );
+        var incomeAmounts = income.entries().stream().collect(java.util.stream.Collectors.toMap(
+            entry -> entry.lineType(),
+            entry -> entry.amount()
+        ));
+        assertThat(incomeAmounts).containsAllEntriesOf(Map.of(
+            "CHANNEL_VERIFICATION_FEE", new BigDecimal("49.95"),
+            "PLATFORM_SERVICE_FEE", new BigDecimal("29.97"),
+            "STORE_OPERATION_SHARE", new BigDecimal("137.86"),
+            "MAINTENANCE_FUND_SHARE", new BigDecimal("91.91"),
+            "CHANNEL_REFERRAL_SHARE", new BigDecimal("183.82"),
+            "INVESTOR_SHARE", new BigDecimal("505.49")
+        ));
+        assertThat(incomeAmounts.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add))
+            .isEqualByComparingTo(new BigDecimal("999.00"));
         assertThat(income.entries())
             .filteredOn(entry -> "INVESTOR".equals(entry.beneficiaryType()))
             .singleElement()
@@ -162,6 +253,479 @@ class RentalBusinessFlowIntegrationTests {
         var repeatedIncome = settlementIncomeService.generateForOrder(order.id());
         assertThat(repeatedIncome.createdCount()).isZero();
         assertThat(repeatedIncome.entries()).hasSameSizeAs(income.entries());
+    }
+
+    @Test
+    void merchantCanShipPendingPaymentOrderWithoutWaitingForPayment() {
+        var order = orderService.createOrder(new OrderCreateRequest(
+            1003L,
+            1L,
+            2L,
+            1L,
+            2L,
+            LocalDateTime.of(2026, 7, 2, 10, 0)
+        ));
+
+        assertThat(order.orderStatus()).isEqualTo("PENDING_PAYMENT");
+        assertThat(order.paidAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+
+        var handover = assetFulfillmentService.shipWithoutPayment(
+            order.id(),
+            new AssetPickupRequest(null, null, "merchant ships before payment")
+        );
+
+        assertThat(handover.handoverType()).isEqualTo("PICKUP");
+        assertThat(orderStatus(order.id())).isEqualTo("RENTING");
+        assertThat(assetStatus(1L)).isEqualTo("RENTING");
+        assertThat(assetStatus(2L)).isEqualTo("RENTING");
+        assertThat(jdbcTemplate.queryForObject("SELECT paid_amount FROM rental_order WHERE id = ?", BigDecimal.class, order.id()))
+            .isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void integratedVehicleOrderShouldOnlyBindFrameSlotThroughPickupAndReturn() {
+        var integratedAssetId = insertIntegratedVehicle("A-integrated-direct", "FRAME-INTEGRATED-DIRECT");
+
+        assertThatThrownBy(() -> orderService.createOrder(new OrderCreateRequest(
+            null,
+            "一体车客户",
+            "13800138888",
+            1L,
+            2L,
+            integratedAssetId,
+            2L,
+            null
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("无需再选择电池资产");
+
+        var order = orderService.createOrder(new OrderCreateRequest(
+            null,
+            "一体车客户",
+            "13800138888",
+            1L,
+            2L,
+            integratedAssetId,
+            null,
+            null
+        ));
+
+        assertThat(order.frameAssetId()).isEqualTo(integratedAssetId);
+        assertThat(order.batteryAssetId()).isNull();
+        assertThat(order.items()).extracting("itemType").contains("ASSET_FRAME").doesNotContain("ASSET_BATTERY");
+
+        transition(order.id(), "PENDING_REAL_NAME");
+        transition(order.id(), "PENDING_AGREEMENT");
+        transition(order.id(), "PENDING_DEPOSIT_AUTH");
+        transition(order.id(), "PENDING_VERIFY");
+        transition(order.id(), "PENDING_PICKUP");
+
+        var pickup = assetFulfillmentService.pickup(order.id(), new AssetPickupRequest(null, null, "一体车取车"));
+
+        assertThat(pickup.frameAssetId()).isEqualTo(integratedAssetId);
+        assertThat(pickup.batteryAssetId()).isNull();
+        assertThat(assetStatus(integratedAssetId)).isEqualTo("RENTING");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT asset_type FROM order_asset_usage WHERE order_id = ? AND usage_status = 'ACTIVE'",
+            String.class,
+            order.id()
+        )).isEqualTo("INTEGRATED_VEHICLE");
+
+        assetFulfillmentService.returnAssets(order.id(), new AssetReturnRequest(null, "IDLE", null, "一体车归还"));
+
+        assertThat(assetStatus(integratedAssetId)).isEqualTo("IDLE");
+        assertThat(orderStatus(order.id())).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void replacingFrameWithIntegratedVehicleShouldReleaseIndependentBattery() {
+        var order = orderService.createOrder(new OrderCreateRequest(
+            null,
+            "换一体车客户",
+            "13800137777",
+            1L,
+            2L,
+            1L,
+            2L,
+            null
+        ));
+        transition(order.id(), "PENDING_REAL_NAME");
+        transition(order.id(), "PENDING_AGREEMENT");
+        transition(order.id(), "PENDING_DEPOSIT_AUTH");
+        transition(order.id(), "PENDING_VERIFY");
+        transition(order.id(), "PENDING_PICKUP");
+        assetFulfillmentService.pickup(order.id(), new AssetPickupRequest(null, null, "普通车取车"));
+
+        var integratedAssetId = insertIntegratedVehicle("A-integrated-replace", "FRAME-INTEGRATED-REPLACE");
+        assetFulfillmentService.replaceAsset(order.id(), new AssetReplaceRequest(
+            "VEHICLE_FRAME",
+            integratedAssetId,
+            "IDLE",
+            "换为车电一体"
+        ));
+
+        var boundAssets = jdbcTemplate.queryForMap(
+            "SELECT frame_asset_id, battery_asset_id FROM rental_order WHERE id = ?",
+            order.id()
+        );
+        assertThat(boundAssets.get("frame_asset_id")).isEqualTo(integratedAssetId);
+        assertThat(boundAssets.get("battery_asset_id")).isNull();
+        assertThat(assetStatus(1L)).isEqualTo("IDLE");
+        assertThat(assetStatus(2L)).isEqualTo("IDLE");
+        assertThat(assetStatus(integratedAssetId)).isEqualTo("RENTING");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM order_asset_usage WHERE order_id = ? AND usage_status = 'ACTIVE'",
+            Integer.class,
+            order.id()
+        )).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT asset_type FROM order_asset_usage WHERE order_id = ? AND usage_status = 'ACTIVE'",
+            String.class,
+            order.id()
+        )).isEqualTo("INTEGRATED_VEHICLE");
+    }
+
+    @Test
+    void orderIndexSearchShouldMatchCustomerPhoneAssetStoreAndSku() {
+        var order = orderService.createOrder(new OrderCreateRequest(
+            null,
+            "索引测试客户",
+            "13800132222",
+            1L,
+            2L,
+            1L,
+            2L,
+            null
+        ));
+
+        assertThat(orderService.listOrders(null, null, null, "索引测试客户"))
+            .extracting("id")
+            .contains(order.id());
+        assertThat(orderService.listOrders(null, null, null, "13800132222"))
+            .extracting("id")
+            .contains(order.id());
+        assertThat(orderService.listOrders(null, null, null, "FRAME-DEMO-001"))
+            .extracting("id")
+            .contains(order.id());
+        assertThat(orderService.listOrders(null, 1L, null, "演示门店"))
+            .extracting("id")
+            .contains(order.id());
+        assertThat(orderService.listOrders(null, null, null, "不存在的订单索引"))
+            .isEmpty();
+
+        setStoreAccount();
+        assertThat(orderService.listMerchantOrders(1L, null, "13800132222"))
+            .extracting("id")
+            .containsExactly(order.id());
+    }
+
+    @Test
+    void autoRenewalGeneratesSingleRenewalBillAndExtendsOrderAfterPayment() {
+        var order = orderService.createOrder(new OrderCreateRequest(
+            1004L,
+            1L,
+            2L,
+            1L,
+            2L,
+            LocalDateTime.of(2026, 7, 3, 10, 0)
+        ));
+
+        transition(order.id(), "PENDING_REAL_NAME");
+        transition(order.id(), "PENDING_AGREEMENT");
+        transition(order.id(), "PENDING_DEPOSIT_AUTH");
+        transition(order.id(), "PENDING_VERIFY");
+        transition(order.id(), "PENDING_PICKUP");
+        assetFulfillmentService.pickup(order.id(), new AssetPickupRequest(null, null, "auto renewal pickup"));
+
+        var dueAt = LocalDateTime.of(2026, 7, 15, 9, 0);
+        jdbcTemplate.update("UPDATE rental_order SET expected_return_at = ? WHERE id = ?", dueAt, order.id());
+
+        var generated = orderRenewalService.runDueRenewalsInternal(10, "integration auto renewal");
+
+        assertThat(generated.scannedCount()).isEqualTo(1);
+        assertThat(generated.generatedCount()).isEqualTo(1);
+        assertThat(generated.batchId()).isNotNull();
+        assertThat(orderStatus(order.id())).isEqualTo("OVERDUE");
+
+        var renewalBills = billRepository.listBills(null, order.id(), null).stream()
+            .filter(bill -> bill.billType() == BillType.RENEWAL)
+            .toList();
+        assertThat(renewalBills).hasSize(1);
+        var renewalBill = renewalBills.get(0);
+        assertThat(renewalBill.periodNo()).isEqualTo(2);
+        assertThat(renewalBill.billStatus()).isEqualTo(BillStatus.PENDING_PAYMENT);
+        assertThat(renewalBill.dueAt()).isEqualTo(dueAt);
+        assertThat(renewalBill.payableAmount()).isEqualByComparingTo(new BigDecimal("399.00"));
+        assertThat(billRepository.listItems(renewalBill.id()))
+            .singleElement()
+            .satisfies(item -> {
+                assertThat(item.itemType().name()).isEqualTo("RENEWAL_RENT");
+                assertThat(item.amount()).isEqualByComparingTo(new BigDecimal("399.00"));
+            });
+
+        var repeated = orderRenewalService.runDueRenewalsInternal(10, "repeat auto renewal scan");
+        assertThat(repeated.scannedCount()).isEqualTo(1);
+        assertThat(repeated.generatedCount()).isZero();
+
+        var paidBill = billRepository.markPaid(renewalBill.id(), renewalBill.payableAmount());
+        orderRenewalService.handlePaidBill(paidBill);
+
+        assertThat(orderStatus(order.id())).isEqualTo("RENTING");
+        assertThat(expectedReturnAt(order.id())).isEqualTo(dueAt.plusMonths(1));
+        assertThat(renewalCount(order.id())).isEqualTo(1);
+
+        var statementMonth = paidBill.paidAt().format(DateTimeFormatter.ofPattern("yyyy-MM"));
+        settlementStatementService.generateMonth(statementMonth);
+        assertThat(statementLineAmount(renewalBill.id(), "MERCHANT_RENT_SHARE"))
+            .isEqualByComparingTo(new BigDecimal("55.06"));
+        assertThat(statementLineAmount(renewalBill.id(), "INVESTOR_GROSS_RENT"))
+            .isEqualByComparingTo(new BigDecimal("201.89"));
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM settlement_statement_line WHERE bill_id = ? AND line_type = 'INVESTOR_OPERATION_FEE'",
+            Integer.class,
+            renewalBill.id()
+        )).isZero();
+    }
+
+    @Test
+    void automaticDeductBatchGeneratesRenewalAndCreatesOverdueCaseWithoutAgreement() {
+        var order = orderService.createOrder(new OrderCreateRequest(
+            1004L,
+            1L,
+            2L,
+            1L,
+            2L,
+            LocalDateTime.now().minusMonths(1)
+        ));
+
+        transition(order.id(), "PENDING_REAL_NAME");
+        transition(order.id(), "PENDING_AGREEMENT");
+        transition(order.id(), "PENDING_DEPOSIT_AUTH");
+        transition(order.id(), "PENDING_VERIFY");
+        transition(order.id(), "PENDING_PICKUP");
+        assetFulfillmentService.pickup(order.id(), new AssetPickupRequest(null, null, "deduct renewal pickup"));
+        jdbcTemplate.update(
+            "UPDATE rental_order SET expected_return_at = ? WHERE id = ?",
+            LocalDateTime.now().minusDays(1),
+            order.id()
+        );
+
+        var batch = agreementDeductService.runDueDeductInternal(10, "integration renewal deduct");
+
+        assertThat(batch.batchStatus()).isEqualTo("FINISHED");
+        assertThat(batch.plannedCount()).isEqualTo(1);
+        assertThat(batch.successCount()).isZero();
+        assertThat(batch.failedCount()).isEqualTo(1);
+        var renewalBills = billRepository.listBills(null, order.id(), null).stream()
+            .filter(bill -> bill.billType() == BillType.RENEWAL)
+            .toList();
+        assertThat(renewalBills).hasSize(1);
+        var renewalBill = renewalBills.getFirst();
+        assertThat(renewalBill.billStatus()).isEqualTo(BillStatus.FAILED);
+        assertThat(orderStatus(order.id())).isEqualTo("PENDING_SUPPLEMENT");
+        var overdueCase = jdbcTemplate.queryForMap(
+            "SELECT overdue_status, unpaid_amount, last_fail_reason FROM rental_overdue_case WHERE bill_id = ?",
+            renewalBill.id()
+        );
+        assertThat(overdueCase.get("overdue_status")).isEqualTo("OPEN");
+        assertThat(overdueCase.get("unpaid_amount")).isEqualTo(new BigDecimal("399.00"));
+        assertThat(overdueCase.get("last_fail_reason")).asString().contains("未找到有效支付宝扣款协议");
+    }
+
+    @Test
+    void automaticDeductWithSignedAgreementPaysRenewalAndExtendsOrder() {
+        var order = orderService.createOrder(new OrderCreateRequest(
+            1004L,
+            1L,
+            2L,
+            1L,
+            2L,
+            LocalDateTime.now().minusMonths(1)
+        ));
+
+        transition(order.id(), "PENDING_REAL_NAME");
+        transition(order.id(), "PENDING_AGREEMENT");
+        transition(order.id(), "PENDING_DEPOSIT_AUTH");
+        transition(order.id(), "PENDING_VERIFY");
+        transition(order.id(), "PENDING_PICKUP");
+        assetFulfillmentService.pickup(order.id(), new AssetPickupRequest(null, null, "signed agreement pickup"));
+        var dueAt = LocalDateTime.now().minusDays(1).withNano(0);
+        jdbcTemplate.update("UPDATE rental_order SET expected_return_at = ? WHERE id = ?", dueAt, order.id());
+        jdbcTemplate.update(
+            """
+            INSERT INTO rental_pay_agreement
+            (agreement_no, external_agreement_no, user_account_id, alipay_user_id, order_id,
+             merchant_id, store_id, agreement_type, agreement_status, personal_product_code,
+             sign_scene, max_single_amount, sign_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'CYCLE_PAY', 'SIGNED', ?, ?, ?, ?)
+            """,
+            "AGR-TEST-" + order.id(),
+            "EXT-TEST-" + order.id(),
+            1004L,
+            "2088-test-user",
+            order.id(),
+            1L,
+            1L,
+            "GENERAL_WITHHOLDING",
+            "INDUSTRY|CARRENTAL",
+            new BigDecimal("1000.00"),
+            LocalDateTime.now().minusDays(2)
+        );
+        when(alipayGatewayClient.payWithAgreement(
+            anyString(),
+            any(BigDecimal.class),
+            anyString(),
+            anyString(),
+            anyString()
+        )).thenReturn(new AlipayGatewayClient.TradePayResult("ALI-TRADE-TEST", "399.00"));
+
+        var batch = agreementDeductService.runDueDeductInternal(10, "integration signed renewal deduct");
+
+        assertThat(batch.plannedCount()).isEqualTo(1);
+        assertThat(batch.successCount()).isEqualTo(1);
+        assertThat(batch.failedCount()).isZero();
+        var renewalBill = billRepository.listBills(null, order.id(), null).stream()
+            .filter(bill -> bill.billType() == BillType.RENEWAL)
+            .findFirst()
+            .orElseThrow();
+        assertThat(renewalBill.billStatus()).isEqualTo(BillStatus.PAID);
+        assertThat(orderStatus(order.id())).isEqualTo("RENTING");
+        assertThat(expectedReturnAt(order.id())).isEqualTo(dueAt.plusMonths(1));
+        assertThat(renewalCount(order.id())).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT paid_amount FROM rental_order WHERE id = ?",
+            BigDecimal.class,
+            order.id()
+        )).isEqualByComparingTo(new BigDecimal("399.00"));
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT pay_status FROM rental_payment_order WHERE bill_id = ?",
+            String.class,
+            renewalBill.id()
+        )).isEqualTo("PAID");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT deduct_status FROM rental_deduct_record WHERE bill_id = ?",
+            String.class,
+            renewalBill.id()
+        )).isEqualTo("SUCCESS");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM rental_overdue_case WHERE bill_id = ?",
+            Integer.class,
+            renewalBill.id()
+        )).isZero();
+    }
+
+    @Test
+    void verificationAmountCanDifferFromSkuPriceAndBeFilledByStore() {
+        setUserAccount(2001L);
+        var prepared = voucherService.prepare(new VoucherPrepareRequest(
+            "DOUYIN",
+            "DY-TEST-" + System.nanoTime(),
+            1L,
+            2L,
+            null
+        ));
+
+        assertThat(prepared.voucherAmount()).isEqualByComparingTo(new BigDecimal("399.00"));
+        assertThat(prepared.verificationAmount()).isNull();
+
+        setStoreAccount();
+        var updated = voucherService.updateMerchantVerificationAmount(
+            prepared.id(),
+            new VoucherVerificationAmountRequest(new BigDecimal("321.45"))
+        );
+
+        assertThat(updated.verificationAmount()).isEqualByComparingTo(new BigDecimal("321.45"));
+
+        setUserAccount(2001L);
+        var verified = voucherService.verify(prepared.id());
+        var order = orderService.getUserOrder(verified.orderId());
+
+        assertThat(verified.voucherAmount()).isEqualByComparingTo(new BigDecimal("399.00"));
+        assertThat(verified.verificationAmount()).isEqualByComparingTo(new BigDecimal("321.45"));
+        assertThat(order.rentalAmount()).isEqualByComparingTo(new BigDecimal("321.45"));
+        assertThat(order.items())
+            .filteredOn(item -> "SKU".equals(item.itemType()))
+            .singleElement()
+            .satisfies(item -> assertThat(item.totalAmount()).isEqualByComparingTo(new BigDecimal("321.45")));
+
+        var snapshot = jdbcTemplate.queryForMap(
+            """
+            SELECT source_channel, settlement_base_amount, channel_fee_amount, platform_fee_amount,
+                   distributable_amount, store_operation_amount, maintenance_fund_amount,
+                   channel_referral_amount, investor_share_amount
+            FROM settlement_rule_snapshot
+            WHERE id = ?
+            """,
+            order.settlementSnapshotId()
+        );
+        assertThat(snapshot.get("source_channel")).isEqualTo("DOUYIN");
+        assertThat(snapshot.get("settlement_base_amount")).isEqualTo(new BigDecimal("321.45"));
+        assertThat(snapshot.get("channel_fee_amount")).isEqualTo(new BigDecimal("16.07"));
+        assertThat(snapshot.get("platform_fee_amount")).isEqualTo(new BigDecimal("9.64"));
+        assertThat(snapshot.get("distributable_amount")).isEqualTo(new BigDecimal("295.74"));
+        assertThat(snapshot.get("store_operation_amount")).isEqualTo(new BigDecimal("44.36"));
+        assertThat(snapshot.get("maintenance_fund_amount")).isEqualTo(new BigDecimal("29.57"));
+        assertThat(snapshot.get("channel_referral_amount")).isEqualTo(new BigDecimal("59.15"));
+        assertThat(snapshot.get("investor_share_amount")).isEqualTo(new BigDecimal("162.66"));
+
+        assertThatThrownBy(() -> voucherService.updateMineVerificationAmount(
+            prepared.id(),
+            new VoucherVerificationAmountRequest(new BigDecimal("300.00"))
+        ))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("不能再修改");
+
+        setStoreAccount();
+        assertThatThrownBy(() -> voucherService.updateMerchantVerificationAmount(
+            prepared.id(),
+            new VoucherVerificationAmountRequest(new BigDecimal("300.00"))
+        ))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("不能再修改");
+    }
+
+    @Test
+    void verificationCannotCreateOrderUntilAmountIsFilled() {
+        setUserAccount(2002L);
+        var prepared = voucherService.prepare(new VoucherPrepareRequest(
+            "MEITUAN",
+            "MT-TEST-" + System.nanoTime(),
+            1L,
+            2L,
+            null
+        ));
+
+        assertThatThrownBy(() -> voucherService.verify(prepared.id()))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("核销金额");
+
+        var updated = voucherService.updateMineVerificationAmount(
+            prepared.id(),
+            new VoucherVerificationAmountRequest(new BigDecimal("288.88"))
+        );
+        assertThat(updated.verificationAmount()).isEqualByComparingTo(new BigDecimal("288.88"));
+        var verified = voucherService.verify(prepared.id());
+        assertThat(orderService.getUserOrder(verified.orderId()).rentalAmount())
+            .isEqualByComparingTo(new BigDecimal("288.88"));
+    }
+
+    @Test
+    void verificationAmountRejectsNegativeValuesAtServiceBoundary() {
+        setUserAccount(2003L);
+        var prepared = voucherService.prepare(new VoucherPrepareRequest(
+            "DOUYIN",
+            "DY-NEGATIVE-" + System.nanoTime(),
+            1L,
+            2L,
+            null
+        ));
+
+        assertThatThrownBy(() -> voucherService.updateMineVerificationAmount(
+            prepared.id(),
+            new VoucherVerificationAmountRequest(new BigDecimal("-0.01"))
+        ))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("不能小于 0");
     }
 
     @Test
@@ -267,10 +831,10 @@ class RentalBusinessFlowIntegrationTests {
               AND beneficiary_id = 1
             """);
         assertThat(investorStatement.get("rent_base_amount")).isEqualTo(new BigDecimal("399.00"));
-        assertThat(investorStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("259.35"));
-        assertThat(investorStatement.get("operation_fee_amount")).isEqualTo(new BigDecimal("20.75"));
+        assertThat(investorStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("201.89"));
+        assertThat(investorStatement.get("operation_fee_amount")).isEqualTo(new BigDecimal("0.00"));
         assertThat(investorStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("50.00"));
-        assertThat(investorStatement.get("payable_amount")).isEqualTo(new BigDecimal("188.60"));
+        assertThat(investorStatement.get("payable_amount")).isEqualTo(new BigDecimal("151.89"));
 
         var merchantStatement = jdbcTemplate.queryForMap(
             """
@@ -285,9 +849,121 @@ class RentalBusinessFlowIntegrationTests {
             """);
         assertThat(merchantStatement.get("rent_base_amount")).isEqualTo(new BigDecimal("399.00"));
         assertThat(merchantStatement.get("sign_fee_income_amount")).isEqualTo(new BigDecimal("30.00"));
-        assertThat(merchantStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("99.75"));
+        assertThat(merchantStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("55.06"));
         assertThat(merchantStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("12.00"));
-        assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("117.75"));
+        assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("73.06"));
+    }
+
+    @Test
+    void storeRuleAppliesAcrossChannelsAndFreezesHistoricalAmounts() {
+        var rule = settlementService.updateStoreRule(1L, new StoreProfitRuleUpdateRequest(
+            new BigDecimal("0.04"),
+            new BigDecimal("0.02"),
+            new BigDecimal("0.20"),
+            new BigDecimal("0.10"),
+            new BigDecimal("0.15"),
+            new BigDecimal("0.55")
+        ));
+
+        var douyin = settlementService.preview(new SettlementPreviewRequest(
+            1L,
+            null,
+            null,
+            new BigDecimal("1000.00"),
+            "DOUYIN"
+        ));
+        var direct = settlementService.preview(new SettlementPreviewRequest(
+            1L,
+            null,
+            null,
+            new BigDecimal("1000.00"),
+            "DIRECT"
+        ));
+
+        assertThat(douyin.matchedRuleId()).isEqualTo(rule.id());
+        assertThat(douyin.matchedRuleScope()).isEqualTo("STORE");
+        assertThat(douyin.channelFeeAmount()).isEqualByComparingTo("40.00");
+        assertThat(douyin.platformFeeAmount()).isEqualByComparingTo("20.00");
+        assertThat(douyin.distributableAmount()).isEqualByComparingTo("940.00");
+        assertThat(douyin.storeOperationAmount()).isEqualByComparingTo("188.00");
+        assertThat(douyin.maintenanceFundAmount()).isEqualByComparingTo("94.00");
+        assertThat(douyin.channelReferralAmount()).isEqualByComparingTo("141.00");
+        assertThat(douyin.investorShareAmount()).isEqualByComparingTo("517.00");
+        assertThat(direct.matchedRuleId()).isEqualTo(rule.id());
+        assertThat(direct.channelFeeAmount()).isEqualByComparingTo("40.00");
+        assertThat(direct.platformFeeAmount()).isEqualByComparingTo("20.00");
+
+        var frozen = settlementService.createSnapshot(new SnapshotCreateRequest(
+            "PREVIEW",
+            null,
+            1L,
+            null,
+            null,
+            new BigDecimal("1000.00"),
+            "DOUYIN"
+        ));
+        settlementService.updateStoreRule(1L, new StoreProfitRuleUpdateRequest(
+            new BigDecimal("0.05"),
+            new BigDecimal("0.03"),
+            new BigDecimal("0.15"),
+            new BigDecimal("0.10"),
+            new BigDecimal("0.20"),
+            new BigDecimal("0.55")
+        ));
+        var current = settlementService.preview(new SettlementPreviewRequest(
+            1L,
+            null,
+            null,
+            new BigDecimal("1000.00"),
+            "DOUYIN"
+        ));
+        assertThat(current.matchedRuleId()).isEqualTo(rule.id());
+        assertThat(current.channelFeeAmount()).isEqualByComparingTo("50.00");
+        assertThat(current.platformFeeAmount()).isEqualByComparingTo("30.00");
+
+        var frozenAmounts = jdbcTemplate.queryForMap(
+            """
+            SELECT matched_rule_id, store_operation_amount, investor_share_amount
+            FROM settlement_rule_snapshot
+            WHERE id = ?
+            """,
+            frozen.id()
+        );
+        assertThat(frozenAmounts.get("matched_rule_id")).isEqualTo(rule.id());
+        assertThat(frozenAmounts.get("store_operation_amount")).isEqualTo(new BigDecimal("188.00"));
+        assertThat(frozenAmounts.get("investor_share_amount")).isEqualTo(new BigDecimal("517.00"));
+    }
+
+    @Test
+    void merchantAccountCannotChangeStoreProfitRuleEvenWithSettlementPermission() {
+        AuthContext.set(new CurrentAccount(
+            "merchant-token",
+            new CurrentAccountResponse(
+                2L,
+                "MERCHANT_OWNER",
+                "merchant-owner",
+                "18800000002",
+                null,
+                "Merchant Owner",
+                1L,
+                null,
+                null,
+                List.of("MERCHANT_OWNER"),
+                List.of("settlement.write"),
+                List.of()
+            )
+        ));
+
+        assertThatThrownBy(() -> settlementService.updateStoreRule(1L, new StoreProfitRuleUpdateRequest(
+            new BigDecimal("0.05"),
+            new BigDecimal("0.03"),
+            new BigDecimal("0.15"),
+            new BigDecimal("0.10"),
+            new BigDecimal("0.20"),
+            new BigDecimal("0.55")
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("平台账号");
     }
 
     @Test
@@ -370,15 +1046,82 @@ class RentalBusinessFlowIntegrationTests {
         );
     }
 
+    private BigDecimal statementLineAmount(Long billId, String lineType) {
+        return jdbcTemplate.queryForObject(
+            "SELECT amount FROM settlement_statement_line WHERE bill_id = ? AND line_type = ?",
+            BigDecimal.class,
+            billId,
+            lineType
+        );
+    }
+
     private String orderStatus(Long orderId) {
         return jdbcTemplate.queryForObject("SELECT order_status FROM rental_order WHERE id = ?", String.class, orderId);
+    }
+
+    private LocalDateTime expectedReturnAt(Long orderId) {
+        return jdbcTemplate.queryForObject("SELECT expected_return_at FROM rental_order WHERE id = ?", LocalDateTime.class, orderId);
+    }
+
+    private Integer renewalCount(Long orderId) {
+        return jdbcTemplate.queryForObject("SELECT renewal_count FROM rental_order WHERE id = ?", Integer.class, orderId);
     }
 
     private String assetStatus(Long assetId) {
         return jdbcTemplate.queryForObject("SELECT status FROM asset_item WHERE id = ?", String.class, assetId);
     }
 
+    private Long insertIntegratedVehicle(String assetCode, String serialNo) {
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES (?, 'INTEGRATED_VEHICLE', ?, 1, 1, 1, 'IDLE', 4200.00, 0.00, NULL, CURRENT_DATE)
+            """, assetCode, serialNo);
+        return jdbcTemplate.queryForObject("SELECT id FROM asset_item WHERE asset_code = ?", Long.class, assetCode);
+    }
+
     private void transition(Long orderId, String targetStatus) {
         orderService.transition(orderId, new OrderTransitionRequest(targetStatus, "integration transition"));
+    }
+
+    private void setUserAccount(Long accountId) {
+        AuthContext.set(new CurrentAccount(
+            "user-test-token",
+            new CurrentAccountResponse(
+                accountId,
+                "USER",
+                "user-test",
+                null,
+                "alipay-user-test",
+                "User Test",
+                null,
+                null,
+                null,
+                List.of("USER"),
+                List.of(),
+                List.of()
+            )
+        ));
+    }
+
+    private void setStoreAccount() {
+        AuthContext.set(new CurrentAccount(
+            "store-test-token",
+            new CurrentAccountResponse(
+                2L,
+                "MERCHANT",
+                "store-test",
+                "18800000002",
+                null,
+                "Store Test",
+                1L,
+                1L,
+                null,
+                List.of("STORE_MANAGER"),
+                List.of("order.read", "order.operate", "asset.read", "asset.operate"),
+                List.of(new StoreScopeResponse(1L, 1L, "STORE_ONLY"))
+            )
+        ));
     }
 }

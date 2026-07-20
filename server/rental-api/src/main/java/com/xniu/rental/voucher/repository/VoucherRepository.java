@@ -65,8 +65,8 @@ public class VoucherRepository {
             var statement = connection.prepareStatement("""
                 INSERT INTO voucher_verification
                 (source_platform, voucher_code, user_account_id, merchant_id, store_id, store_sku_id,
-                 package_id, verify_status, voucher_amount, sign_fee_amount)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'INPUT', ?, ?)
+                 package_id, verify_status, voucher_amount, verification_amount, sign_fee_amount)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'INPUT', ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.sourcePlatform().name());
             statement.setString(2, row.voucherCode());
@@ -76,7 +76,8 @@ public class VoucherRepository {
             statement.setLong(6, row.storeSkuId());
             statement.setLong(7, row.packageId());
             statement.setBigDecimal(8, row.voucherAmount());
-            statement.setBigDecimal(9, row.signFeeAmount());
+            statement.setBigDecimal(9, row.verificationAmount());
+            statement.setBigDecimal(10, row.signFeeAmount());
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
@@ -88,8 +89,8 @@ public class VoucherRepository {
             var statement = connection.prepareStatement("""
                 INSERT INTO voucher_verification
                 (source_platform, voucher_code, user_account_id, merchant_id, store_id, store_sku_id,
-                 package_id, verify_status, voucher_title, voucher_amount, sign_fee_amount, valid_from, raw_payload)
-                VALUES (?, ?, NULL, ?, ?, ?, ?, 'INPUT', ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                 package_id, verify_status, voucher_title, voucher_amount, verification_amount, sign_fee_amount, valid_from, raw_payload)
+                VALUES (?, ?, NULL, ?, ?, ?, ?, 'INPUT', ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.sourcePlatform().name());
             statement.setString(2, row.voucherCode());
@@ -99,14 +100,15 @@ public class VoucherRepository {
             statement.setLong(6, row.packageId());
             statement.setString(7, row.voucherTitle());
             statement.setBigDecimal(8, row.voucherAmount());
-            statement.setBigDecimal(9, row.signFeeAmount());
-            statement.setString(10, row.rawPayload());
+            statement.setBigDecimal(9, row.voucherAmount());
+            statement.setBigDecimal(10, row.signFeeAmount());
+            statement.setString(11, row.rawPayload());
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
     }
 
-    public VoucherVerification updateSelection(Long id, Long userAccountId, Long merchantId, Long storeId, Long storeSkuId, Long packageId, BigDecimal voucherAmount, BigDecimal signFeeAmount) {
+    public VoucherVerification updateSelection(Long id, Long userAccountId, Long merchantId, Long storeId, Long storeSkuId, Long packageId, BigDecimal voucherAmount, BigDecimal verificationAmount, BigDecimal signFeeAmount) {
         jdbcTemplate.update("""
             UPDATE voucher_verification
             SET user_account_id = COALESCE(user_account_id, ?),
@@ -115,10 +117,20 @@ public class VoucherRepository {
                 store_sku_id = ?,
                 package_id = ?,
                 voucher_amount = ?,
+                verification_amount = COALESCE(?, verification_amount),
                 sign_fee_amount = ?,
                 failure_reason = NULL
             WHERE id = ?
-            """, userAccountId, merchantId, storeId, storeSkuId, packageId, voucherAmount, signFeeAmount, id);
+            """, userAccountId, merchantId, storeId, storeSkuId, packageId, voucherAmount, verificationAmount, signFeeAmount, id);
+        return findById(id).orElseThrow();
+    }
+
+    public VoucherVerification updateVerificationAmount(Long id, BigDecimal verificationAmount) {
+        jdbcTemplate.update(
+            "UPDATE voucher_verification SET verification_amount = ?, failure_reason = NULL WHERE id = ?",
+            verificationAmount,
+            id
+        );
         return findById(id).orElseThrow();
     }
 
@@ -143,7 +155,6 @@ public class VoucherRepository {
             UPDATE voucher_verification
             SET verify_status = 'VERIFIED',
                 voucher_title = COALESCE(?, voucher_title),
-                voucher_amount = ?,
                 external_verify_id = ?,
                 valid_from = COALESCE(?, valid_from),
                 valid_to = COALESCE(?, valid_to),
@@ -151,7 +162,7 @@ public class VoucherRepository {
                 failure_reason = NULL,
                 verified_at = CURRENT_TIMESTAMP
             WHERE id = ?
-            """, row.voucherTitle(), row.voucherAmount(), row.externalId(), row.validFrom(), row.validTo(), row.rawPayload(), id);
+            """, row.voucherTitle(), row.externalId(), row.validFrom(), row.validTo(), row.rawPayload(), id);
         return findById(id).orElseThrow();
     }
 
@@ -218,7 +229,7 @@ public class VoucherRepository {
         return rs.wasNull() ? null : value;
     }
 
-    public record CreateRow(SourcePlatform sourcePlatform, String voucherCode, Long userAccountId, Long merchantId, Long storeId, Long storeSkuId, Long packageId, BigDecimal voucherAmount, BigDecimal signFeeAmount) {
+    public record CreateRow(SourcePlatform sourcePlatform, String voucherCode, Long userAccountId, Long merchantId, Long storeId, Long storeSkuId, Long packageId, BigDecimal voucherAmount, BigDecimal verificationAmount, BigDecimal signFeeAmount) {
     }
 
     public record IssueRow(SourcePlatform sourcePlatform, String voucherCode, Long merchantId, Long storeId, Long storeSkuId, Long packageId, String voucherTitle, BigDecimal voucherAmount, BigDecimal signFeeAmount, String rawPayload) {
@@ -244,6 +255,7 @@ public class VoucherRepository {
                 VoucherVerifyStatus.valueOf(rs.getString("verify_status")),
                 rs.getString("voucher_title"),
                 rs.getBigDecimal("voucher_amount"),
+                rs.getBigDecimal("verification_amount"),
                 rs.getBigDecimal("sign_fee_amount"),
                 rs.getString("external_prepare_id"),
                 rs.getString("external_verify_id"),

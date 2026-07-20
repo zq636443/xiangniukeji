@@ -300,14 +300,13 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
           locale={{ emptyText: <Empty description="暂无资产" /> }}
           columns={[
             { title: '资产编码', dataIndex: 'assetCode' },
-            { title: '类型', dataIndex: 'assetType', render: (value: string) => value === 'VEHICLE_FRAME' ? '车架' : '电池' },
+            { title: '类型', dataIndex: 'assetType', render: assetTypeText },
             { title: '序列号', dataIndex: 'serialNo' },
             { title: '当前商户', dataIndex: 'merchantName', render: (value?: string | null) => value || '-' },
             { title: '当前门店', dataIndex: 'storeName', render: (value?: string | null) => value || '-' },
             { title: '状态', dataIndex: 'status', render: assetStatusTag },
             { title: '采购金额', dataIndex: 'purchaseAmount', render: money },
-            { title: '维保费', dataIndex: 'maintenanceFeeAmount', render: money },
-            { title: '残值', dataIndex: 'residualValue', render: money },
+            { title: '残值', dataIndex: 'residualValue', render: optionalMoney },
             { title: '操作', render: (_, record) => <Button size="small" onClick={() => openDetail(record)}>详情</Button> }
           ]}
         />
@@ -329,13 +328,12 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
               <Typography.Title level={5}>基础信息</Typography.Title>
               <Descriptions bordered size="small" column={3}>
                 <Descriptions.Item label="资产编码">{assetDetail.asset.assetCode}</Descriptions.Item>
-                <Descriptions.Item label="资产类型">{assetDetail.asset.assetType === 'VEHICLE_FRAME' ? '车架' : '电池'}</Descriptions.Item>
+                <Descriptions.Item label="资产类型">{assetTypeText(assetDetail.asset.assetType)}</Descriptions.Item>
                 <Descriptions.Item label="序列号">{assetDetail.asset.serialNo}</Descriptions.Item>
                 <Descriptions.Item label="当前商户">{assetDetail.asset.merchantName || '-'}</Descriptions.Item>
                 <Descriptions.Item label="当前门店">{assetDetail.asset.storeName || '-'}</Descriptions.Item>
                 <Descriptions.Item label="状态">{assetStatusTag(assetDetail.asset.status)}</Descriptions.Item>
-                <Descriptions.Item label="维保费">{money(assetDetail.asset.maintenanceFeeAmount)}</Descriptions.Item>
-                <Descriptions.Item label="残值">{money(assetDetail.asset.residualValue)}</Descriptions.Item>
+                <Descriptions.Item label="残值">{optionalMoney(assetDetail.asset.residualValue)}</Descriptions.Item>
                 <Descriptions.Item label="采购日期">{dateText(assetDetail.asset.purchasedAt)}</Descriptions.Item>
               </Descriptions>
             </section>
@@ -411,6 +409,10 @@ function money(value?: number | string | null) {
   return `¥${Number(value || 0).toFixed(2)}`;
 }
 
+function optionalMoney(value?: number | string | null) {
+  return value == null || value === '' ? '-' : money(value);
+}
+
 function dateText(value?: string | null) {
   return value ? value.replace('T', ' ').slice(0, 16) : '-';
 }
@@ -427,6 +429,11 @@ function assetStatusTag(value: Asset['status']) {
   };
   const item = map[value];
   return <Tag color={item.color}>{item.label}</Tag>;
+}
+
+function assetTypeText(value: Asset['assetType']) {
+  if (value === 'INTEGRATED_VEHICLE') return '车电一体';
+  return value === 'VEHICLE_FRAME' ? '车架' : '电池';
 }
 
 function incomeStatusTag(value: SettlementIncomeEntry['entryStatus']) {
@@ -474,6 +481,12 @@ function signedMoney(value?: number | string | null) {
 
 function lineTypeText(value: SettlementIncomeEntry['lineType']) {
   const map: Record<SettlementIncomeEntry['lineType'], string> = {
+    CHANNEL_VERIFICATION_FEE: '渠道核销扣点',
+    PLATFORM_SERVICE_FEE: '租赁平台扣点',
+    STORE_OPERATION_SHARE: '门店运营分润',
+    MAINTENANCE_FUND_SHARE: '维修基金',
+    CHANNEL_REFERRAL_SHARE: '渠道引流分润',
+    INVESTOR_SHARE: '出资方分润',
     MERCHANT_ORDER_FEE: '门店办单费',
     MERCHANT_RENT_SHARE: '门店租金分成',
     PLATFORM_RENT_SHARE: '平台租金分成',

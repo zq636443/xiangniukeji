@@ -73,30 +73,50 @@ public class AssetFulfillmentService {
         if (order.orderStatus() != OrderStatus.PENDING_PICKUP) {
             throw BusinessException.badRequest("只有待取车订单可以取车绑定");
         }
+        return fulfillPickup(order, request, "取车交接");
+    }
+
+    @Transactional
+    public AssetHandoverResponse shipWithoutPayment(Long orderId, AssetPickupRequest request) {
+        authorizationService.requirePermission("order.operate");
+        var order = ensureOrder(orderId);
+        authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
+        if (order.orderStatus() != OrderStatus.PENDING_PAYMENT) {
+            throw BusinessException.badRequest("只有待支付订单可以选择免付款发货");
+        }
+        return fulfillPickup(order, request, "门店免付款发货");
+    }
+
+    private AssetHandoverResponse fulfillPickup(RentalOrder order, AssetPickupRequest request, String defaultRemark) {
+        request = request == null ? new AssetPickupRequest(null, null, null) : request;
         var frameAssetId = request.frameAssetId() == null ? order.frameAssetId() : request.frameAssetId();
-        var batteryAssetId = request.batteryAssetId() == null ? order.batteryAssetId() : request.batteryAssetId();
+        var frameAsset = frameAssetId == null ? null : ensureAssetReadyForOrder(frameAssetId, AssetType.VEHICLE_FRAME, order);
+        var integratedVehicle = frameAsset != null && frameAsset.assetType().isIntegratedVehicle();
+        if (integratedVehicle && request.batteryAssetId() != null) {
+            throw BusinessException.badRequest("车电一体资产只需绑定车架号，无需再选择电池资产");
+        }
+        var batteryAssetId = integratedVehicle ? null : request.batteryAssetId() == null ? order.batteryAssetId() : request.batteryAssetId();
         if (frameAssetId == null && batteryAssetId == null) {
             throw BusinessException.badRequest("请至少绑定车架或电池");
         }
-        AssetItem frameAsset = null;
-        AssetItem batteryAsset = null;
-        if (frameAssetId != null) {
-            frameAsset = markRenting(frameAssetId, AssetType.VEHICLE_FRAME, order, "取车绑定车架");
+        var batteryAsset = batteryAssetId == null ? null : ensureAssetReadyForOrder(batteryAssetId, AssetType.BATTERY, order);
+        if (frameAsset != null) {
+            markAssetStatus(frameAsset.id(), AssetStatus.RENTING, defaultRemark + "：绑定车架");
         }
-        if (batteryAssetId != null) {
-            batteryAsset = markRenting(batteryAssetId, AssetType.BATTERY, order, "取车绑定电池");
+        if (batteryAsset != null) {
+            markAssetStatus(batteryAsset.id(), AssetStatus.RENTING, defaultRemark + "：绑定电池");
         }
         orderRepository.updateAssets(order.id(), frameAssetId, batteryAssetId);
         var updatedOrder = orderRepository.updateStatus(order.id(), OrderStatus.RENTING, LocalDateTime.now(), expectedReturnAt(LocalDateTime.now(), order), null);
         if (frameAsset != null) {
-            fulfillmentRepository.closeActiveUsage(order.id(), AssetType.VEHICLE_FRAME, "PICKUP_REBIND");
+            closeActiveFrameUsage(order.id(), "PICKUP_REBIND");
             fulfillmentRepository.startUsage(order.id(), frameAsset.id(), frameAsset.assetType(), frameAsset.investorId(), order.storeId(), "PICKUP");
         }
         if (batteryAsset != null) {
             fulfillmentRepository.closeActiveUsage(order.id(), AssetType.BATTERY, "PICKUP_REBIND");
             fulfillmentRepository.startUsage(order.id(), batteryAsset.id(), batteryAsset.assetType(), batteryAsset.investorId(), order.storeId(), "PICKUP");
         }
-        orderRepository.addLog(order.id(), order.orderStatus(), OrderStatus.RENTING, OrderOperationType.TRANSITION, currentAccountId(), defaultRemark(request.remark(), "取车交接"));
+        orderRepository.addLog(order.id(), order.orderStatus(), OrderStatus.RENTING, OrderOperationType.TRANSITION, currentAccountId(), defaultRemark(request.remark(), defaultRemark));
         var handover = fulfillmentRepository.createHandover(new AssetFulfillmentRepository.HandoverCreateRow(
             nextHandoverNo(),
             updatedOrder.id(),
@@ -109,7 +129,7 @@ public class AssetFulfillmentService {
             AssetStatus.RENTING,
             AssetStatus.RENTING,
             currentAccountId(),
-            defaultRemark(request.remark(), "取车交接")
+            defaultRemark(request.remark(), defaultRemark)
         ));
         return toHandoverResponse(handover);
     }
@@ -123,6 +143,9 @@ public class AssetFulfillmentService {
             throw BusinessException.badRequest("只有履约中的订单可以更换资产");
         }
         var assetType = parseAssetType(request.assetType());
+        if (assetType == AssetType.BATTERY && order.frameAssetId() != null && ensureAsset(order.frameAssetId()).assetType().isIntegratedVehicle()) {
+            throw BusinessException.badRequest("车电一体资产无需绑定或更换独立电池");
+        }
         var oldAssetId = assetType == AssetType.VEHICLE_FRAME ? order.frameAssetId() : order.batteryAssetId();
         var newAsset = ensureAssetReadyForOrder(request.newAssetId(), assetType, order);
         var oldStatus = parseReturnStatus(request.oldAssetResultStatus(), AssetStatus.IDLE);
@@ -132,9 +155,14 @@ public class AssetFulfillmentService {
         markAssetStatus(newAsset.id(), AssetStatus.RENTING, defaultRemark(request.remark(), "更换资产，新资产租赁中"));
         var frameAssetId = assetType == AssetType.VEHICLE_FRAME ? newAsset.id() : order.frameAssetId();
         var batteryAssetId = assetType == AssetType.BATTERY ? newAsset.id() : order.batteryAssetId();
+        if (assetType == AssetType.VEHICLE_FRAME && newAsset.assetType().isIntegratedVehicle() && batteryAssetId != null) {
+            markAssetStatus(batteryAssetId, AssetStatus.IDLE, defaultRemark(request.remark(), "换为车电一体，原电池解绑"));
+            fulfillmentRepository.closeActiveUsage(order.id(), AssetType.BATTERY, "INTEGRATED_VEHICLE_REPLACE");
+            batteryAssetId = null;
+        }
         orderRepository.updateAssets(order.id(), frameAssetId, batteryAssetId);
-        fulfillmentRepository.closeActiveUsage(order.id(), assetType, "REPLACE");
-        fulfillmentRepository.startUsage(order.id(), newAsset.id(), assetType, newAsset.investorId(), order.storeId(), "REPLACE");
+        closeActiveSlotUsage(order.id(), assetType, "REPLACE");
+        fulfillmentRepository.startUsage(order.id(), newAsset.id(), newAsset.assetType(), newAsset.investorId(), order.storeId(), "REPLACE");
         orderRepository.addLog(order.id(), order.orderStatus(), order.orderStatus(), OrderOperationType.TRANSITION, currentAccountId(), defaultRemark(request.remark(), "更换资产"));
         var change = fulfillmentRepository.createChange(new AssetFulfillmentRepository.ChangeCreateRow(
             nextChangeNo(),
@@ -227,16 +255,10 @@ public class AssetFulfillmentService {
         }
     }
 
-    private AssetItem markRenting(Long assetId, AssetType expectedType, RentalOrder order, String remark) {
-        var asset = ensureAssetReadyForOrder(assetId, expectedType, order);
-        markAssetStatus(asset.id(), AssetStatus.RENTING, remark);
-        return asset;
-    }
-
     private AssetItem ensureAssetReadyForOrder(Long assetId, AssetType expectedType, RentalOrder order) {
         var asset = ensureAsset(assetId);
-        if (asset.assetType() != expectedType) {
-            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择车架资产" : "请选择电池资产");
+        if (!asset.assetType().canBindAs(expectedType)) {
+            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择车架或车电一体资产" : "请选择电池资产");
         }
         if (asset.status() != AssetStatus.IDLE) {
             throw BusinessException.badRequest("资产不是空闲状态");
@@ -245,6 +267,19 @@ public class AssetFulfillmentService {
             throw BusinessException.badRequest("资产不在订单门店");
         }
         return asset;
+    }
+
+    private void closeActiveSlotUsage(Long orderId, AssetType assetType, String endReason) {
+        if (assetType == AssetType.VEHICLE_FRAME) {
+            closeActiveFrameUsage(orderId, endReason);
+            return;
+        }
+        fulfillmentRepository.closeActiveUsage(orderId, assetType, endReason);
+    }
+
+    private void closeActiveFrameUsage(Long orderId, String endReason) {
+        fulfillmentRepository.closeActiveUsage(orderId, AssetType.VEHICLE_FRAME, endReason);
+        fulfillmentRepository.closeActiveUsage(orderId, AssetType.INTEGRATED_VEHICLE, endReason);
     }
 
     private void markAssetStatus(Long assetId, AssetStatus nextStatus, String remark) {
@@ -284,8 +319,15 @@ public class AssetFulfillmentService {
 
     private AssetType parseAssetType(String value) {
         try {
-            return AssetType.valueOf(value);
+            var assetType = AssetType.valueOf(value);
+            if (assetType == AssetType.INTEGRATED_VEHICLE) {
+                throw BusinessException.badRequest("更换类型请选择车架或电池，车电一体按车架更换");
+            }
+            return assetType;
         } catch (Exception exception) {
+            if (exception instanceof BusinessException businessException) {
+                throw businessException;
+            }
             throw BusinessException.badRequest("不支持的资产类型");
         }
     }

@@ -80,7 +80,7 @@ export function AssetFulfillmentManagement() {
             { title: '更换单号', dataIndex: 'changeNo' },
             { title: '订单 ID', dataIndex: 'orderId' },
             { title: '门店 ID', dataIndex: 'storeId' },
-            { title: '资产类型', dataIndex: 'assetType', render: (value) => value === 'VEHICLE_FRAME' ? '车架' : '电池' },
+            { title: '资产类型', dataIndex: 'assetType', render: (value) => value === 'INTEGRATED_VEHICLE' ? '车电一体' : value === 'VEHICLE_FRAME' ? '车架' : '电池' },
             { title: '原资产', dataIndex: 'oldAssetId', render: (value) => value || '-' },
             { title: '新资产', dataIndex: 'newAssetId' },
             { title: '原资产结果', dataIndex: 'oldAssetResultStatus' },

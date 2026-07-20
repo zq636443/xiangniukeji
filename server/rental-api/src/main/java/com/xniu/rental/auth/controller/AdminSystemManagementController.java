@@ -2,6 +2,7 @@ package com.xniu.rental.auth.controller;
 
 import com.xniu.rental.auth.dto.SystemAccountResponse;
 import com.xniu.rental.auth.dto.SystemAccountCreateRequest;
+import com.xniu.rental.auth.dto.SystemAccountPermissionUpdateRequest;
 import com.xniu.rental.auth.dto.SystemAccountResetPasswordRequest;
 import com.xniu.rental.auth.dto.SystemAccountRoleUpdateRequest;
 import com.xniu.rental.auth.dto.SystemAccountScopeUpdateRequest;
@@ -112,5 +113,14 @@ public class AdminSystemManagementController {
     ) {
         authorizationService.requirePermission("auth.scope.write");
         return ApiResponse.ok(systemManagementService.updateAccountScopes(accountId, request));
+    }
+
+    @PutMapping("/accounts/{accountId}/permissions")
+    public ApiResponse<SystemAccountResponse> updateAccountPermissions(
+        @PathVariable Long accountId,
+        @Valid @RequestBody SystemAccountPermissionUpdateRequest request
+    ) {
+        authorizationService.requirePermission("auth.account.write");
+        return ApiResponse.ok(systemManagementService.updateAccountPermissions(accountId, request));
     }
 }

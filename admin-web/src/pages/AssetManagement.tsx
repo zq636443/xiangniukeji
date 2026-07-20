@@ -1,11 +1,15 @@
+import { DownloadOutlined, ExportOutlined, PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
 import { Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
+import { AssetBatchImportModal, downloadAssetImportTemplate } from '../components/AssetBatchImportModal';
 import { http } from '../services/request';
 import type { Asset, AssetDetail, AssetLog, AssetMaintenance, AssetRentalRecord, AssetStatus, AssetType, CurrentAccount, Investor, Merchant, SparePart, Store } from '../types/api';
+import { downloadCsv } from '../utils/csv';
 
 const assetTypeOptions: { label: string; value: AssetType }[] = [
   { label: '车架', value: 'VEHICLE_FRAME' },
-  { label: '电池', value: 'BATTERY' }
+  { label: '电池', value: 'BATTERY' },
+  { label: '车电一体', value: 'INTEGRATED_VEHICLE' }
 ];
 
 const assetStatusOptions: { label: string; value: AssetStatus }[] = [
@@ -37,8 +41,7 @@ type AssetForm = {
   currentMerchantId?: number;
   currentStoreId?: number;
   purchaseAmount: number;
-  maintenanceFeeAmount: number;
-  residualValue: number;
+  residualValue?: number;
   purchasedAt?: string;
 };
 
@@ -56,6 +59,15 @@ type StatusForm = {
 type InvestorChangeForm = {
   investorId: number;
   remark?: string;
+};
+
+type AssetFilterForm = {
+  keyword?: string;
+  assetType?: AssetType;
+  status?: AssetStatus;
+  investorId?: number;
+  merchantId?: number;
+  storeId?: number;
 };
 
 type MaintenanceForm = {
@@ -90,6 +102,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [investorOpen, setInvestorOpen] = useState(false);
   const [assetOpen, setAssetOpen] = useState(false);
+  const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [investorChangeOpen, setInvestorChangeOpen] = useState(false);
@@ -103,11 +116,13 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   const [statusForm] = Form.useForm<StatusForm>();
   const [investorChangeForm] = Form.useForm<InvestorChangeForm>();
   const [maintenanceForm] = Form.useForm<MaintenanceForm>();
+  const [assetFilterForm] = Form.useForm<AssetFilterForm>();
   const showInvestors = account.accountType !== 'INVESTOR' && mode !== 'assets';
   const showAssets = mode !== 'investors';
+  const canImportAssets = account.permissions.includes('asset.import') || account.permissions.includes('system.admin');
 
   useEffect(() => {
-    void loadAll();
+    void loadAll({});
   }, []);
 
   const investorOptions = useMemo(() => investors.map((investor) => ({
@@ -130,19 +145,19 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
     value: part.id
   })), [spareParts]);
 
-  async function loadAll() {
+  async function loadAll(filters: AssetFilterForm = assetFilterForm.getFieldsValue()) {
     setLoading(true);
     try {
       if (account.accountType === 'INVESTOR') {
         const assetData = await http.get<unknown, Asset[]>('/api/investor/assets');
-        setAssets(assetData);
+        setAssets(filterAssetRows(assetData, filters));
         return;
       }
       const [investorData, merchantData, storeData, assetData, partData] = await Promise.all([
         account.permissions.includes('investor.read') || account.permissions.includes('system.admin') ? http.get<unknown, Investor[]>('/api/admin/investors') : Promise.resolve([]),
         account.permissions.includes('merchant.read') || account.permissions.includes('system.admin') ? http.get<unknown, Merchant[]>('/api/admin/merchants') : Promise.resolve([]),
         account.permissions.includes('store.read') || account.permissions.includes('system.admin') ? http.get<unknown, Store[]>('/api/admin/stores') : Promise.resolve([]),
-        http.get<unknown, Asset[]>('/api/admin/assets'),
+        http.get<unknown, Asset[]>('/api/admin/assets', { params: filters }),
         account.permissions.includes('inventory.read') || account.permissions.includes('system.admin') ? http.get<unknown, SparePart[]>('/api/admin/spare-parts') : Promise.resolve([])
       ]);
       setInvestors(investorData);
@@ -153,6 +168,39 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
     } finally {
       setLoading(false);
     }
+  }
+
+  async function resetAssetFilters() {
+    assetFilterForm.resetFields();
+    await loadAll({});
+  }
+
+  function exportAssets() {
+    downloadCsv('资产台账', [
+      '序号',
+      '资产编码',
+      '资产类型',
+      '车架号/电池号',
+      '出资方',
+      '商户',
+      '门店',
+      '状态',
+      '采购金额',
+      '报废残值',
+      '采购日期'
+    ], assets.map((asset, index) => [
+      index + 1,
+      asset.assetCode,
+      typeLabel(asset.assetType),
+      asset.serialNo,
+      asset.investorName,
+      asset.merchantName,
+      asset.storeName,
+      assetStatusText(asset.status),
+      asset.purchaseAmount,
+      asset.residualValue,
+      asset.purchasedAt
+    ]));
   }
 
   function openCreateInvestor() {
@@ -172,9 +220,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
     assetForm.resetFields();
     assetForm.setFieldsValue({
       assetType: 'VEHICLE_FRAME',
-      purchaseAmount: 0,
-      maintenanceFeeAmount: 0,
-      residualValue: 0
+      purchaseAmount: 0
     });
     setAssetOpen(true);
   }
@@ -296,10 +342,16 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
 
   return (
     <Space direction="vertical" size={16} className="page-stack">
-      <Space align="center" className="toolbar">
+      <Space align="center" className="toolbar" wrap>
         <Typography.Title level={3}>{mode === 'investors' ? '出资方管理' : mode === 'assets' ? '资产台账' : '资产管理'}</Typography.Title>
-        {showInvestors && <Button type="primary" onClick={openCreateInvestor}>新建出资方</Button>}
-        {showAssets && account.accountType !== 'INVESTOR' && <Button onClick={openCreateAsset}>资产入库</Button>}
+        {showInvestors && <Button type="primary" icon={<PlusOutlined />} onClick={openCreateInvestor}>新建出资方</Button>}
+        {showAssets && account.accountType !== 'INVESTOR' ? (
+          <>
+            <Button icon={<DownloadOutlined />} onClick={() => downloadAssetImportTemplate()}>下载模板</Button>
+            {canImportAssets ? <Button icon={<UploadOutlined />} onClick={() => setBatchImportOpen(true)}>批量录入</Button> : null}
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAsset}>资产入库</Button>
+          </>
+        ) : null}
       </Space>
 
       {showInvestors && <div className="section">
@@ -331,7 +383,36 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
       </div>}
 
       {showAssets && <div className="section">
-        <Typography.Title level={5}>{account.accountType === 'INVESTOR' ? '我的资产' : '资产台账'}</Typography.Title>
+        <Space align="center" className="toolbar" wrap>
+          <Typography.Title level={5}>{account.accountType === 'INVESTOR' ? '我的资产' : '资产台账'}</Typography.Title>
+          <Form form={assetFilterForm} layout="inline" onFinish={(values) => void loadAll(values)}>
+            <Form.Item name="keyword">
+              <Input allowClear prefix={<SearchOutlined />} placeholder="资产编码或车架/电池号" style={{ width: 230 }} />
+            </Form.Item>
+            <Form.Item name="assetType">
+              <Select allowClear placeholder="资产类型" options={assetTypeOptions} style={{ width: 150 }} />
+            </Form.Item>
+            <Form.Item name="status">
+              <Select allowClear placeholder="资产状态" options={assetStatusOptions} style={{ width: 140 }} />
+            </Form.Item>
+            {account.accountType !== 'INVESTOR' ? (
+              <>
+                <Form.Item name="investorId">
+                  <Select allowClear showSearch optionFilterProp="label" placeholder="出资方" options={investorOptions} style={{ width: 160 }} />
+                </Form.Item>
+                <Form.Item name="merchantId">
+                  <Select allowClear showSearch optionFilterProp="label" placeholder="商户" options={merchantOptions} style={{ width: 160 }} />
+                </Form.Item>
+                <Form.Item name="storeId">
+                  <Select allowClear showSearch optionFilterProp="label" placeholder="门店" options={storeOptions} style={{ width: 180 }} />
+                </Form.Item>
+              </>
+            ) : null}
+            <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>查询</Button>
+            <Button onClick={() => void resetAssetFilters()}>重置</Button>
+          </Form>
+          <Button icon={<ExportOutlined />} disabled={!assets.length} onClick={exportAssets}>导出资产</Button>
+        </Space>
         <Table
           rowKey="id"
           size="small"
@@ -339,14 +420,14 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           pagination={false}
           scroll={{ x: 1200 }}
           columns={[
+            { title: '序号', width: 70, render: (_value, _record, index) => index + 1 },
             { title: '资产编码', dataIndex: 'assetCode' },
             { title: '类型', dataIndex: 'assetType', render: typeLabel },
-            { title: '车架/电池号', dataIndex: 'serialNo' },
+            { title: '车架号 / 电池号', dataIndex: 'serialNo' },
             { title: '出资方', dataIndex: 'investorName' },
             { title: '所在门店', dataIndex: 'storeName', render: (value) => value || '-' },
             { title: '状态', dataIndex: 'status', render: statusTag },
-            { title: '维保费', dataIndex: 'maintenanceFeeAmount' },
-            { title: '残值', dataIndex: 'residualValue' },
+            { title: '残值', dataIndex: 'residualValue', render: optionalMoney },
             {
               title: '操作',
               fixed: 'right',
@@ -425,19 +506,38 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
         </Form>
       </Modal>
 
-      <Modal title="资产入库" open={assetOpen} onCancel={() => setAssetOpen(false)} onOk={() => assetForm.submit()} destroyOnHidden>
+      <Modal title="资产入库" open={assetOpen} onCancel={() => setAssetOpen(false)} onOk={() => assetForm.submit()} forceRender>
         <Form form={assetForm} layout="vertical" onFinish={submitAsset}>
           <Form.Item name="assetType" label="资产类型" rules={[{ required: true, message: '请选择资产类型' }]}><Select options={assetTypeOptions} /></Form.Item>
-          <Form.Item name="serialNo" label="车架号/电池号" rules={[{ required: true, message: '请输入编号' }]}><Input /></Form.Item>
+          <Form.Item noStyle shouldUpdate={(previous, current) => previous.assetType !== current.assetType}>
+            {({ getFieldValue }) => {
+              const assetType = getFieldValue('assetType') as AssetType | undefined;
+              return (
+                <Form.Item
+                  name="serialNo"
+                  label={assetType === 'BATTERY' ? '电池号' : '车架号'}
+                  rules={[{ required: true, message: assetType === 'BATTERY' ? '请输入电池号' : '请输入车架号' }]}
+                >
+                  <Input placeholder={assetType === 'INTEGRATED_VEHICLE' ? '车电一体仅录入车架号' : undefined} />
+                </Form.Item>
+              );
+            }}
+          </Form.Item>
           <Form.Item name="investorId" label="出资方" rules={[{ required: true, message: '请选择出资方' }]}><Select options={investorOptions} /></Form.Item>
           <Form.Item name="currentMerchantId" label="商户"><Select allowClear options={merchantOptions} /></Form.Item>
           <Form.Item name="currentStoreId" label="门店"><Select allowClear options={storeOptions} /></Form.Item>
           <Form.Item name="purchaseAmount" label="采购金额" rules={[{ required: true, message: '请输入采购金额' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
-          <Form.Item name="maintenanceFeeAmount" label="固定维保费" rules={[{ required: true, message: '请输入维保费' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
-          <Form.Item name="residualValue" label="报废残值" rules={[{ required: true, message: '请输入残值' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="residualValue" label="报废残值"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="purchasedAt" label="采购日期"><Input placeholder="2026-06-25" /></Form.Item>
         </Form>
       </Modal>
+
+      <AssetBatchImportModal
+        open={batchImportOpen}
+        endpoint="/api/admin/assets/batch-import"
+        onClose={() => setBatchImportOpen(false)}
+        onImported={loadAll}
+      />
 
       <Modal title="资产调拨" open={transferOpen} onCancel={() => setTransferOpen(false)} onOk={() => transferForm.submit()} destroyOnHidden>
         <Form form={transferForm} layout="vertical" onFinish={submitTransfer}>
@@ -487,8 +587,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
               <Typography.Text>编号：{assetDetail.asset.serialNo}</Typography.Text>
               <Typography.Text>出资方：{assetDetail.asset.investorName || '-'}</Typography.Text>
               <Typography.Text>门店：{assetDetail.asset.storeName || '-'}</Typography.Text>
-              <Typography.Text>维保费：¥{Number(assetDetail.asset.maintenanceFeeAmount || 0).toFixed(2)}</Typography.Text>
-              <Typography.Text>残值：¥{Number(assetDetail.asset.residualValue || 0).toFixed(2)}</Typography.Text>
+              <Typography.Text>残值：{optionalMoney(assetDetail.asset.residualValue)}</Typography.Text>
             </Space>
           </section>
           <section className="section">
@@ -632,16 +731,36 @@ function enabledTag(status: 'ENABLED' | 'DISABLED') {
 }
 
 function statusTag(status: AssetStatus) {
-  const option = assetStatusOptions.find((item) => item.value === status);
-  return <Tag>{option?.label ?? status}</Tag>;
+  return <Tag>{assetStatusText(status)}</Tag>;
+}
+
+function assetStatusText(status: AssetStatus) {
+  return assetStatusOptions.find((item) => item.value === status)?.label ?? status;
 }
 
 function typeLabel(type: AssetType) {
   return assetTypeOptions.find((item) => item.value === type)?.label ?? type;
 }
 
+function filterAssetRows(rows: Asset[], filters: AssetFilterForm) {
+  const keyword = filters.keyword?.trim().toLowerCase();
+  return rows.filter((asset) => {
+    if (filters.assetType && asset.assetType !== filters.assetType) return false;
+    if (filters.status && asset.status !== filters.status) return false;
+    if (filters.investorId && asset.investorId !== filters.investorId) return false;
+    if (filters.merchantId && asset.currentMerchantId !== filters.merchantId) return false;
+    if (filters.storeId && asset.currentStoreId !== filters.storeId) return false;
+    if (!keyword) return true;
+    return asset.assetCode.toLowerCase().includes(keyword) || asset.serialNo.toLowerCase().includes(keyword);
+  });
+}
+
 function money(value?: number | null) {
   return `¥${Number(value || 0).toFixed(2)}`;
+}
+
+function optionalMoney(value?: number | null) {
+  return value == null ? '-' : money(value);
 }
 
 function dateText(value?: string | null) {

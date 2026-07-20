@@ -12,6 +12,7 @@ import com.xniu.rental.settlement.dto.SettlementOverviewResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementGenerateResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementLineResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementResponse;
+import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.model.SettlementRuleSnapshot;
 import com.xniu.rental.settlement.model.SettlementStatement;
 import com.xniu.rental.settlement.model.SettlementStatementLine;
@@ -104,7 +105,7 @@ public class SettlementStatementService {
         for (var group : billGroups.values()) {
             var first = group.getFirst();
             var snapshotId = first.settlementSnapshotId();
-            var rentAmount = sumItemAmount(group, "RENT");
+            var rentAmount = money(sumItemAmount(group, "RENT").add(sumItemAmount(group, "RENEWAL_RENT")));
             var signFeeAmount = sumItemAmount(group, "SIGN_FEE");
             if (signFeeAmount.signum() > 0) {
                 var merchantDraft = merchantDraft(merchantDrafts, first.merchantId(), first.storeId());
@@ -136,7 +137,9 @@ public class SettlementStatementService {
             if (snapshot == null) {
                 throw BusinessException.badRequest("订单 " + first.orderId() + " 的分润快照不存在");
             }
-            var merchantShare = money(rentAmount.multiply(snapshot.merchantRentShareRate()));
+            var merchantShare = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+                ? calculateProfitV2(snapshot, rentAmount).storeOperationAmount()
+                : money(rentAmount.multiply(snapshot.merchantRentShareRate()));
             if (merchantShare.signum() > 0) {
                 var merchantDraft = merchantDraft(merchantDrafts, first.merchantId(), first.storeId());
                 merchantDraft.register(
@@ -152,7 +155,7 @@ public class SettlementStatementService {
                         SettlementStatementLineType.MERCHANT_RENT_SHARE,
                         merchantShare,
                         first.paidAt(),
-                        "租金分润"
+                        snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2 ? "门店运营分润" : "租金分润"
                     ),
                     rentAmount
                 );
@@ -173,7 +176,7 @@ public class SettlementStatementService {
                             SettlementStatementLineType.INVESTOR_GROSS_RENT,
                             allocation.grossRentAmount(),
                             first.paidAt(),
-                            "出资方租金毛收益"
+                            snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2 ? "出资方分润" : "出资方租金毛收益"
                         ),
                         allocation.rentBaseAmount()
                     );
@@ -511,12 +514,41 @@ public class SettlementStatementService {
             remainingRent = remainingRent.subtract(assetRent);
             rentBaseByInvestor.merge(asset.investorId(), assetRent, BigDecimal::add);
         }
+        var profitV2 = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2;
+        var shareByInvestor = new LinkedHashMap<Long, BigDecimal>();
+        if (profitV2) {
+            var investorShare = calculateProfitV2(snapshot, rentAmount).investorShareAmount();
+            var perAssetShare = investorShare.divide(BigDecimal.valueOf(investorAssets.size()), 2, RoundingMode.DOWN);
+            var remainingShare = money(investorShare);
+            for (var index = 0; index < investorAssets.size(); index += 1) {
+                var asset = investorAssets.get(index);
+                var assetShare = index == investorAssets.size() - 1 ? remainingShare : perAssetShare;
+                remainingShare = remainingShare.subtract(assetShare);
+                shareByInvestor.merge(asset.investorId(), assetShare, BigDecimal::add);
+            }
+        }
         return rentBaseByInvestor.entrySet().stream().map(entry -> {
             var investor = investorRepository.findById(entry.getKey()).orElseThrow(() -> BusinessException.badRequest("出资方不存在"));
-            var grossAmount = money(entry.getValue().multiply(snapshot.investorRentShareRate()));
-            var operationFee = money(grossAmount.multiply(investor.operationFeeRate() == null ? BigDecimal.ZERO : investor.operationFeeRate()));
+            var grossAmount = profitV2
+                ? money(shareByInvestor.get(entry.getKey()))
+                : money(entry.getValue().multiply(snapshot.investorRentShareRate()));
+            var operationFee = profitV2
+                ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+                : money(grossAmount.multiply(investor.operationFeeRate() == null ? BigDecimal.ZERO : investor.operationFeeRate()));
             return new InvestorAllocation(entry.getKey(), money(rentBaseByInvestor.get(entry.getKey())), grossAmount, operationFee);
         }).toList();
+    }
+
+    private ProfitSharingCalculator.Allocation calculateProfitV2(SettlementRuleSnapshot snapshot, BigDecimal settlementBaseAmount) {
+        return ProfitSharingCalculator.calculate(
+            settlementBaseAmount,
+            snapshot.channelFeeRate(),
+            snapshot.platformFeeRate(),
+            snapshot.storeOperationRate(),
+            snapshot.maintenanceFundRate(),
+            snapshot.channelReferralRate(),
+            snapshot.investorShareRate()
+        );
     }
 
     private SettlementStatement ensureStatementExists(Long id) {

@@ -1,4 +1,4 @@
-import { Button, Descriptions, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, Descriptions, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
 import type {
@@ -64,6 +64,7 @@ export function SystemManagement({ mode }: SystemManagementProps) {
   const [roleOpen, setRoleOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [permissionUpdatingAccountId, setPermissionUpdatingAccountId] = useState<number>();
   const [createForm] = Form.useForm<CreateForm>();
   const [editForm] = Form.useForm<EditForm>();
   const [passwordForm] = Form.useForm<ResetPasswordForm>();
@@ -186,6 +187,25 @@ export function SystemManagement({ mode }: SystemManagementProps) {
     await loadAll();
   }
 
+  async function toggleOrderCreatePermission(record: SystemAccount, enabled: boolean) {
+    const permissionCodes = enabled
+      ? Array.from(new Set([...record.directPermissions, 'order.create']))
+      : record.directPermissions.filter((permission) => permission !== 'order.create');
+    setPermissionUpdatingAccountId(record.id);
+    try {
+      const updated = await http.put<unknown, SystemAccount>(`/api/admin/system/accounts/${record.id}/permissions`, {
+        permissionCodes
+      });
+      setAccounts((items) => items.map((item) => item.id === updated.id ? updated : item));
+      if (selectedAccount?.id === updated.id) {
+        setSelectedAccount(updated);
+      }
+      message.success(enabled ? '已允许该账号新建订单' : '已收回该账号新建订单权限');
+    } finally {
+      setPermissionUpdatingAccountId(undefined);
+    }
+  }
+
   async function submitCreate(values: CreateForm) {
     await http.post('/api/admin/system/accounts', values);
     message.success('账号已创建');
@@ -241,7 +261,7 @@ export function SystemManagement({ mode }: SystemManagementProps) {
             size="small"
             loading={loading}
             dataSource={accounts}
-            scroll={{ x: 1500 }}
+            scroll={{ x: 1640 }}
             pagination={false}
             columns={[
               { title: '账号ID', dataIndex: 'id', width: 84 },
@@ -250,6 +270,18 @@ export function SystemManagement({ mode }: SystemManagementProps) {
               { title: '手机号', dataIndex: 'phone', render: (value) => value || '-' },
               { title: '类型', dataIndex: 'accountType', render: accountTypeText },
               { title: '角色', dataIndex: 'roles', render: (value: string[]) => value.length ? value.map((item) => <Tag key={item}>{accountTypeText(item)}</Tag>) : '-' },
+              {
+                title: '新建订单',
+                width: 110,
+                align: 'center',
+                render: (_, record) => record.merchantId ? (
+                  <Switch
+                    checked={record.directPermissions.includes('order.create')}
+                    loading={permissionUpdatingAccountId === record.id}
+                    onChange={(checked) => void toggleOrderCreatePermission(record, checked)}
+                  />
+                ) : '-'
+              },
               { title: '所属商户', dataIndex: 'merchantName', render: (value) => value || '-' },
               { title: '默认门店', dataIndex: 'storeName', render: (value) => value || '-' },
               { title: '出资方', dataIndex: 'investorName', render: (value) => value || '-' },
@@ -374,6 +406,16 @@ export function SystemManagement({ mode }: SystemManagementProps) {
               <Space wrap>
                 {selectedAccount.roles.length
                   ? selectedAccount.roles.map((item) => <Tag key={item}>{accountTypeText(item)}</Tag>)
+                  : '-'}
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="新建订单权限">
+              {selectedAccount.directPermissions.includes('order.create') ? <Tag color="green">已授权</Tag> : <Tag>未授权</Tag>}
+            </Descriptions.Item>
+            <Descriptions.Item label="直接权限">
+              <Space wrap>
+                {selectedAccount.directPermissions.length
+                  ? selectedAccount.directPermissions.map((item) => <Tag key={item}>{item}</Tag>)
                   : '-'}
               </Space>
             </Descriptions.Item>

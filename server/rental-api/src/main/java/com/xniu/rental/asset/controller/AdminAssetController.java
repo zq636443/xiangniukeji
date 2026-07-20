@@ -1,5 +1,7 @@
 package com.xniu.rental.asset.controller;
 
+import com.xniu.rental.asset.dto.AssetBatchImportRequest;
+import com.xniu.rental.asset.dto.AssetBatchImportResponse;
 import com.xniu.rental.asset.dto.AssetInvestorChangeRequest;
 import com.xniu.rental.asset.dto.AssetDetailResponse;
 import com.xniu.rental.asset.dto.AssetLogResponse;
@@ -48,6 +50,11 @@ public class AdminAssetController {
     @PostMapping
     public ApiResponse<AssetResponse> createAsset(@Valid @RequestBody AssetRequest request) {
         return ApiResponse.ok(assetService.createAsset(request));
+    }
+
+    @PostMapping("/batch-import")
+    public ApiResponse<AssetBatchImportResponse> batchImport(@Valid @RequestBody AssetBatchImportRequest request) {
+        return ApiResponse.ok(assetService.batchImportAssets(request));
     }
 
     @PutMapping("/{id}/transfer")

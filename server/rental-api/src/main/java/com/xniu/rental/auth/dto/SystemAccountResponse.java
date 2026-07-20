@@ -19,6 +19,8 @@ public record SystemAccountResponse(
     LocalDateTime lastLoginAt,
     LocalDateTime createdAt,
     List<String> roles,
+    List<String> permissions,
+    List<String> directPermissions,
     List<StoreScopeResponse> storeScopes
 ) {
 }

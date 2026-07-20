@@ -41,6 +41,11 @@ public class InvestorRepository {
         return investors.stream().findFirst();
     }
 
+    public Optional<Investor> findByCode(String investorCode) {
+        var investors = jdbcTemplate.query("SELECT * FROM investor WHERE investor_code = ?", mapper, investorCode);
+        return investors.stream().findFirst();
+    }
+
     public Investor create(String investorCode, String investorName, String contactName, String contactPhone, BigDecimal operationFeeRate) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {

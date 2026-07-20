@@ -27,14 +27,22 @@ public class AuthQueryRepository {
 
     public List<String> findPermissionCodes(Long accountId) {
         return jdbcTemplate.queryForList("""
-            SELECT DISTINCT p.permission_code
-            FROM auth_account_role ar
-            JOIN auth_role r ON r.id = ar.role_id
-            JOIN auth_role_permission rp ON rp.role_id = r.id
-            JOIN auth_permission p ON p.id = rp.permission_id
-            WHERE ar.account_id = ? AND r.status = 'ENABLED'
-            ORDER BY p.permission_code
-            """, String.class, accountId);
+            SELECT permission_code
+            FROM (
+                SELECT p.permission_code
+                FROM auth_account_role ar
+                JOIN auth_role r ON r.id = ar.role_id
+                JOIN auth_role_permission rp ON rp.role_id = r.id
+                JOIN auth_permission p ON p.id = rp.permission_id
+                WHERE ar.account_id = ? AND r.status = 'ENABLED'
+                UNION
+                SELECT p.permission_code
+                FROM auth_account_permission ap
+                JOIN auth_permission p ON p.id = ap.permission_id
+                WHERE ap.account_id = ?
+            ) effective_permissions
+            ORDER BY permission_code
+            """, String.class, accountId, accountId);
     }
 
     public List<StoreScope> findStoreScopes(Long accountId) {

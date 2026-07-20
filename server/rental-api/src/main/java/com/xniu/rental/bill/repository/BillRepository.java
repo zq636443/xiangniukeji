@@ -67,6 +67,19 @@ public class BillRepository {
         return list.stream().findFirst();
     }
 
+    public Optional<RentalBill> findOpenBillByOrderAndType(Long orderId, BillType billType) {
+        var list = jdbcTemplate.query("""
+            SELECT *
+            FROM rental_bill
+            WHERE order_id = ?
+              AND bill_type = ?
+              AND bill_status NOT IN ('PAID', 'CANCELLED')
+            ORDER BY id DESC
+            LIMIT 1
+            """, billMapper, orderId, billType.name());
+        return list.stream().findFirst();
+    }
+
     public List<RentalBill> listDueBillsForDeduct(LocalDateTime now, Integer limit) {
         return jdbcTemplate.query("""
             SELECT * FROM rental_bill
@@ -76,6 +89,18 @@ public class BillRepository {
             ORDER BY due_at ASC, id ASC
             LIMIT ?
             """, billMapper, now, limit);
+    }
+
+    public boolean hasDueUnpaidBills(Long orderId, LocalDateTime now) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(*)
+            FROM rental_bill
+            WHERE order_id = ?
+              AND bill_status NOT IN ('PAID', 'CANCELLED')
+              AND due_at <= ?
+              AND payable_amount > paid_amount
+            """, Integer.class, orderId, now);
+        return count != null && count > 0;
     }
 
     public Optional<Integer> findMaxPeriodNo(Long orderId, BillType billType) {

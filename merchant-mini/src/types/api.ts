@@ -59,6 +59,45 @@ export type Store = {
   status: 'ENABLED' | 'DISABLED';
 };
 
+export type StoreSkuPackage = {
+  id: number;
+  packageId: number;
+  packageName: string;
+  leaseUnit: 'DAY' | 'MONTH';
+  leaseValue: number;
+  totalPeriods: number;
+  billDayMode: 'PAYMENT_DAY' | 'FIXED_DAY';
+  billDay?: number | null;
+  rentalAmount: number;
+  periodAmount: number;
+  depositAmount: number;
+  autoRenewEnabled: boolean;
+  renewalUnit?: 'DAY' | 'MONTH' | null;
+  renewalValue?: number | null;
+  renewalAmount?: number | null;
+  status: 'ENABLED' | 'DISABLED';
+};
+
+export type StoreSku = {
+  id: number;
+  merchantId: number;
+  merchantName?: string | null;
+  storeId: number;
+  storeName?: string | null;
+  skuId: number;
+  skuName?: string | null;
+  storeSkuCode: string;
+  saleMode: 'RENTAL' | 'SALE';
+  displayName: string;
+  signFeeAmount: number;
+  signFeePayer: 'USER' | 'MERCHANT';
+  needFrameAsset: boolean;
+  needBatteryAsset: boolean;
+  supportCrossStoreReturn: boolean;
+  status: 'ON_SHELF' | 'OFF_SHELF';
+  packages: StoreSkuPackage[];
+};
+
 export type AssetStatus =
   | 'IDLE'
   | 'RENTING'
@@ -71,7 +110,7 @@ export type AssetStatus =
 export type Asset = {
   id: number;
   assetCode: string;
-  assetType: 'VEHICLE_FRAME' | 'BATTERY';
+  assetType: 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE';
   serialNo: string;
   investorId: number;
   investorName?: string | null;
@@ -82,7 +121,7 @@ export type Asset = {
   status: AssetStatus;
   purchaseAmount: number;
   maintenanceFeeAmount: number;
-  residualValue: number;
+  residualValue?: number | null;
   purchasedAt?: string | null;
   scrappedAt?: string | null;
   soldAt?: string | null;
@@ -148,7 +187,7 @@ export type AssetMaintenance = {
   maintenanceNo: string;
   assetId: number;
   assetCode: string;
-  assetType: 'VEHICLE_FRAME' | 'BATTERY';
+  assetType: 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE';
   serialNo: string;
   orderId?: number | null;
   storeId?: number | null;
@@ -207,7 +246,7 @@ export type AssetChange = {
   id: number;
   changeNo: string;
   orderId: number;
-  assetType: 'VEHICLE_FRAME' | 'BATTERY';
+  assetType: 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE';
   oldAssetId?: number | null;
   newAssetId: number;
   oldAssetResultStatus: AssetStatus;
@@ -228,13 +267,22 @@ export type RentalOrder = {
   id: number;
   orderNo: string;
   userAccountId?: number | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
   merchantId: number;
   storeId: number;
+  storeName?: string | null;
   storeSkuId: number;
+  storeSkuName?: string | null;
   skuId: number;
   packageId: number;
+  packageName?: string | null;
   frameAssetId?: number | null;
+  frameAssetCode?: string | null;
+  frameSerialNo?: string | null;
   batteryAssetId?: number | null;
+  batteryAssetCode?: string | null;
+  batterySerialNo?: string | null;
   orderStatus: OrderStatus;
   rentalAmount: number;
   signFeeAmount: number;
@@ -247,6 +295,11 @@ export type RentalOrder = {
   totalPeriods: number;
   billDayMode: 'PAYMENT_DAY' | 'FIXED_DAY';
   billDay?: number | null;
+  autoRenewEnabled: boolean;
+  renewalUnit?: 'DAY' | 'MONTH' | null;
+  renewalValue?: number | null;
+  renewalAmount?: number | null;
+  renewalCount: number;
   expectedPickupAt?: string | null;
   leaseStartedAt?: string | null;
   expectedReturnAt?: string | null;
@@ -266,7 +319,7 @@ export type RentalBill = {
   id: number;
   billNo: string;
   orderId: number;
-  billType: 'INITIAL' | 'PERIODIC' | 'OVERDUE';
+  billType: 'INITIAL' | 'PERIODIC' | 'RENEWAL' | 'OVERDUE';
   periodNo: number;
   billStatus: 'PENDING_PAYMENT' | 'PAYING' | 'PAID' | 'OVERDUE' | 'CANCELLED' | 'FAILED';
   dueAt: string;
@@ -281,6 +334,8 @@ export type SettlementSnapshot = {
   snapshotNo: string;
   sourceType: string;
   sourceId: number;
+  calculationVersion: 'LEGACY_V1' | 'PROFIT_V2';
+  sourceChannel: string;
   storeSkuId: number;
   skuId: number;
   merchantId: number;
@@ -290,6 +345,7 @@ export type SettlementSnapshot = {
   matchedRuleId?: number | null;
   matchedRuleScope: string;
   rentalAmount: number;
+  settlementBaseAmount: number;
   signFeeAmount: number;
   merchantOrderFeeAmount: number;
   merchantRentShareRate: number;
@@ -301,6 +357,19 @@ export type SettlementSnapshot = {
   investorOperationFeeAmount: number;
   maintenanceFeeAmount: number;
   investorNetShareAmount: number;
+  channelFeeRate: number;
+  channelFeeAmount: number;
+  platformFeeRate: number;
+  platformFeeAmount: number;
+  distributableAmount: number;
+  storeOperationRate: number;
+  storeOperationAmount: number;
+  maintenanceFundRate: number;
+  maintenanceFundAmount: number;
+  channelReferralRate: number;
+  channelReferralAmount: number;
+  investorShareRate: number;
+  investorShareAmount: number;
   ruleSummary: string;
   createdAt: string;
 };
@@ -312,9 +381,21 @@ export type SettlementIncomeEntry = {
   snapshotId: number;
   merchantId: number;
   storeId: number;
-  beneficiaryType: 'MERCHANT' | 'INVESTOR' | 'PLATFORM';
+  beneficiaryType: 'MERCHANT' | 'INVESTOR' | 'PLATFORM' | 'CHANNEL' | 'MAINTENANCE_FUND';
   beneficiaryId?: number | null;
-  lineType: 'MERCHANT_ORDER_FEE' | 'MERCHANT_RENT_SHARE' | 'PLATFORM_RENT_SHARE' | 'PLATFORM_OPERATION_FEE' | 'MAINTENANCE_FEE' | 'INVESTOR_NET_RENT';
+  lineType:
+    | 'CHANNEL_VERIFICATION_FEE'
+    | 'PLATFORM_SERVICE_FEE'
+    | 'STORE_OPERATION_SHARE'
+    | 'MAINTENANCE_FUND_SHARE'
+    | 'CHANNEL_REFERRAL_SHARE'
+    | 'INVESTOR_SHARE'
+    | 'MERCHANT_ORDER_FEE'
+    | 'MERCHANT_RENT_SHARE'
+    | 'PLATFORM_RENT_SHARE'
+    | 'PLATFORM_OPERATION_FEE'
+    | 'MAINTENANCE_FEE'
+    | 'INVESTOR_NET_RENT';
   amount: number;
   entryStatus: 'PENDING' | 'SETTLED' | 'FROZEN';
   remark?: string | null;
@@ -336,6 +417,7 @@ export type VoucherRecord = {
   verifyStatus: 'INPUT' | 'PREPARED' | 'VERIFIED' | 'WAITING_SIGN_FEE' | 'CONSUMING' | 'CONSUMED' | 'FAILED' | 'EXCEPTION';
   voucherTitle?: string | null;
   voucherAmount: number;
+  verificationAmount?: number | null;
   signFeeAmount: number;
   failureReason?: string | null;
   consumedAt?: string | null;

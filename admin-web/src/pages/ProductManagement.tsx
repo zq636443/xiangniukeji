@@ -1,4 +1,5 @@
 import { Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
+import type { FormInstance } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
 import type { Merchant, ProductCategory, ProductPackage, ProductSku, Store, StoreSku } from '../types/api';
@@ -16,6 +17,7 @@ type SkuForm = {
 type PackageForm = {
   skuId: number;
   packageName: string;
+  priceAmount: number;
   leaseUnit: 'DAY' | 'MONTH';
   leaseValue: number;
   totalPeriods: number;
@@ -27,6 +29,10 @@ type PackagePriceForm = {
   rentalAmount: number;
   periodAmount: number;
   depositAmount: number;
+  autoRenewEnabled?: boolean;
+  renewalUnit?: 'DAY' | 'MONTH';
+  renewalValue?: number;
+  renewalAmount?: number;
 };
 type StoreSkuForm = {
   merchantId: number;
@@ -93,13 +99,13 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
   const storeSkuPackageOptions = useMemo(
     () => packages
       .filter((item) => !selectedStoreSkuSkuId || item.skuId === selectedStoreSkuSkuId)
-      .map((item) => ({ label: `${item.packageName} / ${item.leaseValue}${item.leaseUnit === 'DAY' ? '天' : '个月'}`, value: item.id })),
+      .map((item) => ({ label: `${item.packageName} / ¥${item.priceAmount} / ${item.leaseValue}${item.leaseUnit === 'DAY' ? '天' : '个月'}`, value: item.id })),
     [packages, selectedStoreSkuSkuId]
   );
   const batchPackageOptions = useMemo(
     () => packages
       .filter((item) => !selectedBatchSkuId || item.skuId === selectedBatchSkuId)
-      .map((item) => ({ label: `${item.packageName} / ${item.leaseValue}${item.leaseUnit === 'DAY' ? '天' : '个月'}`, value: item.id })),
+      .map((item) => ({ label: `${item.packageName} / ¥${item.priceAmount} / ${item.leaseValue}${item.leaseUnit === 'DAY' ? '天' : '个月'}`, value: item.id })),
     [packages, selectedBatchSkuId]
   );
 
@@ -132,7 +138,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
     await http.post('/api/admin/products/skus', values);
     setSkuOpen(false);
     skuForm.resetFields();
-    message.success('SKU 已创建');
+    message.success('商品链接已创建');
     await loadAll();
   }
 
@@ -140,7 +146,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
     await http.post('/api/admin/products/packages', values);
     setPackageOpen(false);
     packageForm.resetFields();
-    message.success('套餐已创建');
+    message.success('SKU 已创建');
     await loadAll();
   }
 
@@ -203,9 +209,13 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       signFeePayer: record.signFeePayer,
       packages: record.packages.map((item) => ({
         packageId: item.packageId,
-        rentalAmount: item.rentalAmount,
+        rentalAmount: packages.find((template) => template.id === item.packageId)?.priceAmount ?? item.rentalAmount,
         periodAmount: item.periodAmount,
-        depositAmount: item.depositAmount
+        depositAmount: item.depositAmount,
+        autoRenewEnabled: item.autoRenewEnabled,
+        renewalUnit: item.renewalUnit ?? item.leaseUnit,
+        renewalValue: item.renewalValue ?? defaultRenewalValue(item),
+        renewalAmount: item.renewalAmount ?? item.periodAmount
       }))
     });
     setStoreSkuOpen(true);
@@ -220,16 +230,16 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
   return (
     <Space direction="vertical" size={16} className="page-stack">
       <Space align="center" className="toolbar">
-        <Typography.Title level={3}>{mode === 'skus' ? 'SKU 管理' : mode === 'packages' ? '套餐管理' : mode === 'storeSkus' ? '门店商品' : '商品管理'}</Typography.Title>
+        <Typography.Title level={3}>{mode === 'skus' ? '链接管理' : mode === 'packages' ? 'SKU 管理' : mode === 'storeSkus' ? '门店商品' : '商品管理'}</Typography.Title>
         {showSkus && <Button type={mode === 'skus' ? 'primary' : 'default'} onClick={() => setCategoryOpen(true)}>新建分类</Button>}
         {showSkus && <Button type={mode === 'skus' ? 'primary' : 'default'} onClick={() => {
           skuForm.setFieldsValue({ skuType: 'RENTAL', needFrameAsset: true, needBatteryAsset: true, supportCrossStoreReturn: false });
           setSkuOpen(true);
-        }}>新建 SKU</Button>}
+        }}>新建链接</Button>}
         {showPackages && <Button type={mode === 'packages' ? 'primary' : 'default'} onClick={() => {
-          packageForm.setFieldsValue({ leaseUnit: 'MONTH', leaseValue: 1, totalPeriods: 1, billDayMode: 'PAYMENT_DAY' });
+          packageForm.setFieldsValue({ priceAmount: 0, leaseUnit: 'MONTH', leaseValue: 1, totalPeriods: 1, billDayMode: 'PAYMENT_DAY' });
           setPackageOpen(true);
-        }}>新建套餐</Button>}
+        }}>新增 SKU</Button>}
         {showStoreSkus && <Button type={mode === 'storeSkus' ? 'primary' : 'default'} onClick={openCreateStoreSku}>门店上架</Button>}
         {showStoreSkus && <Button onClick={() => {
           batchForm.resetFields();
@@ -239,17 +249,26 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       </Space>
 
       {showSkus && <div className="section">
-        <Typography.Title level={5}>总部 SKU</Typography.Title>
+        <Typography.Title level={5}>商品链接</Typography.Title>
         <Table
           rowKey="id"
           size="small"
           dataSource={skus}
           pagination={false}
           columns={[
-            { title: '编码', dataIndex: 'skuCode' },
-            { title: '名称', dataIndex: 'skuName' },
+            { title: '链接编码', dataIndex: 'skuCode' },
+            { title: '链接名称', dataIndex: 'skuName' },
             { title: '分类', dataIndex: 'categoryName' },
-            { title: '类型', dataIndex: 'skuType' },
+            { title: '类型', dataIndex: 'skuType', render: (value: ProductSku['skuType']) => value === 'RENTAL' ? '租赁' : '售卖' },
+            {
+              title: '包含 SKU',
+              render: (_, record) => {
+                const linkedSkus = packages.filter((item) => item.skuId === record.id);
+                return linkedSkus.length ? (
+                  <Space wrap size={[4, 4]}>{linkedSkus.map((item) => <Tag key={item.id}>{item.packageName} / ¥{item.priceAmount}</Tag>)}</Space>
+                ) : '-';
+              }
+            },
             { title: '资产要求', render: (_, record) => `${record.needFrameAsset ? '车架' : ''}${record.needBatteryAsset ? ' 电池' : ''}`.trim() || '无' },
             { title: '跨店归还', dataIndex: 'supportCrossStoreReturn', render: (value: boolean) => value ? '支持' : '不支持' }
           ]}
@@ -257,16 +276,17 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       </div>}
 
       {showPackages && <div className="section">
-        <Typography.Title level={5}>套餐模板</Typography.Title>
+        <Typography.Title level={5}>链接 SKU</Typography.Title>
         <Table
           rowKey="id"
           size="small"
           dataSource={packages}
           pagination={false}
           columns={[
-            { title: '编码', dataIndex: 'packageCode' },
-            { title: '套餐', dataIndex: 'packageName' },
-            { title: 'SKU', dataIndex: 'skuName' },
+            { title: 'SKU 编码', dataIndex: 'packageCode' },
+            { title: 'SKU 名称', dataIndex: 'packageName' },
+            { title: '所属链接', dataIndex: 'skuName' },
+            { title: 'SKU 价格', dataIndex: 'priceAmount', render: (value: number) => `¥${Number(value || 0).toFixed(2)}` },
             { title: '租期', render: (_, record) => `${record.leaseValue}${record.leaseUnit === 'DAY' ? '天' : '个月'}` },
             { title: '总期数', dataIndex: 'totalPeriods' },
             { title: '账单日', render: (_, record) => record.billDayMode === 'PAYMENT_DAY' ? '付款日' : `每月 ${record.billDay} 日` }
@@ -275,7 +295,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       </div>}
 
       {showStoreSkus && <div className="section">
-        <Typography.Title level={5}>门店 SKU</Typography.Title>
+        <Typography.Title level={5}>门店商品链接</Typography.Title>
         <Table
           rowKey="id"
           size="small"
@@ -285,18 +305,18 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
           columns={[
             { title: '门店', dataIndex: 'storeName' },
             { title: '商品名', dataIndex: 'displayName' },
-            { title: 'SKU', dataIndex: 'skuName' },
+            { title: '商品链接', dataIndex: 'skuName' },
             { title: '签单费', dataIndex: 'signFeeAmount' },
             { title: '承担方', dataIndex: 'signFeePayer', render: (value) => value === 'USER' ? '用户' : '商户' },
             {
-              title: '套餐价格',
+              title: 'SKU 价格',
               render: (_, record) => (
                 <Space direction="vertical" size={4}>
                   {record.packages.map((item) => (
                     <div key={item.id ?? item.packageId}>
                       <Typography.Text strong>{item.packageName}</Typography.Text>
                       <Typography.Text type="secondary">
-                        {`  总价 ${item.rentalAmount} / 每期 ${item.periodAmount} / 押金 ${item.depositAmount}`}
+                        {`  价格 ${item.rentalAmount} / 分期 ${item.periodAmount} / 押金 ${item.depositAmount} / ${renewalText(item)}`}
                       </Typography.Text>
                     </div>
                   ))}
@@ -325,11 +345,11 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
         </Form>
       </Modal>
 
-      <Modal title="新建 SKU" open={skuOpen} onCancel={() => setSkuOpen(false)} onOk={() => skuForm.submit()} destroyOnHidden>
+      <Modal title="新建商品链接" open={skuOpen} onCancel={() => setSkuOpen(false)} onOk={() => skuForm.submit()} destroyOnHidden>
         <Form form={skuForm} layout="vertical" onFinish={createSku}>
           <Form.Item name="categoryId" label="分类" rules={[{ required: true, message: '请选择分类' }]}><Select options={categoryOptions} /></Form.Item>
-          <Form.Item name="skuName" label="SKU 名称" rules={[{ required: true, message: '请输入 SKU 名称' }]}><Input /></Form.Item>
-          <Form.Item name="skuType" label="类型" rules={[{ required: true, message: '请选择类型' }]}><Select options={[{ label: '租赁', value: 'RENTAL' }, { label: '售卖', value: 'SALE' }]} /></Form.Item>
+          <Form.Item name="skuName" label="链接名称" rules={[{ required: true, message: '请输入链接名称' }]}><Input /></Form.Item>
+          <Form.Item name="skuType" label="链接类型" rules={[{ required: true, message: '请选择链接类型' }]}><Select options={[{ label: '租赁', value: 'RENTAL' }, { label: '售卖', value: 'SALE' }]} /></Form.Item>
           <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
           <Form.Item name="needFrameAsset" valuePropName="checked"><Checkbox>需要绑定车架</Checkbox></Form.Item>
           <Form.Item name="needBatteryAsset" valuePropName="checked"><Checkbox>需要绑定电池</Checkbox></Form.Item>
@@ -337,10 +357,11 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
         </Form>
       </Modal>
 
-      <Modal title="新建套餐" open={packageOpen} onCancel={() => setPackageOpen(false)} onOk={() => packageForm.submit()} destroyOnHidden>
+      <Modal title="新增 SKU" open={packageOpen} onCancel={() => setPackageOpen(false)} onOk={() => packageForm.submit()} destroyOnHidden>
         <Form form={packageForm} layout="vertical" onFinish={createPackage}>
-          <Form.Item name="skuId" label="SKU" rules={[{ required: true, message: '请选择 SKU' }]}><Select options={skuOptions} /></Form.Item>
-          <Form.Item name="packageName" label="套餐名称" rules={[{ required: true, message: '请输入套餐名称' }]}><Input /></Form.Item>
+          <Form.Item name="skuId" label="所属链接" rules={[{ required: true, message: '请选择商品链接' }]}><Select options={skuOptions} /></Form.Item>
+          <Form.Item name="packageName" label="SKU 名称" rules={[{ required: true, message: '请输入 SKU 名称' }]}><Input /></Form.Item>
+          <Form.Item name="priceAmount" label="SKU 价格" rules={[{ required: true, message: '请输入 SKU 价格' }]}><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="leaseUnit" label="租期单位" rules={[{ required: true, message: '请选择租期单位' }]}><Select options={[{ label: '天', value: 'DAY' }, { label: '月', value: 'MONTH' }]} /></Form.Item>
           <Form.Item name="leaseValue" label="租期值" rules={[{ required: true, message: '请输入租期值' }]}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="totalPeriods" label="总期数" rules={[{ required: true, message: '请输入总期数' }]}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
@@ -375,7 +396,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
           <Form.Item name="storeId" label="门店" rules={[{ required: true, message: '请选择门店' }]}>
             <Select options={filteredStoreOptions} disabled={Boolean(editingStoreSku)} />
           </Form.Item>
-          <Form.Item name="skuId" label="SKU" rules={[{ required: true, message: '请选择 SKU' }]}>
+          <Form.Item name="skuId" label="商品链接" rules={[{ required: true, message: '请选择商品链接' }]}>
             <Select
               options={skuOptions}
               disabled={Boolean(editingStoreSku)}
@@ -383,7 +404,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
             />
           </Form.Item>
           <Form.Item name="displayName" label="门店商品名" rules={[{ required: true, message: '请输入门店商品名' }]}><Input /></Form.Item>
-          {storeSkuFields(storeSkuPackageOptions)}
+          {storeSkuFields(storeSkuPackageOptions, packages, storeSkuForm)}
         </Form>
       </Modal>
 
@@ -400,18 +421,22 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       >
         <Form form={batchForm} layout="vertical" onFinish={batchPublish}>
           <Form.Item name="storeIds" label="门店" rules={[{ required: true, message: '请选择门店' }]}><Select mode="multiple" options={storeOptions} /></Form.Item>
-          <Form.Item name="skuId" label="SKU" rules={[{ required: true, message: '请选择 SKU' }]}>
+          <Form.Item name="skuId" label="商品链接" rules={[{ required: true, message: '请选择商品链接' }]}>
             <Select options={skuOptions} onChange={() => batchForm.setFieldValue('packages', [defaultPackagePrice()])} />
           </Form.Item>
-          <Form.Item name="displayName" label="门店商品名"><Input placeholder="不填则使用 SKU 名称" /></Form.Item>
-          {storeSkuFields(batchPackageOptions)}
+          <Form.Item name="displayName" label="门店商品名"><Input placeholder="不填则使用链接名称" /></Form.Item>
+          {storeSkuFields(batchPackageOptions, packages, batchForm)}
         </Form>
       </Modal>
     </Space>
   );
 }
 
-function storeSkuFields(packageOptions: { label: string; value: number }[]) {
+function storeSkuFields(
+  packageOptions: { label: string; value: number }[],
+  packageTemplates: ProductPackage[],
+  form: FormInstance
+) {
   return (
     <>
       <Form.Item name="saleMode" label="售卖模式" rules={[{ required: true, message: '请选择售卖模式' }]}><Select options={[{ label: '租赁', value: 'RENTAL' }, { label: '售卖', value: 'SALE' }]} /></Form.Item>
@@ -421,38 +446,61 @@ function storeSkuFields(packageOptions: { label: string; value: number }[]) {
         {(fields, { add, remove }) => (
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
             <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
-              <Typography.Title level={5} style={{ margin: 0 }}>套餐价格</Typography.Title>
-              <Button onClick={() => add(defaultPackagePrice())}>新增套餐价格</Button>
+              <Typography.Title level={5} style={{ margin: 0 }}>SKU 与价格</Typography.Title>
+              <Button onClick={() => add(defaultPackagePrice())}>新增 SKU</Button>
             </Space>
             {fields.map((field, index) => (
               <div key={field.key} className="section" style={{ marginBottom: 0 }}>
                 <Space align="center" style={{ justifyContent: 'space-between', width: '100%', marginBottom: 12 }}>
-                  <Typography.Text strong>{`套餐 ${index + 1}`}</Typography.Text>
-                  <Button danger disabled={fields.length === 1} onClick={() => remove(field.name)}>删除套餐</Button>
+                  <Typography.Text strong>{`SKU ${index + 1}`}</Typography.Text>
+                  <Button danger disabled={fields.length === 1} onClick={() => remove(field.name)}>删除 SKU</Button>
                 </Space>
                 <Form.Item
                   name={[field.name, 'packageId']}
-                  label="套餐"
-                  rules={[{ required: true, message: '请选择套餐' }]}
+                  label="SKU"
+                  rules={[
+                    { required: true, message: '请选择 SKU' },
+                    ({ getFieldValue }) => ({
+                      validator(_, value) {
+                        const selected = (getFieldValue('packages') || [])
+                          .map((item: PackagePriceForm | undefined) => item?.packageId)
+                          .filter(Boolean);
+                        return value && selected.filter((item: number) => item === value).length > 1
+                          ? Promise.reject(new Error('每个 SKU 只能配置一套价格'))
+                          : Promise.resolve();
+                      }
+                    })
+                  ]}
                 >
-                  <Select options={packageOptions} />
+                  <Select
+                    options={packageOptions}
+                    onChange={(packageId) => applyRenewalDefaults(form, field.name, packageTemplates.find((item) => item.id === packageId))}
+                  />
                 </Form.Item>
                 <Space.Compact block>
                   <Form.Item
                     style={{ width: '34%' }}
                     name={[field.name, 'rentalAmount']}
-                    label="总租金/商品价"
+                    label="SKU 价格"
                     rules={[{ required: true, message: '请输入金额' }]}
                   >
-                    <InputNumber min={0} style={{ width: '100%' }} />
+                    <InputNumber min={0} precision={2} disabled style={{ width: '100%' }} />
                   </Form.Item>
                   <Form.Item
                     style={{ width: '33%' }}
                     name={[field.name, 'periodAmount']}
-                    label="每期金额"
+                    label="分期金额"
                     rules={[{ required: true, message: '请输入每期金额' }]}
                   >
-                    <InputNumber min={0} style={{ width: '100%' }} />
+                    <InputNumber
+                      min={0}
+                      style={{ width: '100%' }}
+                      onChange={(value) => {
+                        if (!form.getFieldValue(['packages', field.name, 'renewalAmount'])) {
+                          form.setFieldValue(['packages', field.name, 'renewalAmount'], Number(value || 0));
+                        }
+                      }}
+                    />
                   </Form.Item>
                   <Form.Item
                     style={{ width: '33%' }}
@@ -461,6 +509,32 @@ function storeSkuFields(packageOptions: { label: string; value: number }[]) {
                     rules={[{ required: true, message: '请输入押金' }]}
                   >
                     <InputNumber min={0} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Space.Compact>
+                <Form.Item name={[field.name, 'autoRenewEnabled']} valuePropName="checked">
+                  <Checkbox>开启自动续租</Checkbox>
+                </Form.Item>
+                <Space.Compact block>
+                  <Form.Item
+                    style={{ width: '30%' }}
+                    name={[field.name, 'renewalUnit']}
+                    label="续租周期单位"
+                  >
+                    <Select options={[{ label: '天', value: 'DAY' }, { label: '月', value: 'MONTH' }]} />
+                  </Form.Item>
+                  <Form.Item
+                    style={{ width: '30%' }}
+                    name={[field.name, 'renewalValue']}
+                    label="续租周期"
+                  >
+                    <InputNumber min={1} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item
+                    style={{ width: '40%' }}
+                    name={[field.name, 'renewalAmount']}
+                    label="续租金额"
+                  >
+                    <InputNumber min={0} precision={2} style={{ width: '100%' }} />
                   </Form.Item>
                 </Space.Compact>
               </div>
@@ -477,6 +551,37 @@ function defaultPackagePrice(): PackagePriceForm {
     packageId: undefined as never,
     rentalAmount: 0,
     periodAmount: 0,
-    depositAmount: 0
+    depositAmount: 0,
+    autoRenewEnabled: true,
+    renewalUnit: 'MONTH',
+    renewalValue: 1,
+    renewalAmount: 0
   };
+}
+
+function applyRenewalDefaults(form: FormInstance, fieldName: number, template?: ProductPackage) {
+  if (!template) {
+    return;
+  }
+  const current = form.getFieldValue(['packages', fieldName]) as PackagePriceForm | undefined;
+  const skuPrice = Number(template.priceAmount || 0);
+  const periodAmount = current?.periodAmount || Number((skuPrice / Math.max(template.totalPeriods, 1)).toFixed(2));
+  form.setFieldValue(['packages', fieldName, 'rentalAmount'], skuPrice);
+  form.setFieldValue(['packages', fieldName, 'periodAmount'], periodAmount);
+  form.setFieldValue(['packages', fieldName, 'autoRenewEnabled'], current?.autoRenewEnabled ?? true);
+  form.setFieldValue(['packages', fieldName, 'renewalUnit'], template.leaseUnit);
+  form.setFieldValue(['packages', fieldName, 'renewalValue'], defaultRenewalValue(template));
+  form.setFieldValue(['packages', fieldName, 'renewalAmount'], current?.renewalAmount || periodAmount);
+}
+
+function defaultRenewalValue(template: Pick<ProductPackage, 'leaseValue' | 'totalPeriods'>) {
+  return Math.max(1, Math.floor(template.leaseValue / Math.max(template.totalPeriods, 1)));
+}
+
+function renewalText(item: { autoRenewEnabled?: boolean; renewalUnit?: 'DAY' | 'MONTH' | null; renewalValue?: number | null; renewalAmount?: number | null }) {
+  if (!item.autoRenewEnabled) {
+    return '续租关闭';
+  }
+  const unit = item.renewalUnit === 'DAY' ? '天' : '个月';
+  return `续租 ${item.renewalValue || 1}${unit} / ${item.renewalAmount ?? 0}`;
 }

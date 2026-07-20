@@ -58,6 +58,10 @@ export type StoreSkuPackage = {
   rentalAmount: number;
   periodAmount: number;
   depositAmount: number;
+  autoRenewEnabled: boolean;
+  renewalUnit?: 'DAY' | 'MONTH' | null;
+  renewalValue?: number | null;
+  renewalAmount?: number | null;
   status: 'ENABLED' | 'DISABLED';
 };
 
@@ -113,13 +117,22 @@ export type RentalOrder = {
   id: number;
   orderNo: string;
   userAccountId?: number | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
   merchantId: number;
   storeId: number;
+  storeName?: string | null;
   storeSkuId: number;
+  storeSkuName?: string | null;
   skuId: number;
   packageId: number;
+  packageName?: string | null;
   frameAssetId?: number | null;
+  frameAssetCode?: string | null;
+  frameSerialNo?: string | null;
   batteryAssetId?: number | null;
+  batteryAssetCode?: string | null;
+  batterySerialNo?: string | null;
   orderStatus: OrderStatus;
   rentalAmount: number;
   signFeeAmount: number;
@@ -131,6 +144,11 @@ export type RentalOrder = {
   totalPeriods: number;
   billDayMode: 'PAYMENT_DAY' | 'FIXED_DAY';
   billDay?: number | null;
+  autoRenewEnabled: boolean;
+  renewalUnit?: 'DAY' | 'MONTH' | null;
+  renewalValue?: number | null;
+  renewalAmount?: number | null;
+  renewalCount: number;
   expectedPickupAt?: string | null;
   leaseStartedAt?: string | null;
   expectedReturnAt?: string | null;
@@ -150,7 +168,7 @@ export type RentalBill = {
   id: number;
   billNo: string;
   orderId: number;
-  billType: 'INITIAL' | 'PERIODIC' | 'OVERDUE';
+  billType: 'INITIAL' | 'PERIODIC' | 'RENEWAL' | 'OVERDUE';
   periodNo: number;
   billStatus: 'PENDING_PAYMENT' | 'PAYING' | 'PAID' | 'OVERDUE' | 'CANCELLED' | 'FAILED';
   dueAt: string;
@@ -256,6 +274,7 @@ export type VoucherRecord = {
   verifyStatus: 'INPUT' | 'PREPARED' | 'VERIFIED' | 'WAITING_SIGN_FEE' | 'CONSUMING' | 'CONSUMED' | 'FAILED' | 'EXCEPTION';
   voucherTitle?: string | null;
   voucherAmount: number;
+  verificationAmount?: number | null;
   signFeeAmount: number;
   failureReason?: string | null;
   verifiedAt?: string | null;

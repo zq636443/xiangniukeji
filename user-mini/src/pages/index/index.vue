@@ -3,7 +3,7 @@
     <view class="topbar">
       <view>
         <view class="title">享牛租车</view>
-        <view class="subtitle">扫码门店、选择套餐、完成支付与签约</view>
+        <view class="subtitle">扫码门店、选择 SKU、完成支付与签约</view>
       </view>
       <button v-if="account" class="ghost-btn compact-btn" @tap="logout">退出</button>
     </view>
@@ -53,19 +53,19 @@
           </view>
         </view>
       </view>
-      <view v-else class="empty">请输入门店码后查询可租套餐</view>
+      <view v-else class="empty">请输入门店码后查询可租 SKU</view>
     </view>
 
     <view v-if="selectedProduct" class="panel">
-      <view class="section-title">选择套餐</view>
-      <view v-if="selectedProduct.packages.length === 0" class="empty">该门店商品暂未配置套餐</view>
+      <view class="section-title">选择 SKU</view>
+      <view v-if="selectedProduct.packages.length === 0" class="empty">该门店商品暂未配置 SKU</view>
       <view v-for="item in selectedProduct.packages" :key="item.id" class="package-item">
         <view>
           <view class="item-title">{{ item.packageName }}</view>
           <view class="muted">
             {{ leaseText(item.leaseUnit, item.leaseValue) }} / {{ item.totalPeriods }} 期
           </view>
-          <view class="muted">首期应付含租金、签单费和押金，后续按账单扣款。</view>
+	          <view class="muted">首期应付含租金、签单费和押金，{{ renewalText(item) }}。</view>
         </view>
         <view class="package-side">
           <view class="amount">{{ money(item.periodAmount) }}</view>
@@ -86,9 +86,11 @@
           <input v-model="voucherCode" class="input" placeholder="输入或扫描抖音/美团/闲鱼核销码" />
           <button class="ghost-btn scan-btn" @tap="scanVoucherCode">扫码</button>
         </view>
+        <input v-model="voucherVerificationAmount" type="digit" class="input" placeholder="实际核销金额，可稍后由门店补录" />
       </view>
       <view class="action-row">
         <button class="ghost-btn flex-btn" :loading="voucherLoading" @tap="prepareVoucher">核销准备</button>
+        <button class="ghost-btn flex-btn" :disabled="!currentVoucher || !!currentVoucher.orderId" :loading="voucherLoading" @tap="saveVoucherVerificationAmount">保存金额</button>
         <button class="ghost-btn flex-btn" :disabled="!currentVoucher" :loading="voucherLoading" @tap="verifyVoucher">确认验码</button>
         <button class="primary-btn flex-btn" :disabled="!currentVoucher" :loading="voucherLoading" @tap="consumeVoucher">支付后核销</button>
       </view>
@@ -97,7 +99,8 @@
           <view>
             <view class="item-title">{{ currentVoucher.voucherTitle || currentVoucher.voucherCode }}</view>
             <view class="muted">{{ platformText(currentVoucher.sourcePlatform) }} / {{ voucherStatusText(currentVoucher.verifyStatus) }}</view>
-            <view class="muted">核销金额 {{ money(currentVoucher.voucherAmount) }} / 签单费 {{ money(currentVoucher.signFeeAmount) }}</view>
+            <view class="muted">参考金额 {{ money(currentVoucher.voucherAmount) }} / 实际核销 {{ currentVoucher.verificationAmount == null ? '待补录' : money(currentVoucher.verificationAmount) }}</view>
+            <view class="muted">签单费 {{ money(currentVoucher.signFeeAmount) }}</view>
           </view>
           <view class="amount small">{{ currentVoucher.orderId ? `订单 ${currentVoucher.orderId}` : '待生成' }}</view>
         </view>
@@ -195,7 +198,8 @@
       >
         <view>
           <view class="item-title">{{ order.orderNo }}</view>
-          <view class="muted">{{ leaseText(order.leaseUnit, order.leaseValue) }} / {{ order.totalPeriods }} 期</view>
+          <view class="muted">{{ order.storeName || '门店' }} / {{ order.storeSkuName || '商品' }}</view>
+          <view class="muted">{{ leaseText(order.leaseUnit, order.leaseValue) }} / 车架 {{ order.frameSerialNo || order.frameAssetCode || '-' }}</view>
         </view>
         <view class="right-text">
           <view>{{ orderStatusText(order.orderStatus) }}</view>
@@ -272,6 +276,7 @@ const voucherPackage = ref<StoreSkuPackage | null>(null);
 const currentVoucher = ref<VoucherRecord | null>(null);
 const agreementUrl = ref('');
 const voucherCode = ref('');
+const voucherVerificationAmount = ref('');
 const voucherPlatformIndex = ref(0);
 const voucherPlatformLabels = ['抖音券码', '美团券码', '闲鱼核销码'];
 const voucherPlatforms: VoucherRecord['sourcePlatform'][] = ['DOUYIN', 'MEITUAN', 'XIANYU'];
@@ -372,12 +377,14 @@ function selectProduct(product: StoreSku) {
   selectedProduct.value = product;
   voucherPackage.value = null;
   currentVoucher.value = null;
+  voucherVerificationAmount.value = '';
 }
 
 function selectVoucherPackage(item: StoreSkuPackage) {
   voucherPackage.value = item;
   currentVoucher.value = null;
-  uni.showToast({ title: '已选择核销套餐', icon: 'none' });
+  voucherVerificationAmount.value = '';
+  uni.showToast({ title: '已选择核销 SKU', icon: 'none' });
 }
 
 async function createOrder(item: StoreSkuPackage) {
@@ -394,6 +401,8 @@ async function createOrder(item: StoreSkuPackage) {
     const result = await request<UserOrderCreateResult>('/api/user/orders', {
       method: 'POST',
       data: {
+        customerName: account.value.displayName,
+        customerPhone: account.value.phone || undefined,
         storeSkuId: selectedProduct.value.id,
         packageId: item.packageId
       }
@@ -421,7 +430,7 @@ async function scanVoucherCode() {
 
 async function prepareVoucher() {
   if (!selectedProduct.value || !voucherPackage.value) {
-    uni.showToast({ title: '请选择核销套餐', icon: 'none' });
+    uni.showToast({ title: '请选择核销 SKU', icon: 'none' });
     return;
   }
   if (!voucherCode.value.trim()) {
@@ -436,12 +445,37 @@ async function prepareVoucher() {
         sourcePlatform: voucherPlatforms[voucherPlatformIndex.value],
         voucherCode: voucherCode.value.trim(),
         storeSkuId: selectedProduct.value.id,
-        packageId: voucherPackage.value.packageId
+        packageId: voucherPackage.value.packageId,
+        verificationAmount: optionalAmount(voucherVerificationAmount.value)
       }
     });
+    voucherVerificationAmount.value = currentVoucher.value.verificationAmount == null
+      ? ''
+      : String(currentVoucher.value.verificationAmount);
     uni.showToast({ title: '核销准备成功', icon: 'success' });
   } catch (error) {
     uni.showToast({ title: errorText(error, '核销准备失败'), icon: 'none' });
+  } finally {
+    voucherLoading.value = false;
+  }
+}
+
+async function saveVoucherVerificationAmount() {
+  if (!currentVoucher.value) {
+    uni.showToast({ title: '请先完成核销准备', icon: 'none' });
+    return;
+  }
+  const amount = requiredAmount(voucherVerificationAmount.value);
+  if (amount == null) return;
+  voucherLoading.value = true;
+  try {
+    currentVoucher.value = await request<VoucherRecord>(`/api/user/vouchers/${currentVoucher.value.id}/verification-amount`, {
+      method: 'POST',
+      data: { verificationAmount: amount }
+    });
+    uni.showToast({ title: '核销金额已保存', icon: 'success' });
+  } catch (error) {
+    uni.showToast({ title: errorText(error, '核销金额保存失败'), icon: 'none' });
   } finally {
     voucherLoading.value = false;
   }
@@ -454,6 +488,14 @@ async function verifyVoucher() {
   }
   voucherLoading.value = true;
   try {
+    if (!currentVoucher.value.orderId && voucherVerificationAmount.value.trim()) {
+      const amount = requiredAmount(voucherVerificationAmount.value);
+      if (amount == null) return;
+      currentVoucher.value = await request<VoucherRecord>(`/api/user/vouchers/${currentVoucher.value.id}/verification-amount`, {
+        method: 'POST',
+        data: { verificationAmount: amount }
+      });
+    }
     currentVoucher.value = await request<VoucherRecord>(`/api/user/vouchers/${currentVoucher.value.id}/verify`, { method: 'POST' });
     if (currentVoucher.value.orderId) {
       const order = await request<RentalOrder>(`/api/user/orders/${currentVoucher.value.orderId}`);
@@ -817,6 +859,21 @@ function money(value: number | string | null | undefined) {
   return `¥${amount.toFixed(2)}`;
 }
 
+function optionalAmount(value: string) {
+  const normalized = value.trim();
+  return normalized ? Number(normalized) : undefined;
+}
+
+function requiredAmount(value: string) {
+  const normalized = value.trim();
+  const amount = Number(normalized);
+  if (!normalized || !Number.isFinite(amount) || amount < 0) {
+    uni.showToast({ title: '请输入正确的核销金额', icon: 'none' });
+    return null;
+  }
+  return amount;
+}
+
 function dateText(value: string) {
   if (!value) {
     return '-';
@@ -826,6 +883,13 @@ function dateText(value: string) {
 
 function leaseText(unit: 'DAY' | 'MONTH', value: number) {
   return `${value}${unit === 'DAY' ? '天' : '个月'}`;
+}
+
+function renewalText(item: { autoRenewEnabled?: boolean; renewalUnit?: 'DAY' | 'MONTH' | null; renewalValue?: number | null; renewalAmount?: number | null }) {
+  if (!item.autoRenewEnabled) {
+    return '到期未还不自动续租';
+  }
+  return `到期未还按 ${money(item.renewalAmount || 0)} / ${leaseText(item.renewalUnit || 'MONTH', item.renewalValue || 1)} 自动续租`;
 }
 
 function saleModeText(value: string) {
@@ -856,11 +920,12 @@ function voucherStatusText(value: VoucherRecord['verifyStatus']) {
 }
 
 function billTypeText(value: string) {
-  const map: Record<string, string> = {
-    INITIAL: '首期账单',
-    PERIODIC: '周期账单',
-    OVERDUE: '逾期账单'
-  };
+	  const map: Record<string, string> = {
+	    INITIAL: '首期账单',
+	    PERIODIC: '周期账单',
+	    RENEWAL: '续租账单',
+	    OVERDUE: '逾期账单'
+	  };
   return map[value] || value;
 }
 

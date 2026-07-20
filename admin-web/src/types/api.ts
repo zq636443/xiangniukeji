@@ -156,6 +156,8 @@ export type SystemAccount = {
   lastLoginAt?: string | null;
   createdAt: string;
   roles: string[];
+  permissions: string[];
+  directPermissions: string[];
   storeScopes: StoreScope[];
 };
 
@@ -217,7 +219,7 @@ export type Investor = {
   status: 'ENABLED' | 'DISABLED';
 };
 
-export type AssetType = 'VEHICLE_FRAME' | 'BATTERY';
+export type AssetType = 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE';
 
 export type AssetStatus =
   | 'IDLE'
@@ -242,10 +244,26 @@ export type Asset = {
   status: AssetStatus;
   purchaseAmount: number;
   maintenanceFeeAmount: number;
-  residualValue: number;
+  residualValue?: number | null;
   purchasedAt?: string | null;
   scrappedAt?: string | null;
   soldAt?: string | null;
+};
+
+export type AssetBatchImportRowResult = {
+  lineNo?: number | null;
+  success: boolean;
+  assetId?: number | null;
+  assetCode?: string | null;
+  serialNo?: string | null;
+  message: string;
+};
+
+export type AssetBatchImportResult = {
+  totalCount: number;
+  successCount: number;
+  failedCount: number;
+  results: AssetBatchImportRowResult[];
 };
 
 export type AssetLog = {
@@ -445,6 +463,7 @@ export type ProductPackage = {
   skuId: number;
   skuName?: string | null;
   packageName: string;
+  priceAmount: number;
   leaseUnit: 'DAY' | 'MONTH';
   leaseValue: number;
   totalPeriods: number;
@@ -456,6 +475,7 @@ export type ProductPackage = {
 export type StoreSkuPackage = {
   id: number;
   packageId: number;
+  packageCode: string;
   packageName: string;
   leaseUnit: 'DAY' | 'MONTH';
   leaseValue: number;
@@ -465,6 +485,10 @@ export type StoreSkuPackage = {
   rentalAmount: number;
   periodAmount: number;
   depositAmount: number;
+  autoRenewEnabled: boolean;
+  renewalUnit?: 'DAY' | 'MONTH' | null;
+  renewalValue?: number | null;
+  renewalAmount?: number | null;
   status: 'ENABLED' | 'DISABLED';
 };
 
@@ -493,14 +517,18 @@ export type ProfitRule = {
   ruleCode: string;
   ruleName: string;
   ruleScope: 'PLATFORM' | 'SKU' | 'STORE' | 'STORE_SKU';
+  sourceChannel?: string | null;
+  priority: number;
   skuId?: number | null;
   merchantId?: number | null;
   storeId?: number | null;
   storeSkuId?: number | null;
-  merchantOrderFeeAmount: number;
-  merchantRentShareRate: number;
-  platformRentShareRate: number;
-  investorRentShareRate: number;
+  channelFeeRate: number;
+  platformFeeRate: number;
+  storeOperationRate: number;
+  maintenanceFundRate: number;
+  channelReferralRate: number;
+  investorShareRate: number;
   effectiveAt: string;
   expiredAt?: string | null;
   status: 'ENABLED' | 'DISABLED';
@@ -511,6 +539,8 @@ export type SettlementSnapshot = {
   snapshotNo: string;
   sourceType: 'PREVIEW' | 'ORDER';
   sourceId?: number | null;
+  calculationVersion: 'LEGACY_V1' | 'PROFIT_V2';
+  sourceChannel: string;
   storeSkuId: number;
   skuId: number;
   merchantId: number;
@@ -520,6 +550,7 @@ export type SettlementSnapshot = {
   matchedRuleId: number;
   matchedRuleScope: 'PLATFORM' | 'SKU' | 'STORE' | 'STORE_SKU';
   rentalAmount: number;
+  settlementBaseAmount: number;
   signFeeAmount: number;
   merchantOrderFeeAmount: number;
   merchantRentShareRate: number;
@@ -531,6 +562,19 @@ export type SettlementSnapshot = {
   investorOperationFeeAmount: number;
   maintenanceFeeAmount: number;
   investorNetShareAmount: number;
+  channelFeeRate: number;
+  channelFeeAmount: number;
+  platformFeeRate: number;
+  platformFeeAmount: number;
+  distributableAmount: number;
+  storeOperationRate: number;
+  storeOperationAmount: number;
+  maintenanceFundRate: number;
+  maintenanceFundAmount: number;
+  channelReferralRate: number;
+  channelReferralAmount: number;
+  investorShareRate: number;
+  investorShareAmount: number;
   ruleSummary: string;
   createdAt?: string | null;
 };
@@ -542,9 +586,21 @@ export type SettlementIncomeEntry = {
   snapshotId: number;
   merchantId: number;
   storeId: number;
-  beneficiaryType: 'MERCHANT' | 'INVESTOR' | 'PLATFORM';
+  beneficiaryType: 'MERCHANT' | 'INVESTOR' | 'PLATFORM' | 'CHANNEL' | 'MAINTENANCE_FUND';
   beneficiaryId?: number | null;
-  lineType: 'MERCHANT_ORDER_FEE' | 'MERCHANT_RENT_SHARE' | 'PLATFORM_RENT_SHARE' | 'PLATFORM_OPERATION_FEE' | 'MAINTENANCE_FEE' | 'INVESTOR_NET_RENT';
+  lineType:
+    | 'CHANNEL_VERIFICATION_FEE'
+    | 'PLATFORM_SERVICE_FEE'
+    | 'STORE_OPERATION_SHARE'
+    | 'MAINTENANCE_FUND_SHARE'
+    | 'CHANNEL_REFERRAL_SHARE'
+    | 'INVESTOR_SHARE'
+    | 'MERCHANT_ORDER_FEE'
+    | 'MERCHANT_RENT_SHARE'
+    | 'PLATFORM_RENT_SHARE'
+    | 'PLATFORM_OPERATION_FEE'
+    | 'MAINTENANCE_FEE'
+    | 'INVESTOR_NET_RENT';
   amount: number;
   entryStatus: 'PENDING' | 'SETTLED' | 'FROZEN';
   remark?: string | null;
@@ -664,13 +720,22 @@ export type RentalOrder = {
   id: number;
   orderNo: string;
   userAccountId?: number | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
   merchantId: number;
   storeId: number;
+  storeName?: string | null;
   storeSkuId: number;
+  storeSkuName?: string | null;
   skuId: number;
   packageId: number;
+  packageName?: string | null;
   frameAssetId?: number | null;
+  frameAssetCode?: string | null;
+  frameSerialNo?: string | null;
   batteryAssetId?: number | null;
+  batteryAssetCode?: string | null;
+  batterySerialNo?: string | null;
   orderStatus: OrderStatus;
   rentalAmount: number;
   signFeeAmount: number;
@@ -683,6 +748,12 @@ export type RentalOrder = {
   totalPeriods: number;
   billDayMode: 'PAYMENT_DAY' | 'FIXED_DAY';
   billDay?: number | null;
+  orderedAt: string;
+  autoRenewEnabled: boolean;
+  renewalUnit?: 'DAY' | 'MONTH' | null;
+  renewalValue?: number | null;
+  renewalAmount?: number | null;
+  renewalCount: number;
   expectedPickupAt?: string | null;
   leaseStartedAt?: string | null;
   expectedReturnAt?: string | null;
@@ -695,7 +766,24 @@ export type RentalOrder = {
   logs: OrderLog[];
 };
 
-export type BillType = 'INITIAL' | 'PERIODIC' | 'OVERDUE';
+export type OrderBatchImportRowResult = {
+  lineNo?: number | null;
+  success: boolean;
+  orderId?: number | null;
+  orderNo?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  message: string;
+};
+
+export type OrderBatchImportResult = {
+  totalCount: number;
+  successCount: number;
+  failedCount: number;
+  results: OrderBatchImportRowResult[];
+};
+
+export type BillType = 'INITIAL' | 'PERIODIC' | 'RENEWAL' | 'OVERDUE';
 
 export type BillStatus =
   | 'PENDING_PAYMENT'
@@ -707,7 +795,7 @@ export type BillStatus =
 
 export type BillItem = {
   id: number;
-  itemType: 'RENT' | 'SIGN_FEE' | 'DEPOSIT' | 'OVERDUE_FEE';
+  itemType: 'RENT' | 'RENEWAL_RENT' | 'SIGN_FEE' | 'DEPOSIT' | 'OVERDUE_FEE';
   itemName: string;
   amount: number;
 };
@@ -749,7 +837,7 @@ export type RentalBill = {
 export type BillBatch = {
   id: number;
   batchNo: string;
-  generationType: 'INITIAL' | 'PERIODIC' | 'PLAN' | 'OVERDUE' | 'MANUAL';
+  generationType: 'INITIAL' | 'PERIODIC' | 'PLAN' | 'RENEWAL' | 'OVERDUE' | 'MANUAL';
   orderId?: number | null;
   generatedCount: number;
   remark?: string | null;
@@ -855,6 +943,13 @@ export type DeductBatch = {
   startedAt?: string | null;
   finishedAt?: string | null;
   createdAt: string;
+};
+
+export type RenewalRunResponse = {
+  scannedCount: number;
+  generatedCount: number;
+  batchId?: number | null;
+  batchNo?: string | null;
 };
 
 export type DeductRecord = {
@@ -1087,6 +1182,7 @@ export type VoucherRecord = {
   verifyStatus: 'INPUT' | 'PREPARED' | 'VERIFIED' | 'WAITING_SIGN_FEE' | 'CONSUMING' | 'CONSUMED' | 'FAILED' | 'EXCEPTION';
   voucherTitle?: string | null;
   voucherAmount: number;
+  verificationAmount?: number | null;
   signFeeAmount: number;
   externalPrepareId?: string | null;
   externalVerifyId?: string | null;

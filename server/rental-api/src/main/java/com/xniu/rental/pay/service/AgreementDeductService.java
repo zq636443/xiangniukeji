@@ -8,6 +8,7 @@ import com.xniu.rental.bill.model.RentalBill;
 import com.xniu.rental.bill.repository.BillRepository;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.order.repository.OrderRepository;
+import com.xniu.rental.order.service.OrderRenewalService;
 import com.xniu.rental.overdue.service.OverdueService;
 import com.xniu.rental.pay.config.AlipayProperties;
 import com.xniu.rental.pay.dto.AgreementNotifyResponse;
@@ -52,6 +53,7 @@ public class AgreementDeductService {
     private final AlipayGatewayClient alipayGatewayClient;
     private final AlipayProperties alipayProperties;
     private final OverdueService overdueService;
+    private final OrderRenewalService orderRenewalService;
 
     public AgreementDeductService(
         AgreementRepository agreementRepository,
@@ -62,7 +64,8 @@ public class AgreementDeductService {
         AuthorizationService authorizationService,
         AlipayGatewayClient alipayGatewayClient,
         AlipayProperties alipayProperties,
-        OverdueService overdueService
+        OverdueService overdueService,
+        OrderRenewalService orderRenewalService
     ) {
         this.agreementRepository = agreementRepository;
         this.deductRepository = deductRepository;
@@ -73,6 +76,7 @@ public class AgreementDeductService {
         this.alipayGatewayClient = alipayGatewayClient;
         this.alipayProperties = alipayProperties;
         this.overdueService = overdueService;
+        this.orderRenewalService = orderRenewalService;
     }
 
     public List<AgreementResponse> listAgreements(String status, Long userAccountId, Long orderId) {
@@ -192,6 +196,7 @@ public class AgreementDeductService {
     @Transactional
     public DeductBatchResponse runDueDeductInternal(Integer limit, String remark) {
         var normalizedLimit = limit == null || limit <= 0 ? DEFAULT_DEDUCT_LIMIT : Math.min(limit, DEFAULT_DEDUCT_LIMIT);
+        orderRenewalService.runDueRenewalsInternal(normalizedLimit, "扣款前自动生成到期续租账单");
         var now = LocalDateTime.now();
         var bills = billRepository.listDueBillsForDeduct(now, normalizedLimit);
         var batchNo = nextBatchNo();
@@ -276,11 +281,12 @@ public class AgreementDeductService {
             var result = alipayGatewayClient.payWithAgreement(payment.paymentNo(), record.deductAmount(), payment.subject(), agreement.alipayUserId(), record.agreementNo());
             var paidAmount = new BigDecimal(result.totalAmount()).setScale(2, RoundingMode.HALF_UP);
             paymentRepository.markPaid(payment.id(), paidAmount, result.tradeNo());
-            billRepository.markPaid(bill.id(), paidAmount);
+            var paidBill = billRepository.markPaid(bill.id(), paidAmount);
             billRepository.addLog(bill.id(), oldStatus, BillStatus.PAID, BillOperationType.PAYMENT_SUCCESS, null, "支付宝协议扣款成功");
             orderRepository.increasePaidAmount(bill.orderId(), paidAmount);
             deductRepository.markSuccess(record.id(), result.tradeNo());
             overdueService.resolveByBillId(bill.id());
+            orderRenewalService.handlePaidBill(paidBill);
             return true;
         } catch (BusinessException exception) {
             paymentRepository.markFailed(payment.id(), exception.getMessage());

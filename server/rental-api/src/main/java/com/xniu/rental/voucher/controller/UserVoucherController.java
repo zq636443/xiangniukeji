@@ -3,6 +3,7 @@ package com.xniu.rental.voucher.controller;
 import com.xniu.rental.common.ApiResponse;
 import com.xniu.rental.voucher.dto.VoucherPrepareRequest;
 import com.xniu.rental.voucher.dto.VoucherResponse;
+import com.xniu.rental.voucher.dto.VoucherVerificationAmountRequest;
 import com.xniu.rental.voucher.service.VoucherService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -40,6 +41,14 @@ public class UserVoucherController {
     @PostMapping("/{id}/verify")
     public ApiResponse<VoucherResponse> verify(@PathVariable Long id) {
         return ApiResponse.ok(voucherService.verify(id));
+    }
+
+    @PostMapping("/{id}/verification-amount")
+    public ApiResponse<VoucherResponse> updateVerificationAmount(
+        @PathVariable Long id,
+        @Valid @RequestBody VoucherVerificationAmountRequest request
+    ) {
+        return ApiResponse.ok(voucherService.updateMineVerificationAmount(id, request));
     }
 
     @PostMapping("/{id}/consume")

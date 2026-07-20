@@ -2,5 +2,14 @@ package com.xniu.rental.asset.model;
 
 public enum AssetType {
     VEHICLE_FRAME,
-    BATTERY
+    BATTERY,
+    INTEGRATED_VEHICLE;
+
+    public boolean canBindAs(AssetType slotType) {
+        return this == slotType || (slotType == VEHICLE_FRAME && this == INTEGRATED_VEHICLE);
+    }
+
+    public boolean isIntegratedVehicle() {
+        return this == INTEGRATED_VEHICLE;
+    }
 }

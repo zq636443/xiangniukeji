@@ -81,7 +81,7 @@ public class ProductService {
         authorizationService.requirePermission("product.write");
         ensureCategory(request.categoryId());
         var sku = productRepository.createSku(
-            nextCode("SKU"),
+            nextCode("LINK"),
             request.categoryId(),
             request.skuName(),
             parseSkuType(request.skuType()),
@@ -121,9 +121,10 @@ public class ProductService {
         validatePackage(request);
         ensureSku(request.skuId());
         return toResponse(productRepository.createPackage(
-            nextCode("PKG"),
+            nextCode("SKU"),
             request.skuId(),
             request.packageName(),
+            normalizeMoney(request.priceAmount()),
             parseLeaseUnit(request.leaseUnit()),
             request.leaseValue(),
             request.totalPeriods(),
@@ -140,6 +141,7 @@ public class ProductService {
         return toResponse(productRepository.updatePackage(
             id,
             request.packageName(),
+            normalizeMoney(request.priceAmount()),
             parseLeaseUnit(request.leaseUnit()),
             request.leaseValue(),
             request.totalPeriods(),
@@ -151,6 +153,16 @@ public class ProductService {
     public List<StoreSkuResponse> listStoreSkus(Long storeId, Long skuId, String status) {
         authorizationService.requirePermission("product.read");
         return productRepository.listStoreSkus(storeId, skuId, parseStoreSkuStatus(status)).stream()
+            .map(this::toResponse)
+            .toList();
+    }
+
+    public List<StoreSkuResponse> listMerchantStoreSkus(Long storeId) {
+        authorizationService.requirePermission("order.read");
+        var store = storeRepository.findById(storeId)
+            .orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+        authorizationService.requireStoreAccess(store.merchantId(), store.id());
+        return productRepository.listStoreSkus(storeId, null, StoreSkuStatus.ON_SHELF).stream()
             .map(this::toResponse)
             .toList();
     }
@@ -245,14 +257,28 @@ public class ProductService {
         Set<Long> packageIds = new HashSet<>();
         for (var item : packages) {
             if (!packageIds.add(item.packageId())) {
-                throw BusinessException.badRequest("同一个门店商品下套餐不能重复");
+                throw BusinessException.badRequest("同一个门店商品下 SKU 不能重复");
             }
             var template = ensurePackage(item.packageId());
             if (!template.skuId().equals(skuId)) {
-                throw BusinessException.badRequest("套餐不属于所选 SKU");
+                throw BusinessException.badRequest("SKU 不属于所选商品链接");
             }
-            if (item.rentalAmount().signum() < 0 || item.periodAmount().signum() < 0 || item.depositAmount().signum() < 0) {
+            if (item.periodAmount().signum() < 0 || item.depositAmount().signum() < 0) {
                 throw BusinessException.badRequest("金额不能小于 0");
+            }
+            if (Boolean.FALSE.equals(item.autoRenewEnabled())) {
+                continue;
+            }
+            var renewalUnit = item.renewalUnit() == null || item.renewalUnit().isBlank()
+                ? template.leaseUnit()
+                : parseLeaseUnit(item.renewalUnit());
+            var renewalValue = item.renewalValue() == null ? defaultRenewalValue(template) : item.renewalValue();
+            var renewalAmount = item.renewalAmount() == null ? item.periodAmount() : item.renewalAmount();
+            if (renewalUnit == null || renewalValue <= 0) {
+                throw BusinessException.badRequest("自动续租周期必须大于 0");
+            }
+            if (renewalAmount == null || renewalAmount.signum() <= 0) {
+                throw BusinessException.badRequest("开启自动续租时，续租金额必须大于 0");
             }
         }
     }
@@ -261,6 +287,9 @@ public class ProductService {
         if (request.leaseValue() <= 0 || request.totalPeriods() <= 0) {
             throw BusinessException.badRequest("租期和总期数必须大于 0");
         }
+        if (request.priceAmount().signum() < 0) {
+            throw BusinessException.badRequest("SKU 价格不能小于 0");
+        }
         if ("FIXED_DAY".equals(request.billDayMode()) && (request.billDay() == null || request.billDay() < 1 || request.billDay() > 28)) {
             throw BusinessException.badRequest("固定账单日必须在 1 到 28 之间");
         }
@@ -268,13 +297,34 @@ public class ProductService {
 
     private List<ProductRepository.PackagePriceRow> toRows(List<StoreSkuPackageRequest> packages) {
         return packages.stream()
-            .map(item -> new ProductRepository.PackagePriceRow(
-                item.packageId(),
-                normalizeMoney(item.rentalAmount()),
-                normalizeMoney(item.periodAmount()),
-                normalizeMoney(item.depositAmount())
-            ))
+            .map(item -> {
+                var template = ensurePackage(item.packageId());
+                var autoRenewEnabled = !Boolean.FALSE.equals(item.autoRenewEnabled());
+                var renewalUnit = autoRenewEnabled
+                    ? (item.renewalUnit() == null || item.renewalUnit().isBlank() ? template.leaseUnit() : parseLeaseUnit(item.renewalUnit()))
+                    : null;
+                var renewalValue = autoRenewEnabled
+                    ? (item.renewalValue() == null ? defaultRenewalValue(template) : item.renewalValue())
+                    : null;
+                var renewalAmount = autoRenewEnabled
+                    ? normalizeMoney(item.renewalAmount() == null ? item.periodAmount() : item.renewalAmount())
+                    : null;
+                return new ProductRepository.PackagePriceRow(
+                    item.packageId(),
+                    normalizeMoney(template.priceAmount()),
+                    normalizeMoney(item.periodAmount()),
+                    normalizeMoney(item.depositAmount()),
+                    autoRenewEnabled,
+                    renewalUnit,
+                    renewalValue,
+                    renewalAmount
+                );
+            })
             .toList();
+    }
+
+    private int defaultRenewalValue(ProductPackage template) {
+        return Math.max(1, template.leaseValue() / Math.max(template.totalPeriods(), 1));
     }
 
     private BigDecimal normalizeMoney(BigDecimal value) {
@@ -310,6 +360,7 @@ public class ProductService {
             item.skuId(),
             skuName,
             item.packageName(),
+            item.priceAmount(),
             item.leaseUnit().name(),
             item.leaseValue(),
             item.totalPeriods(),
@@ -329,6 +380,7 @@ public class ProductService {
                 return new StoreSkuPackageResponse(
                     packagePrice.id(),
                     packagePrice.packageId(),
+                    template.packageCode(),
                     template.packageName(),
                     template.leaseUnit().name(),
                     template.leaseValue(),
@@ -338,6 +390,10 @@ public class ProductService {
                     packagePrice.rentalAmount(),
                     packagePrice.periodAmount(),
                     packagePrice.depositAmount(),
+                    packagePrice.autoRenewEnabled(),
+                    packagePrice.renewalUnit() == null ? null : packagePrice.renewalUnit().name(),
+                    packagePrice.renewalValue(),
+                    packagePrice.renewalAmount(),
                     packagePrice.status().name()
                 );
             })
@@ -368,11 +424,11 @@ public class ProductService {
     }
 
     private ProductSku ensureSku(Long id) {
-        return productRepository.findSku(id).orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
+        return productRepository.findSku(id).orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
     }
 
     private ProductPackage ensurePackage(Long id) {
-        return productRepository.findPackage(id).orElseThrow(() -> BusinessException.badRequest("套餐不存在"));
+        return productRepository.findPackage(id).orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
     }
 
     private StoreSku ensureStoreSku(Long id) {
@@ -383,7 +439,7 @@ public class ProductService {
         try {
             return SkuType.valueOf(value);
         } catch (Exception exception) {
-            throw BusinessException.badRequest("不支持的 SKU 类型");
+            throw BusinessException.badRequest("不支持的链接类型");
         }
     }
 

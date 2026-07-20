@@ -19,6 +19,7 @@ import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
 import com.xniu.rental.settlement.service.SettlementService;
 import com.xniu.rental.voucher.dto.VoucherPrepareRequest;
 import com.xniu.rental.voucher.dto.VoucherResponse;
+import com.xniu.rental.voucher.dto.VoucherVerificationAmountRequest;
 import com.xniu.rental.voucher.dto.XianyuVoucherIssueRequest;
 import com.xniu.rental.voucher.model.SourcePlatform;
 import com.xniu.rental.voucher.model.VoucherVerification;
@@ -91,8 +92,8 @@ public class VoucherService {
         var packagePrice = productRepository.listStoreSkuPackages(storeSku.id()).stream()
             .filter(item -> item.packageId().equals(request.packageId()))
             .findFirst()
-            .orElseThrow(() -> BusinessException.badRequest("门店商品未配置该套餐价格"));
-        var packageTemplate = productRepository.findPackage(request.packageId()).orElseThrow(() -> BusinessException.badRequest("套餐不存在"));
+            .orElseThrow(() -> BusinessException.badRequest("门店商品未配置该 SKU 价格"));
+        var packageTemplate = productRepository.findPackage(request.packageId()).orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
         if (voucherRepository.findByPlatformAndCode(SourcePlatform.XIANYU, request.voucherCode().trim()).isPresent()) {
             throw BusinessException.badRequest("闲鱼核销码已存在");
         }
@@ -118,6 +119,7 @@ public class VoucherService {
     public VoucherResponse prepare(VoucherPrepareRequest request) {
         var current = currentUserId();
         var platform = parsePlatform(request.sourcePlatform());
+        var verificationAmount = normalizeAmount(request.verificationAmount());
         var storeSku = productRepository.findStoreSku(request.storeSkuId()).orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
         if (storeSku.status() != StoreSkuStatus.ON_SHELF) {
             throw BusinessException.badRequest("门店商品未上架");
@@ -125,7 +127,7 @@ public class VoucherService {
         var packagePrice = productRepository.listStoreSkuPackages(storeSku.id()).stream()
             .filter(item -> item.packageId().equals(request.packageId()))
             .findFirst()
-            .orElseThrow(() -> BusinessException.badRequest("门店商品未配置该套餐价格"));
+            .orElseThrow(() -> BusinessException.badRequest("门店商品未配置该 SKU 价格"));
         if (platform == SourcePlatform.XIANYU) {
             var issued = voucherRepository.findByPlatformAndCode(platform, request.voucherCode().trim())
                 .orElseThrow(() -> BusinessException.badRequest("闲鱼核销码不存在或未下发"));
@@ -138,6 +140,7 @@ public class VoucherService {
                 issued.storeSkuId(),
                 issued.packageId(),
                 issued.voucherAmount(),
+                verificationAmount,
                 issued.signFeeAmount()
             );
             if (record.verifyStatus() == VoucherVerifyStatus.WAITING_SIGN_FEE
@@ -153,8 +156,8 @@ public class VoucherService {
             return toResponse(voucherRepository.markPrepared(record.id(), toGatewayRow(gateway)));
         }
         var record = voucherRepository.findByPlatformAndCode(platform, request.voucherCode().trim())
-            .map(item -> voucherRepository.updateSelection(item.id(), current, storeSku.merchantId(), storeSku.storeId(), storeSku.id(), request.packageId(), packagePrice.rentalAmount(), storeSku.signFeeAmount()))
-            .orElseGet(() -> voucherRepository.create(new VoucherRepository.CreateRow(platform, request.voucherCode().trim(), current, storeSku.merchantId(), storeSku.storeId(), storeSku.id(), request.packageId(), packagePrice.rentalAmount(), storeSku.signFeeAmount())));
+            .map(item -> voucherRepository.updateSelection(item.id(), current, storeSku.merchantId(), storeSku.storeId(), storeSku.id(), request.packageId(), packagePrice.rentalAmount(), verificationAmount, storeSku.signFeeAmount()))
+            .orElseGet(() -> voucherRepository.create(new VoucherRepository.CreateRow(platform, request.voucherCode().trim(), current, storeSku.merchantId(), storeSku.storeId(), storeSku.id(), request.packageId(), packagePrice.rentalAmount(), verificationAmount, storeSku.signFeeAmount())));
         ensureUserOwns(record);
         var gateway = voucherGatewayClient.prepare(platform, record.voucherCode(), packagePrice.rentalAmount());
         if (!gateway.success()) {
@@ -172,7 +175,8 @@ public class VoucherService {
         if (record.verifyStatus() != VoucherVerifyStatus.PREPARED && record.verifyStatus() != VoucherVerifyStatus.VERIFIED) {
             throw BusinessException.badRequest("请先完成核销准备");
         }
-        var gateway = voucherGatewayClient.verify(record.sourcePlatform(), record.voucherCode(), record.voucherAmount());
+        var verificationAmount = requireVerificationAmount(record);
+        var gateway = voucherGatewayClient.verify(record.sourcePlatform(), record.voucherCode(), verificationAmount);
         if (!gateway.success()) {
             return toResponse(voucherRepository.markFailed(record.id(), gateway.failureReason(), gateway.rawPayload()));
         }
@@ -195,8 +199,9 @@ public class VoucherService {
             throw BusinessException.badRequest("请先验码并生成签单费订单");
         }
         assertSignFeePaid(record);
+        var verificationAmount = requireVerificationAmount(record);
         voucherRepository.markConsuming(record.id());
-        var gateway = voucherGatewayClient.consume(record.sourcePlatform(), record.voucherCode(), record.voucherAmount());
+        var gateway = voucherGatewayClient.consume(record.sourcePlatform(), record.voucherCode(), verificationAmount);
         if (!gateway.success()) {
             voucherRepository.markFailed(record.id(), gateway.failureReason(), gateway.rawPayload());
             orderRepository.markException(record.orderId(), platformText(record.sourcePlatform()) + "核销失败：" + gateway.failureReason());
@@ -218,13 +223,41 @@ public class VoucherService {
         return toResponse(voucherRepository.markException(id, reason));
     }
 
+    @Transactional
+    public VoucherResponse updateMineVerificationAmount(Long id, VoucherVerificationAmountRequest request) {
+        return updateVerificationAmount(ensureMine(id), request.verificationAmount());
+    }
+
+    @Transactional
+    public VoucherResponse updateMerchantVerificationAmount(Long id, VoucherVerificationAmountRequest request) {
+        authorizationService.requirePermission("order.operate");
+        var record = voucherRepository.findById(id).orElseThrow(() -> BusinessException.badRequest("核销记录不存在"));
+        authorizationService.requireStoreAccess(record.merchantId(), record.storeId());
+        return updateVerificationAmount(record, request.verificationAmount());
+    }
+
+    @Transactional
+    public VoucherResponse updateAdminVerificationAmount(Long id, VoucherVerificationAmountRequest request) {
+        authorizationService.requirePermission("order.operate");
+        var record = voucherRepository.findById(id).orElseThrow(() -> BusinessException.badRequest("核销记录不存在"));
+        return updateVerificationAmount(record, request.verificationAmount());
+    }
+
     private com.xniu.rental.order.model.RentalOrder createVoucherOrder(VoucherVerification record) {
         var storeSku = productRepository.findStoreSku(record.storeSkuId()).orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
-        var packageTemplate = productRepository.findPackage(record.packageId()).orElseThrow(() -> BusinessException.badRequest("套餐不存在"));
+        var packageTemplate = productRepository.findPackage(record.packageId()).orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
+        var packagePrice = productRepository.listStoreSkuPackages(storeSku.id()).stream()
+            .filter(item -> item.packageId().equals(record.packageId()))
+            .findFirst()
+            .orElseThrow(() -> BusinessException.badRequest("门店商品未配置该 SKU 价格"));
+        var verificationAmount = requireVerificationAmount(record);
         var payableAmount = record.signFeeAmount().setScale(2, RoundingMode.HALF_UP);
+        var current = AuthContext.get();
         var order = orderRepository.create(new OrderRepository.OrderCreateRow(
             "ORD-V-" + UUID.randomUUID().toString().substring(0, 8),
             record.userAccountId(),
+            current == null ? null : current.account().displayName(),
+            current == null ? null : current.account().phone(),
             record.merchantId(),
             record.storeId(),
             record.storeSkuId(),
@@ -233,7 +266,7 @@ public class VoucherService {
             null,
             null,
             OrderStatus.PENDING_PAYMENT,
-            record.voucherAmount().setScale(2, RoundingMode.HALF_UP),
+            verificationAmount,
             record.signFeeAmount().setScale(2, RoundingMode.HALF_UP),
             BigDecimal.ZERO,
             payableAmount,
@@ -244,15 +277,54 @@ public class VoucherService {
             packageTemplate.totalPeriods(),
             packageTemplate.billDayMode().name(),
             packageTemplate.billDay(),
+            LocalDateTime.now(),
+            packagePrice.autoRenewEnabled(),
+            packagePrice.renewalUnit() == null ? null : packagePrice.renewalUnit().name(),
+            packagePrice.renewalValue(),
+            packagePrice.renewalAmount(),
             null
         ));
-        orderRepository.addItem(order.id(), OrderItemType.SKU, storeSku.id(), storeSku.displayName() + "（外部平台已付）", 1, record.voucherAmount(), record.voucherAmount());
+        orderRepository.addItem(order.id(), OrderItemType.SKU, storeSku.id(), storeSku.displayName() + "（外部平台已付）", 1, verificationAmount, verificationAmount);
         if (record.signFeeAmount().signum() > 0) {
             orderRepository.addItem(order.id(), OrderItemType.SIGN_FEE, null, "签单费", 1, record.signFeeAmount(), record.signFeeAmount());
         }
         orderRepository.addLog(order.id(), null, OrderStatus.PENDING_PAYMENT, OrderOperationType.CREATE, currentUserId(), platformText(record.sourcePlatform()) + "验码成功后创建签单费订单");
-        var snapshot = settlementService.createOrderSnapshot(new SnapshotCreateRequest("ORDER", order.id(), storeSku.id(), null, null, record.voucherAmount()));
+        var snapshot = settlementService.createOrderSnapshot(new SnapshotCreateRequest(
+            "ORDER",
+            order.id(),
+            storeSku.id(),
+            null,
+            null,
+            verificationAmount,
+            record.sourcePlatform().name()
+        ));
         return orderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
+    }
+
+    private VoucherResponse updateVerificationAmount(VoucherVerification record, BigDecimal amount) {
+        if (record.orderId() != null || record.verifyStatus() == VoucherVerifyStatus.CONSUMING || record.verifyStatus() == VoucherVerifyStatus.CONSUMED) {
+            throw BusinessException.badRequest("核销订单已生成，不能再修改核销金额");
+        }
+        return toResponse(voucherRepository.updateVerificationAmount(record.id(), normalizeAmount(amount)));
+    }
+
+    private BigDecimal requireVerificationAmount(VoucherVerification record) {
+        var amount = normalizeAmount(record.verificationAmount());
+        if (amount == null) {
+            throw BusinessException.badRequest("请先填写核销金额；客户未填写时可由门店补录");
+        }
+        return amount;
+    }
+
+    private BigDecimal normalizeAmount(BigDecimal amount) {
+        if (amount == null) {
+            return null;
+        }
+        var normalized = amount.setScale(2, RoundingMode.HALF_UP);
+        if (normalized.signum() < 0) {
+            throw BusinessException.badRequest("核销金额不能小于 0");
+        }
+        return normalized;
     }
 
     private Long createSignFeeBill(Long orderId, Long userAccountId, Long merchantId, Long storeId, BigDecimal signFeeAmount) {
@@ -301,7 +373,7 @@ public class VoucherService {
             throw BusinessException.badRequest("该闲鱼核销码已被标记异常，请联系门店或总部处理");
         }
         if (!record.storeSkuId().equals(storeSkuId) || !record.packageId().equals(packageId)) {
-            throw BusinessException.badRequest("闲鱼核销码与当前选择的商品或套餐不匹配");
+            throw BusinessException.badRequest("闲鱼核销码与当前选择的商品或 SKU 不匹配");
         }
         if (record.userAccountId() != null && !record.userAccountId().equals(currentUserId)) {
             throw BusinessException.badRequest("该闲鱼核销码已被其他用户占用");
@@ -310,7 +382,7 @@ public class VoucherService {
 
     private void ensureUserOwns(VoucherVerification record) {
         var current = currentUserId();
-        if (record.userAccountId() != null && !record.userAccountId().equals(current)) {
+        if (record.userAccountId() == null || !record.userAccountId().equals(current)) {
             throw BusinessException.forbidden("不能操作其他用户的核销记录");
         }
     }
@@ -365,6 +437,7 @@ public class VoucherService {
             record.verifyStatus().name(),
             record.voucherTitle(),
             record.voucherAmount(),
+            record.verificationAmount(),
             record.signFeeAmount(),
             record.externalPrepareId(),
             record.externalVerifyId(),

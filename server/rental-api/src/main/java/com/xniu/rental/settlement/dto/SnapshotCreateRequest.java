@@ -10,6 +10,7 @@ public record SnapshotCreateRequest(
     @NotNull(message = "请选择门店商品") Long storeSkuId,
     Long frameAssetId,
     Long batteryAssetId,
-    @NotNull(message = "请输入租金金额") BigDecimal rentalAmount
+    @NotNull(message = "请输入结算基数") BigDecimal rentalAmount,
+    String sourceChannel
 ) {
 }

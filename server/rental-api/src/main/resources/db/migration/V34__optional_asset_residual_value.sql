@@ -1,0 +1,2 @@
+ALTER TABLE asset_item
+  MODIFY COLUMN residual_value DECIMAL(12, 2) NULL DEFAULT NULL;

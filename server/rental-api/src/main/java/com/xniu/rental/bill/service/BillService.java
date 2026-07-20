@@ -89,6 +89,7 @@ public class BillService {
         return switch (billType) {
             case INITIAL -> generateInitial(order, request.dueAt(), request.remark());
             case PERIODIC -> generatePeriodic(order, request.periodNo(), request.dueAt(), request.remark());
+            case RENEWAL -> generateRenewal(order, request.periodNo(), request.dueAt(), request.remark());
             case OVERDUE -> generateOverdue(order, request.periodNo(), request.overdueAmount(), request.dueAt(), request.remark());
         };
     }
@@ -110,6 +111,14 @@ public class BillService {
         if (order.userAccountId() == null || !order.userAccountId().equals(current.account().id())) {
             throw BusinessException.forbidden("不能生成其他用户订单账单");
         }
+        return generatePlanInternal(order, remark);
+    }
+
+    @Transactional
+    public BillGenerationResultResponse generatePlanForMerchant(Long orderId, String remark) {
+        authorizationService.requirePermission("order.create");
+        var order = ensureOrder(orderId);
+        authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         return generatePlanInternal(order, remark);
     }
 
@@ -177,6 +186,28 @@ public class BillService {
         return new BillGenerationResultResponse(toBatchResponse(batch), created.stream().map(this::toResponse).toList());
     }
 
+    private BillGenerationResultResponse generateRenewal(RentalOrder order, Integer requestedPeriodNo, LocalDateTime dueAt, String remark) {
+        if (!Boolean.TRUE.equals(order.autoRenewEnabled())) {
+            throw BusinessException.badRequest("当前订单未开启自动续租");
+        }
+        if (order.renewalAmount() == null || order.renewalAmount().signum() <= 0 || order.renewalValue() == null || order.renewalValue() <= 0) {
+            throw BusinessException.badRequest("当前订单续租规则不完整");
+        }
+        var periodNo = requestedPeriodNo == null ? nextRenewalPeriodNo(order) : requestedPeriodNo;
+        var batchNo = nextBatchNo();
+        var existing = billRepository.findExisting(order.id(), BillType.RENEWAL, periodNo);
+        var created = new ArrayList<RentalBill>();
+        if (existing.isEmpty()) {
+            var payableAmount = order.renewalAmount().setScale(2, RoundingMode.HALF_UP);
+            var bill = createBill(order, BillType.RENEWAL, periodNo, dueAt == null ? LocalDateTime.now() : dueAt, payableAmount, BigDecimal.ZERO, defaultRemark(remark, "生成续租账单"), batchNo);
+            billRepository.addItem(bill.id(), BillItemType.RENEWAL_RENT, "第 " + periodNo + " 期续租租金", payableAmount);
+            billRepository.addLog(bill.id(), null, BillStatus.PENDING_PAYMENT, BillOperationType.GENERATE, currentAccountId(), defaultRemark(remark, "生成续租账单"));
+            created.add(bill);
+        }
+        var batch = billRepository.createBatch(batchNo, BillGenerationType.RENEWAL, order.id(), created.size(), defaultRemark(remark, "生成续租账单"));
+        return new BillGenerationResultResponse(toBatchResponse(batch), created.stream().map(this::toResponse).toList());
+    }
+
     private CreatedBill createInitialIfAbsent(RentalOrder order, LocalDateTime dueAt, String remark, String batchNo) {
         var existing = billRepository.findExisting(order.id(), BillType.INITIAL, 1);
         if (existing.isPresent()) {
@@ -184,7 +215,7 @@ public class BillService {
         }
         var rentAmount = periodRentAmount(order, 1);
         var total = rentAmount.add(order.signFeeAmount()).add(order.depositAmount()).setScale(2, RoundingMode.HALF_UP);
-        var bill = createBill(order, BillType.INITIAL, 1, dueAt == null ? LocalDateTime.now() : dueAt, total, BigDecimal.ZERO, defaultRemark(remark, "首期账单"), batchNo);
+        var bill = createBill(order, BillType.INITIAL, 1, dueAt == null ? initialDueAt(order) : dueAt, total, BigDecimal.ZERO, defaultRemark(remark, "首期账单"), batchNo);
         billRepository.addItem(bill.id(), BillItemType.RENT, "首期租金", rentAmount);
         if (order.signFeeAmount().signum() > 0) {
             billRepository.addItem(bill.id(), BillItemType.SIGN_FEE, "签单费", order.signFeeAmount());
@@ -239,7 +270,7 @@ public class BillService {
     private LocalDateTime periodDueAt(RentalOrder order, int periodNo) {
         var base = order.leaseStartedAt() != null ? order.leaseStartedAt() : order.expectedPickupAt();
         if (base == null) {
-            base = order.createdAt();
+            base = order.orderedAt() != null ? order.orderedAt() : order.createdAt();
         }
         if ("MONTH".equals(order.leaseUnit())) {
             var target = base.plusMonths(periodNo - 1L);
@@ -253,6 +284,13 @@ public class BillService {
         return base.plusDays((long) stepDays * (periodNo - 1L));
     }
 
+    private LocalDateTime initialDueAt(RentalOrder order) {
+        if (order.orderedAt() != null) {
+            return order.orderedAt();
+        }
+        return order.createdAt() == null ? LocalDateTime.now() : order.createdAt();
+    }
+
     private int safeTotalPeriods(RentalOrder order) {
         return Math.max(order.totalPeriods() == null ? 1 : order.totalPeriods(), 1);
     }
@@ -263,6 +301,10 @@ public class BillService {
 
     private int nextOverduePeriodNo(RentalOrder order) {
         return billRepository.findMaxPeriodNo(order.id(), BillType.OVERDUE).orElse(0) + 1;
+    }
+
+    private int nextRenewalPeriodNo(RentalOrder order) {
+        return billRepository.findMaxPeriodNo(order.id(), BillType.RENEWAL).orElse(safeTotalPeriods(order)) + 1;
     }
 
     private RentalOrder ensureOrder(Long id) {

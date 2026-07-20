@@ -31,22 +31,50 @@ public class OrderRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public List<RentalOrder> list(OrderStatus status, Long storeId, Long userAccountId) {
-        var sql = new StringBuilder("SELECT * FROM rental_order WHERE 1 = 1");
+    public List<RentalOrder> list(OrderStatus status, Long storeId, Long userAccountId, String keyword) {
+        var sql = new StringBuilder("""
+            SELECT o.*
+            FROM rental_order o
+            LEFT JOIN merchant_store ms ON ms.id = o.store_id
+            LEFT JOIN store_sku ss ON ss.id = o.store_sku_id
+            LEFT JOIN product_package pp ON pp.id = o.package_id
+            LEFT JOIN asset_item fa ON fa.id = o.frame_asset_id
+            LEFT JOIN asset_item ba ON ba.id = o.battery_asset_id
+            WHERE 1 = 1
+            """);
         var params = new ArrayList<Object>();
         if (status != null) {
-            sql.append(" AND order_status = ?");
+            sql.append(" AND o.order_status = ?");
             params.add(status.name());
         }
         if (storeId != null) {
-            sql.append(" AND store_id = ?");
+            sql.append(" AND o.store_id = ?");
             params.add(storeId);
         }
         if (userAccountId != null) {
-            sql.append(" AND user_account_id = ?");
+            sql.append(" AND o.user_account_id = ?");
             params.add(userAccountId);
         }
-        sql.append(" ORDER BY id DESC");
+        if (keyword != null && !keyword.isBlank()) {
+            var like = "%" + keyword.trim() + "%";
+            sql.append("""
+                 AND (o.order_no LIKE ?
+                      OR o.customer_name LIKE ?
+                      OR o.customer_phone LIKE ?
+                      OR CAST(o.user_account_id AS CHAR) LIKE ?
+                      OR ms.store_name LIKE ?
+                      OR ss.display_name LIKE ?
+                      OR pp.package_name LIKE ?
+                      OR fa.asset_code LIKE ?
+                      OR fa.serial_no LIKE ?
+                      OR ba.asset_code LIKE ?
+                      OR ba.serial_no LIKE ?)
+                """);
+            for (int index = 0; index < 11; index++) {
+                params.add(like);
+            }
+        }
+        sql.append(" ORDER BY o.id DESC");
         return jdbcTemplate.query(sql.toString(), orderMapper, params.toArray());
     }
 
@@ -69,41 +97,82 @@ public class OrderRepository {
         jdbcTemplate.update(connection -> {
             var statement = connection.prepareStatement("""
                 INSERT INTO rental_order
-                (order_no, user_account_id, merchant_id, store_id, store_sku_id, sku_id, package_id,
+                (order_no, user_account_id, customer_name, customer_phone,
+                 merchant_id, store_id, store_sku_id, sku_id, package_id,
                  frame_asset_id, battery_asset_id, order_status, rental_amount, sign_fee_amount,
                  deposit_amount, payable_amount, paid_amount, settlement_snapshot_id,
-                 lease_unit, lease_value, total_periods, bill_day_mode, bill_day, expected_pickup_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 lease_unit, lease_value, total_periods, bill_day_mode, bill_day, ordered_at,
+                 auto_renew_enabled, renewal_unit, renewal_value, renewal_amount, expected_pickup_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.orderNo());
             setNullableLong(statement, 2, row.userAccountId());
-            statement.setLong(3, row.merchantId());
-            statement.setLong(4, row.storeId());
-            statement.setLong(5, row.storeSkuId());
-            statement.setLong(6, row.skuId());
-            statement.setLong(7, row.packageId());
-            setNullableLong(statement, 8, row.frameAssetId());
-            setNullableLong(statement, 9, row.batteryAssetId());
-            statement.setString(10, row.orderStatus().name());
-            statement.setBigDecimal(11, row.rentalAmount());
-            statement.setBigDecimal(12, row.signFeeAmount());
-            statement.setBigDecimal(13, row.depositAmount());
-            statement.setBigDecimal(14, row.payableAmount());
-            statement.setBigDecimal(15, row.paidAmount());
-            setNullableLong(statement, 16, row.settlementSnapshotId());
-            statement.setString(17, row.leaseUnit());
-            statement.setInt(18, row.leaseValue());
-            statement.setInt(19, row.totalPeriods());
-            statement.setString(20, row.billDayMode());
+            statement.setString(3, row.customerName());
+            statement.setString(4, row.customerPhone());
+            statement.setLong(5, row.merchantId());
+            statement.setLong(6, row.storeId());
+            statement.setLong(7, row.storeSkuId());
+            statement.setLong(8, row.skuId());
+            statement.setLong(9, row.packageId());
+            setNullableLong(statement, 10, row.frameAssetId());
+            setNullableLong(statement, 11, row.batteryAssetId());
+            statement.setString(12, row.orderStatus().name());
+            statement.setBigDecimal(13, row.rentalAmount());
+            statement.setBigDecimal(14, row.signFeeAmount());
+            statement.setBigDecimal(15, row.depositAmount());
+            statement.setBigDecimal(16, row.payableAmount());
+            statement.setBigDecimal(17, row.paidAmount());
+            setNullableLong(statement, 18, row.settlementSnapshotId());
+            statement.setString(19, row.leaseUnit());
+            statement.setInt(20, row.leaseValue());
+            statement.setInt(21, row.totalPeriods());
+            statement.setString(22, row.billDayMode());
             if (row.billDay() == null) {
-                statement.setObject(21, null);
+                statement.setObject(23, null);
             } else {
-                statement.setInt(21, row.billDay());
+                statement.setInt(23, row.billDay());
             }
-            statement.setObject(22, row.expectedPickupAt());
+            statement.setObject(24, row.orderedAt());
+            statement.setBoolean(25, Boolean.TRUE.equals(row.autoRenewEnabled()));
+            statement.setString(26, row.renewalUnit());
+            if (row.renewalValue() == null) {
+                statement.setObject(27, null);
+            } else {
+                statement.setInt(27, row.renewalValue());
+            }
+            statement.setBigDecimal(28, row.renewalAmount());
+            statement.setObject(29, row.expectedPickupAt());
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
+    }
+
+    public Optional<OrderDisplayRow> findDisplayInfo(Long orderId) {
+        var rows = jdbcTemplate.query("""
+            SELECT ms.store_name,
+                   ss.display_name AS store_sku_name,
+                   pp.package_name,
+                   fa.asset_code AS frame_asset_code,
+                   fa.serial_no AS frame_serial_no,
+                   ba.asset_code AS battery_asset_code,
+                   ba.serial_no AS battery_serial_no
+            FROM rental_order o
+            LEFT JOIN merchant_store ms ON ms.id = o.store_id
+            LEFT JOIN store_sku ss ON ss.id = o.store_sku_id
+            LEFT JOIN product_package pp ON pp.id = o.package_id
+            LEFT JOIN asset_item fa ON fa.id = o.frame_asset_id
+            LEFT JOIN asset_item ba ON ba.id = o.battery_asset_id
+            WHERE o.id = ?
+            """, (rs, rowNum) -> new OrderDisplayRow(
+                rs.getString("store_name"),
+                rs.getString("store_sku_name"),
+                rs.getString("package_name"),
+                rs.getString("frame_asset_code"),
+                rs.getString("frame_serial_no"),
+                rs.getString("battery_asset_code"),
+                rs.getString("battery_serial_no")
+            ), orderId);
+        return rows.stream().findFirst();
     }
 
     public void addItem(Long orderId, OrderItemType itemType, Long refId, String itemName, Integer quantity, BigDecimal unitAmount, BigDecimal totalAmount) {
@@ -193,6 +262,35 @@ public class OrderRepository {
             """, orderId, fromStatus == null ? null : fromStatus.name(), toStatus.name(), operationType.name(), operatorAccountId, remark);
     }
 
+    public List<RentalOrder> listDueForAutoRenewal(LocalDateTime now, Integer limit) {
+        return jdbcTemplate.query("""
+            SELECT *
+            FROM rental_order
+            WHERE auto_renew_enabled = 1
+              AND returned_at IS NULL
+              AND expected_return_at IS NOT NULL
+              AND expected_return_at <= ?
+              AND order_status IN ('RENTING', 'PENDING_RETURN', 'OVERDUE')
+            ORDER BY expected_return_at ASC, id ASC
+            LIMIT ?
+            """, orderMapper, now, limit);
+    }
+
+    public RentalOrder applyRenewalSuccess(Long id, LocalDateTime nextExpectedReturnAt, boolean backToRenting) {
+        jdbcTemplate.update("""
+            UPDATE rental_order
+            SET expected_return_at = ?,
+                renewal_count = renewal_count + 1,
+                order_status = CASE
+                  WHEN ? = 1 AND order_status IN ('OVERDUE', 'PENDING_SUPPLEMENT', 'PENDING_RETURN') THEN 'RENTING'
+                  ELSE order_status
+                END
+            WHERE id = ?
+              AND order_status NOT IN ('COMPLETED', 'CANCELLED', 'EXCEPTION')
+            """, nextExpectedReturnAt, backToRenting ? 1 : 0, id);
+        return findById(id).orElseThrow();
+    }
+
     private static void setNullableLong(java.sql.PreparedStatement statement, int index, Long value) throws SQLException {
         if (value == null) {
             statement.setObject(index, null);
@@ -214,6 +312,8 @@ public class OrderRepository {
     public record OrderCreateRow(
         String orderNo,
         Long userAccountId,
+        String customerName,
+        String customerPhone,
         Long merchantId,
         Long storeId,
         Long storeSkuId,
@@ -233,7 +333,23 @@ public class OrderRepository {
         Integer totalPeriods,
         String billDayMode,
         Integer billDay,
+        LocalDateTime orderedAt,
+        Boolean autoRenewEnabled,
+        String renewalUnit,
+        Integer renewalValue,
+        BigDecimal renewalAmount,
         LocalDateTime expectedPickupAt
+    ) {
+    }
+
+    public record OrderDisplayRow(
+        String storeName,
+        String storeSkuName,
+        String packageName,
+        String frameAssetCode,
+        String frameSerialNo,
+        String batteryAssetCode,
+        String batterySerialNo
     ) {
     }
 
@@ -244,6 +360,8 @@ public class OrderRepository {
                 rs.getLong("id"),
                 rs.getString("order_no"),
                 getNullableLong(rs, "user_account_id"),
+                rs.getString("customer_name"),
+                rs.getString("customer_phone"),
                 rs.getLong("merchant_id"),
                 rs.getLong("store_id"),
                 rs.getLong("store_sku_id"),
@@ -263,6 +381,12 @@ public class OrderRepository {
                 rs.getInt("total_periods"),
                 rs.getString("bill_day_mode"),
                 getNullableInt(rs, "bill_day"),
+                rs.getObject("ordered_at", LocalDateTime.class),
+                rs.getBoolean("auto_renew_enabled"),
+                rs.getString("renewal_unit"),
+                getNullableInt(rs, "renewal_value"),
+                rs.getBigDecimal("renewal_amount"),
+                rs.getInt("renewal_count"),
                 rs.getObject("expected_pickup_at", LocalDateTime.class),
                 rs.getObject("lease_started_at", LocalDateTime.class),
                 rs.getObject("expected_return_at", LocalDateTime.class),

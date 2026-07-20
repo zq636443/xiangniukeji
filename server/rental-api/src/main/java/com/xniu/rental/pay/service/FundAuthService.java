@@ -8,6 +8,7 @@ import com.xniu.rental.bill.repository.BillRepository;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.order.model.RentalOrder;
 import com.xniu.rental.order.repository.OrderRepository;
+import com.xniu.rental.order.service.OrderRenewalService;
 import com.xniu.rental.overdue.service.OverdueService;
 import com.xniu.rental.pay.dto.FundAuthCaptureRequest;
 import com.xniu.rental.pay.dto.FundAuthCreateResponse;
@@ -44,6 +45,7 @@ public class FundAuthService {
     private final AuthorizationService authorizationService;
     private final AlipayGatewayClient alipayGatewayClient;
     private final OverdueService overdueService;
+    private final OrderRenewalService orderRenewalService;
 
     public FundAuthService(
         FundAuthRepository fundAuthRepository,
@@ -52,7 +54,8 @@ public class FundAuthService {
         PaymentRepository paymentRepository,
         AuthorizationService authorizationService,
         AlipayGatewayClient alipayGatewayClient,
-        OverdueService overdueService
+        OverdueService overdueService,
+        OrderRenewalService orderRenewalService
     ) {
         this.fundAuthRepository = fundAuthRepository;
         this.orderRepository = orderRepository;
@@ -61,6 +64,7 @@ public class FundAuthService {
         this.authorizationService = authorizationService;
         this.alipayGatewayClient = alipayGatewayClient;
         this.overdueService = overdueService;
+        this.orderRenewalService = orderRenewalService;
     }
 
     public List<FundAuthResponse> listAdminAuths(String status, Long orderId, Long userAccountId) {
@@ -234,10 +238,11 @@ public class FundAuthService {
             if (bill != null) {
                 payment = paymentRepository.markPaid(payment.id(), amount, result.tradeNo());
                 paymentId = payment.id();
-                billRepository.markPaid(bill.id(), amount);
+                var paidBill = billRepository.markPaid(bill.id(), amount);
                 billRepository.addLog(bill.id(), bill.billStatus(), BillStatus.PAID, BillOperationType.PAYMENT_SUCCESS, currentAccountId(), "资金授权扣费成功");
                 orderRepository.increasePaidAmount(bill.orderId(), amount);
                 overdueService.resolveByBillId(bill.id());
+                orderRenewalService.handlePaidBill(paidBill);
             }
             fundAuthRepository.markOperationSuccess(operation.id(), result.tradeNo(), null, paymentId);
             return toResponse(fundAuthRepository.addCaptured(auth.id(), amount));

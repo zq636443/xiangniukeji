@@ -29,6 +29,11 @@ public class MerchantAssetFulfillmentController {
         return ApiResponse.ok(assetFulfillmentService.pickup(orderId, request));
     }
 
+    @PostMapping("/{orderId}/ship")
+    public ApiResponse<AssetHandoverResponse> shipWithoutPayment(@PathVariable Long orderId, @RequestBody AssetPickupRequest request) {
+        return ApiResponse.ok(assetFulfillmentService.shipWithoutPayment(orderId, request));
+    }
+
     @PostMapping("/{orderId}/replace-asset")
     public ApiResponse<AssetChangeResponse> replaceAsset(@PathVariable Long orderId, @Valid @RequestBody AssetReplaceRequest request) {
         return ApiResponse.ok(assetFulfillmentService.replaceAsset(orderId, request));

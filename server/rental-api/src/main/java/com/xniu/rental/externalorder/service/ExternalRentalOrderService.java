@@ -266,17 +266,25 @@ public class ExternalRentalOrderService {
     }
 
     private void validateRequestAssets(ExternalRentalOrderCreateRequest request, ProductSku sku) {
-        if (Boolean.TRUE.equals(sku.needFrameAsset()) && request.frameAssetId() == null) {
-            throw BusinessException.badRequest("当前 SKU 必须绑定车架资产");
+        var frameAsset = request.frameAssetId() == null ? null : ensureAsset(request.frameAssetId());
+        if (frameAsset != null && !frameAsset.assetType().canBindAs(AssetType.VEHICLE_FRAME)) {
+            throw BusinessException.badRequest("请选择车架或车电一体资产");
         }
-        if (Boolean.TRUE.equals(sku.needBatteryAsset()) && request.batteryAssetId() == null) {
-            throw BusinessException.badRequest("当前 SKU 必须绑定电池资产");
+        var integratedVehicle = frameAsset != null && frameAsset.assetType().isIntegratedVehicle();
+        if (Boolean.TRUE.equals(sku.needFrameAsset()) && request.frameAssetId() == null) {
+            throw BusinessException.badRequest("当前商品链接必须绑定车架资产");
+        }
+        if (Boolean.TRUE.equals(sku.needBatteryAsset()) && request.batteryAssetId() == null && !integratedVehicle) {
+            throw BusinessException.badRequest("当前商品链接必须绑定电池资产");
         }
         if (!Boolean.TRUE.equals(sku.needFrameAsset()) && request.frameAssetId() != null) {
-            throw BusinessException.badRequest("当前 SKU 不需要绑定车架资产");
+            throw BusinessException.badRequest("当前商品链接不需要绑定车架资产");
         }
         if (!Boolean.TRUE.equals(sku.needBatteryAsset()) && request.batteryAssetId() != null) {
-            throw BusinessException.badRequest("当前 SKU 不需要绑定电池资产");
+            throw BusinessException.badRequest("当前商品链接不需要绑定电池资产");
+        }
+        if (integratedVehicle && request.batteryAssetId() != null) {
+            throw BusinessException.badRequest("车电一体资产只需绑定车架号，无需再选择电池资产");
         }
         if (request.frameAssetId() != null && request.frameAssetId().equals(request.batteryAssetId())) {
             throw BusinessException.badRequest("车架和电池不能选择同一条资产");
@@ -285,8 +293,8 @@ public class ExternalRentalOrderService {
 
     private AssetItem occupyAsset(Long assetId, AssetType expectedType, StoreSku storeSku, String remark) {
         var asset = ensureAsset(assetId);
-        if (asset.assetType() != expectedType) {
-            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择车架资产" : "请选择电池资产");
+        if (!asset.assetType().canBindAs(expectedType)) {
+            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择车架或车电一体资产" : "请选择电池资产");
         }
         if (asset.status() != AssetStatus.IDLE) {
             throw BusinessException.badRequest("所选资产不是空闲状态");
@@ -477,17 +485,17 @@ public class ExternalRentalOrderService {
     }
 
     private ProductSku ensureSku(Long id) {
-        return productRepository.findSku(id).orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
+        return productRepository.findSku(id).orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
     }
 
     private ProductPackage ensureStoreSkuPackage(StoreSku storeSku, Long packageId) {
         var configured = productRepository.listStoreSkuPackages(storeSku.id()).stream()
             .filter(item -> item.packageId().equals(packageId))
             .findFirst()
-            .orElseThrow(() -> BusinessException.badRequest("当前门店商品未配置该套餐"));
-        var packageTemplate = productRepository.findPackage(configured.packageId()).orElseThrow(() -> BusinessException.badRequest("套餐不存在"));
+            .orElseThrow(() -> BusinessException.badRequest("当前门店商品未配置该 SKU"));
+        var packageTemplate = productRepository.findPackage(configured.packageId()).orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
         if (!packageTemplate.skuId().equals(storeSku.skuId())) {
-            throw BusinessException.badRequest("套餐与门店商品不匹配");
+            throw BusinessException.badRequest("SKU 与门店商品不匹配");
         }
         return packageTemplate;
     }
@@ -496,7 +504,7 @@ public class ExternalRentalOrderService {
         return productRepository.listStoreSkuPackages(storeSkuId).stream()
             .filter(item -> item.packageId().equals(packageId))
             .findFirst()
-            .orElseThrow(() -> BusinessException.badRequest("当前门店商品未配置该套餐价格"));
+            .orElseThrow(() -> BusinessException.badRequest("当前门店商品未配置该 SKU 价格"));
     }
 
     private ExternalRentalOrderCreateRequest toCreateRequest(ExternalRentalOrderImportRowRequest row) {

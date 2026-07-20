@@ -6,6 +6,7 @@ import com.xniu.rental.settlement.dto.ProfitRuleResponse;
 import com.xniu.rental.settlement.dto.SettlementPreviewRequest;
 import com.xniu.rental.settlement.dto.SettlementSnapshotResponse;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
+import com.xniu.rental.settlement.dto.StoreProfitRuleUpdateRequest;
 import com.xniu.rental.settlement.model.SettlementRuleStatus;
 import com.xniu.rental.settlement.service.SettlementService;
 import jakarta.validation.Valid;
@@ -37,6 +38,11 @@ public class AdminSettlementController {
         return ApiResponse.ok(settlementService.listRules(scope, status));
     }
 
+    @GetMapping("/store-rules")
+    public ApiResponse<List<ProfitRuleResponse>> listStoreRules() {
+        return ApiResponse.ok(settlementService.listStoreRules());
+    }
+
     @PostMapping("/rules")
     public ApiResponse<ProfitRuleResponse> createRule(@Valid @RequestBody ProfitRuleRequest request) {
         return ApiResponse.ok(settlementService.createRule(request));
@@ -45,6 +51,14 @@ public class AdminSettlementController {
     @PutMapping("/rules/{id}/status")
     public ApiResponse<ProfitRuleResponse> updateRuleStatus(@PathVariable Long id, @RequestParam SettlementRuleStatus status) {
         return ApiResponse.ok(settlementService.updateRuleStatus(id, status));
+    }
+
+    @PutMapping("/store-rules/{storeId}")
+    public ApiResponse<ProfitRuleResponse> updateStoreRule(
+        @PathVariable Long storeId,
+        @Valid @RequestBody StoreProfitRuleUpdateRequest request
+    ) {
+        return ApiResponse.ok(settlementService.updateStoreRule(storeId, request));
     }
 
     @PostMapping("/preview")

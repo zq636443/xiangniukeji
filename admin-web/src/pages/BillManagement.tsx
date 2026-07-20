@@ -8,6 +8,7 @@ import type { BillBatch, BillGenerationResult, BillStatus, BillType, RentalBill,
 const billTypeOptions: { label: string; value: BillType }[] = [
   { label: '首期账单', value: 'INITIAL' },
   { label: '周期账单', value: 'PERIODIC' },
+  { label: '续租账单', value: 'RENEWAL' },
   { label: '逾期账单', value: 'OVERDUE' }
 ];
 
@@ -255,6 +256,7 @@ function statusTag(value?: BillStatus | null) {
 function itemTypeText(value: string) {
   const map: Record<string, string> = {
     RENT: '租金',
+    RENEWAL_RENT: '续租租金',
     SIGN_FEE: '签单费',
     DEPOSIT: '押金',
     OVERDUE_FEE: '逾期费用'
@@ -267,6 +269,7 @@ function generationTypeText(value: string) {
     INITIAL: '首期',
     PERIODIC: '周期',
     PLAN: '整单计划',
+    RENEWAL: '续租',
     OVERDUE: '逾期',
     MANUAL: '手动'
   };

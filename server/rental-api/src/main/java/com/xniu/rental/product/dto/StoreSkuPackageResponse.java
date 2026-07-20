@@ -5,6 +5,7 @@ import java.math.BigDecimal;
 public record StoreSkuPackageResponse(
     Long id,
     Long packageId,
+    String packageCode,
     String packageName,
     String leaseUnit,
     Integer leaseValue,
@@ -14,6 +15,10 @@ public record StoreSkuPackageResponse(
     BigDecimal rentalAmount,
     BigDecimal periodAmount,
     BigDecimal depositAmount,
+    Boolean autoRenewEnabled,
+    String renewalUnit,
+    Integer renewalValue,
+    BigDecimal renewalAmount,
     String status
 ) {
 }

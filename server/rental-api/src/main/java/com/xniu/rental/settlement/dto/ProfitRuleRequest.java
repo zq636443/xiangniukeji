@@ -8,14 +8,18 @@ import java.time.LocalDateTime;
 public record ProfitRuleRequest(
     @NotBlank(message = "请输入规则名称") String ruleName,
     @NotBlank(message = "请选择规则范围") String ruleScope,
+    String sourceChannel,
+    Integer priority,
     Long skuId,
     Long merchantId,
     Long storeId,
     Long storeSkuId,
-    @NotNull(message = "请输入门店办单费") BigDecimal merchantOrderFeeAmount,
-    @NotNull(message = "请输入门店租金分成比例") BigDecimal merchantRentShareRate,
-    @NotNull(message = "请输入平台租金分成比例") BigDecimal platformRentShareRate,
-    @NotNull(message = "请输入出资方收益比例") BigDecimal investorRentShareRate,
+    @NotNull(message = "请输入渠道核销扣点") BigDecimal channelFeeRate,
+    @NotNull(message = "请输入租赁平台扣点") BigDecimal platformFeeRate,
+    @NotNull(message = "请输入门店运营比例") BigDecimal storeOperationRate,
+    @NotNull(message = "请输入维修基金比例") BigDecimal maintenanceFundRate,
+    @NotNull(message = "请输入渠道引流比例") BigDecimal channelReferralRate,
+    @NotNull(message = "请输入出资方比例") BigDecimal investorShareRate,
     LocalDateTime effectiveAt,
     LocalDateTime expiredAt
 ) {

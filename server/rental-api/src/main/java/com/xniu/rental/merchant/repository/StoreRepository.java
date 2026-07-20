@@ -62,6 +62,11 @@ public class StoreRepository {
         return stores.stream().findFirst();
     }
 
+    public Optional<MerchantStore> findByCode(String storeCode) {
+        var stores = jdbcTemplate.query("SELECT * FROM merchant_store WHERE store_code = ?", mapper, storeCode);
+        return stores.stream().findFirst();
+    }
+
     public MerchantStore create(
         Long merchantId,
         String storeCode,

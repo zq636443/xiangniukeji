@@ -2,6 +2,7 @@ package com.xniu.rental.auth.service;
 
 import com.xniu.rental.auth.dto.StoreScopeResponse;
 import com.xniu.rental.auth.dto.SystemAccountCreateRequest;
+import com.xniu.rental.auth.dto.SystemAccountPermissionUpdateRequest;
 import com.xniu.rental.auth.dto.SystemAccountResetPasswordRequest;
 import com.xniu.rental.auth.dto.SystemAccountResponse;
 import com.xniu.rental.auth.dto.SystemAccountRoleUpdateRequest;
@@ -31,6 +32,7 @@ public class SystemManagementService {
     private static final Set<String> MERCHANT_ROLE_CODES = Set.of("MERCHANT_OWNER", "STORE_MANAGER", "STORE_OPERATOR", "STORE_STAFF", "MAINTENANCE_STAFF", "WAREHOUSE_STAFF");
     private static final Set<String> INVESTOR_ROLE_CODES = Set.of("INVESTOR");
     private static final Set<String> CONSUMER_ROLE_CODES = Set.of("CONSUMER");
+    private static final Set<String> DIRECT_ASSIGNABLE_PERMISSION_CODES = Set.of("order.create");
 
     private final SystemManagementRepository systemManagementRepository;
     private final AccountRepository accountRepository;
@@ -202,6 +204,20 @@ public class SystemManagementService {
         return toAccountResponse(ensureAccount(accountId));
     }
 
+    @Transactional
+    public SystemAccountResponse updateAccountPermissions(Long accountId, SystemAccountPermissionUpdateRequest request) {
+        var account = ensureAccount(accountId);
+        if (account.merchantId() == null) {
+            throw BusinessException.badRequest("只有商户体系账号可以配置新建订单权限");
+        }
+        var permissionCodes = request.permissionCodes().stream().distinct().toList();
+        if (permissionCodes.stream().anyMatch(code -> !DIRECT_ASSIGNABLE_PERMISSION_CODES.contains(code))) {
+            throw BusinessException.badRequest("包含不可直接分配的权限");
+        }
+        systemManagementRepository.replaceDirectPermissions(accountId, permissionCodes);
+        return toAccountResponse(ensureAccount(accountId));
+    }
+
     private void resetAllStoreScopes(AccountRow account) {
         systemManagementRepository.clearStoreScopes(account.id());
         systemManagementRepository.insertAllMerchantScope(account.id(), account.merchantId());
@@ -307,6 +323,8 @@ public class SystemManagementService {
             row.lastLoginAt(),
             row.createdAt(),
             authQueryRepository.findRoleCodes(row.id()),
+            authQueryRepository.findPermissionCodes(row.id()),
+            systemManagementRepository.findDirectPermissionCodes(row.id()),
             authQueryRepository.findStoreScopes(row.id()).stream()
                 .map(scope -> new StoreScopeResponse(scope.merchantId(), scope.storeId(), scope.scopeType().name()))
                 .toList()

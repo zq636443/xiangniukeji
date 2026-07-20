@@ -1,8 +1,8 @@
-import { DisconnectOutlined, PlayCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { DisconnectOutlined, FileAddOutlined, PlayCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { Button, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { useEffect, useState } from 'react';
 import { http } from '../services/request';
-import type { AgreementNotify, AgreementStatus, DeductBatch, DeductRecord, DeductStatus, PayAgreement } from '../types/api';
+import type { AgreementNotify, AgreementStatus, DeductBatch, DeductRecord, DeductStatus, PayAgreement, RenewalRunResponse } from '../types/api';
 
 const agreementStatusOptions: { label: string; value: AgreementStatus; color: string }[] = [
   { label: '签约中', value: 'SIGNING', color: 'blue' },
@@ -75,12 +75,22 @@ export function AgreementDeductManagement() {
     await loadAll();
   }
 
+  async function runRenewals() {
+    const result = await http.post<unknown, RenewalRunResponse>('/api/admin/order-renewals/run', {
+      limit,
+      remark: '后台手动生成续租账单'
+    });
+    message.success(`续租扫描完成：扫描 ${result.scannedCount} 单，生成 ${result.generatedCount} 张`);
+    await loadAll();
+  }
+
   return (
     <Space direction="vertical" size={16} className="page-stack">
       <Space align="center" className="toolbar">
         <Typography.Title level={4}>签约扣款</Typography.Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={loadAll}>刷新</Button>
+          <Button icon={<FileAddOutlined />} onClick={runRenewals}>生成续租账单</Button>
           <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => setRunOpen(true)}>执行到期扣款</Button>
         </Space>
       </Space>
@@ -198,7 +208,7 @@ export function AgreementDeductManagement() {
 
       <Modal title="执行到期扣款" open={runOpen} onCancel={() => setRunOpen(false)} onOk={runDeduct}>
         <Space direction="vertical" className="page-stack">
-          <Typography.Text>系统会扫描到期未支付账单，并按已签约协议主动扣款。</Typography.Text>
+          <Typography.Text>系统会先为到期未归还订单生成续租账单，再扫描到期未支付账单并按已签约协议主动扣款。</Typography.Text>
           <InputNumber min={1} max={50} value={limit} onChange={(value) => setLimit(Number(value || 50))} style={{ width: '100%' }} />
         </Space>
       </Modal>

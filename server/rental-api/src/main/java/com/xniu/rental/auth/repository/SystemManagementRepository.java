@@ -110,6 +110,26 @@ public class SystemManagementRepository {
             """, String.class, roleId);
     }
 
+    public List<String> findDirectPermissionCodes(Long accountId) {
+        return jdbcTemplate.queryForList("""
+            SELECT p.permission_code
+            FROM auth_account_permission ap
+            JOIN auth_permission p ON p.id = ap.permission_id
+            WHERE ap.account_id = ?
+            ORDER BY p.permission_code
+            """, String.class, accountId);
+    }
+
+    public void replaceDirectPermissions(Long accountId, List<String> permissionCodes) {
+        jdbcTemplate.update("DELETE FROM auth_account_permission WHERE account_id = ?", accountId);
+        for (var permissionCode : permissionCodes) {
+            jdbcTemplate.update("""
+                INSERT INTO auth_account_permission (account_id, permission_id)
+                SELECT ?, id FROM auth_permission WHERE permission_code = ?
+                """, accountId, permissionCode);
+        }
+    }
+
     public void replaceAccountRole(Long accountId, String roleCode) {
         jdbcTemplate.update("DELETE FROM auth_account_role WHERE account_id = ?", accountId);
         jdbcTemplate.update("""

@@ -1,11 +1,8 @@
 package com.xniu.rental.settlement.service;
 
-import com.xniu.rental.asset.model.AssetItem;
-import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.BusinessException;
-import com.xniu.rental.investor.model.Investor;
-import com.xniu.rental.investor.repository.InvestorRepository;
+import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.product.model.StoreSku;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.ProfitRuleRequest;
@@ -13,7 +10,9 @@ import com.xniu.rental.settlement.dto.ProfitRuleResponse;
 import com.xniu.rental.settlement.dto.SettlementPreviewRequest;
 import com.xniu.rental.settlement.dto.SettlementSnapshotResponse;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
+import com.xniu.rental.settlement.dto.StoreProfitRuleUpdateRequest;
 import com.xniu.rental.settlement.model.RuleScope;
+import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.model.SettlementProfitRule;
 import com.xniu.rental.settlement.model.SettlementRuleSnapshot;
 import com.xniu.rental.settlement.model.SettlementRuleStatus;
@@ -23,9 +22,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
+import java.util.Locale;
 import java.util.UUID;
-import java.util.stream.Stream;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,21 +34,18 @@ public class SettlementService {
 
     private final SettlementRepository settlementRepository;
     private final ProductRepository productRepository;
-    private final AssetRepository assetRepository;
-    private final InvestorRepository investorRepository;
+    private final StoreRepository storeRepository;
     private final AuthorizationService authorizationService;
 
     public SettlementService(
         SettlementRepository settlementRepository,
         ProductRepository productRepository,
-        AssetRepository assetRepository,
-        InvestorRepository investorRepository,
+        StoreRepository storeRepository,
         AuthorizationService authorizationService
     ) {
         this.settlementRepository = settlementRepository;
         this.productRepository = productRepository;
-        this.assetRepository = assetRepository;
-        this.investorRepository = investorRepository;
+        this.storeRepository = storeRepository;
         this.authorizationService = authorizationService;
     }
 
@@ -62,6 +57,13 @@ public class SettlementService {
     }
 
     @Transactional
+    public List<ProfitRuleResponse> listStoreRules() {
+        authorizationService.requirePermission("settlement.read");
+        storeRepository.list(null, null).forEach(store -> initializeStoreProfitRuleInternal(store.id()));
+        return settlementRepository.listDefaultStoreRules().stream().map(this::toResponse).toList();
+    }
+
+    @Transactional
     public ProfitRuleResponse createRule(ProfitRuleRequest request) {
         authorizationService.requirePermission("settlement.write");
         validateRule(request);
@@ -69,14 +71,18 @@ public class SettlementService {
             nextCode("RULE"),
             request.ruleName(),
             parseScope(request.ruleScope()),
+            normalizeRuleChannel(request.sourceChannel()),
+            normalizePriority(request.priority()),
             request.skuId(),
             request.merchantId(),
             request.storeId(),
             request.storeSkuId(),
-            money(request.merchantOrderFeeAmount()),
-            rate(request.merchantRentShareRate()),
-            rate(request.platformRentShareRate()),
-            rate(request.investorRentShareRate()),
+            rate(request.channelFeeRate()),
+            rate(request.platformFeeRate()),
+            rate(request.storeOperationRate()),
+            rate(request.maintenanceFundRate()),
+            rate(request.channelReferralRate()),
+            rate(request.investorShareRate()),
             request.effectiveAt() == null ? LocalDateTime.now() : request.effectiveAt(),
             request.expiredAt()
         );
@@ -90,6 +96,51 @@ public class SettlementService {
         return toResponse(settlementRepository.updateRuleStatus(id, status));
     }
 
+    @Transactional
+    public ProfitRuleResponse updateStoreRule(Long storeId, StoreProfitRuleUpdateRequest request) {
+        authorizationService.requirePlatformAccount();
+        authorizationService.requirePermission("settlement.write");
+        storeRepository.findById(storeId).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+        validateRates(
+            request.channelFeeRate(),
+            request.platformFeeRate(),
+            request.storeOperationRate(),
+            request.maintenanceFundRate(),
+            request.channelReferralRate(),
+            request.investorShareRate()
+        );
+        initializeStoreProfitRuleInternal(storeId);
+        var rule = settlementRepository.findDefaultStoreRule(storeId)
+            .orElseThrow(() -> BusinessException.badRequest("门店分润规则初始化失败"));
+        return toResponse(settlementRepository.updateStoreRule(
+            rule.id(),
+            rate(request.channelFeeRate()),
+            rate(request.platformFeeRate()),
+            rate(request.storeOperationRate()),
+            rate(request.maintenanceFundRate()),
+            rate(request.channelReferralRate()),
+            rate(request.investorShareRate())
+        ));
+    }
+
+    @Transactional
+    public void initializeStoreProfitRule(Long storeId) {
+        initializeStoreProfitRuleInternal(storeId);
+    }
+
+    @Transactional
+    public void deleteStoreProfitRules(Long storeId) {
+        settlementRepository.deleteRulesByStoreId(storeId);
+    }
+
+    private void initializeStoreProfitRuleInternal(Long storeId) {
+        settlementRepository.createDefaultStoreRuleIfMissing(storeId);
+        if (settlementRepository.findDefaultStoreRule(storeId).isEmpty()) {
+            throw BusinessException.badRequest("平台默认分润规则不存在，无法初始化门店规则");
+        }
+    }
+
+    @Transactional
     public SettlementSnapshotResponse preview(SettlementPreviewRequest request) {
         authorizationService.requirePermission("settlement.read");
         return toResponse(buildSnapshot(
@@ -99,6 +150,7 @@ public class SettlementService {
             request.frameAssetId(),
             request.batteryAssetId(),
             request.rentalAmount(),
+            request.sourceChannel(),
             false
         ));
     }
@@ -122,6 +174,7 @@ public class SettlementService {
             request.frameAssetId(),
             request.batteryAssetId(),
             request.rentalAmount(),
+            request.sourceChannel(),
             true
         );
         return toResponse(snapshot);
@@ -155,45 +208,40 @@ public class SettlementService {
         Long frameAssetId,
         Long batteryAssetId,
         BigDecimal rentalAmount,
+        String sourceChannel,
         boolean persist
     ) {
         var storeSku = productRepository.findStoreSku(storeSkuId)
             .orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
+        initializeStoreProfitRuleInternal(storeSku.storeId());
+        var normalizedChannel = normalizeSnapshotChannel(sourceChannel);
         var matchedRule = settlementRepository.matchRule(
             storeSku.id(),
             storeSku.skuId(),
-            storeSku.merchantId(),
             storeSku.storeId(),
+            normalizedChannel,
             LocalDateTime.now()
         ).orElseThrow(() -> BusinessException.badRequest("未找到可用分润规则"));
         var rental = money(rentalAmount);
-        var merchantRentShare = multiply(rental, matchedRule.merchantRentShareRate());
-        var platformRentShare = multiply(rental, matchedRule.platformRentShareRate());
-        var investorGrossShare = multiply(rental, matchedRule.investorRentShareRate());
-        var assets = Stream.of(findAsset(frameAssetId), findAsset(batteryAssetId))
-            .filter(Objects::nonNull)
-            .toList();
-        var maintenanceFee = assets.stream()
-            .map(AssetItem::maintenanceFeeAmount)
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
-        var investorOperationFee = assets.stream()
-            .map(asset -> multiply(
-                investorGrossShare,
-                investorRepository.findById(asset.investorId()).map(Investor::operationFeeRate).orElse(BigDecimal.ZERO)
-            ))
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (assets.size() > 1) {
-            investorOperationFee = investorOperationFee.divide(new BigDecimal(assets.size()), 2, RoundingMode.HALF_UP);
+        if (rental.signum() < 0) {
+            throw BusinessException.badRequest("结算基数不能小于 0");
         }
-        var investorNetShare = investorGrossShare.subtract(investorOperationFee).subtract(maintenanceFee);
-        if (investorNetShare.signum() < 0) {
-            investorNetShare = BigDecimal.ZERO;
-        }
+        var allocation = ProfitSharingCalculator.calculate(
+            rental,
+            matchedRule.channelFeeRate(),
+            matchedRule.platformFeeRate(),
+            matchedRule.storeOperationRate(),
+            matchedRule.maintenanceFundRate(),
+            matchedRule.channelReferralRate(),
+            matchedRule.investorShareRate()
+        );
         var snapshot = new SettlementRuleSnapshot(
             null,
             nextCode("SNP"),
             sourceType,
             sourceId,
+            SettlementCalculationVersion.PROFIT_V2,
+            normalizedChannel,
             storeSku.id(),
             storeSku.skuId(),
             storeSku.merchantId(),
@@ -203,28 +251,35 @@ public class SettlementService {
             matchedRule.id(),
             matchedRule.ruleScope(),
             rental,
+            allocation.settlementBaseAmount(),
             storeSku.signFeeAmount(),
-            matchedRule.merchantOrderFeeAmount(),
-            matchedRule.merchantRentShareRate(),
-            merchantRentShare,
-            matchedRule.platformRentShareRate(),
-            platformRentShare,
-            matchedRule.investorRentShareRate(),
-            investorGrossShare,
-            investorOperationFee,
-            maintenanceFee,
-            investorNetShare,
-            summary(matchedRule, storeSku),
+            BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+            allocation.storeOperationRate(),
+            allocation.storeOperationAmount(),
+            allocation.platformFeeRate(),
+            allocation.platformFeeAmount(),
+            allocation.investorShareRate(),
+            allocation.investorShareAmount(),
+            BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+            allocation.maintenanceFundAmount(),
+            allocation.investorShareAmount(),
+            allocation.channelFeeRate(),
+            allocation.channelFeeAmount(),
+            allocation.platformFeeRate(),
+            allocation.platformFeeAmount(),
+            allocation.distributableAmount(),
+            allocation.storeOperationRate(),
+            allocation.storeOperationAmount(),
+            allocation.maintenanceFundRate(),
+            allocation.maintenanceFundAmount(),
+            allocation.channelReferralRate(),
+            allocation.channelReferralAmount(),
+            allocation.investorShareRate(),
+            allocation.investorShareAmount(),
+            summary(matchedRule, storeSku, normalizedChannel),
             null
         );
         return persist ? settlementRepository.createSnapshot(snapshot) : snapshot;
-    }
-
-    private AssetItem findAsset(Long assetId) {
-        if (assetId == null) {
-            return null;
-        }
-        return assetRepository.findById(assetId).orElseThrow(() -> BusinessException.badRequest("资产不存在"));
     }
 
     private void validateRule(ProfitRuleRequest request) {
@@ -232,7 +287,7 @@ public class SettlementService {
         switch (scope) {
             case STORE_SKU -> {
                 if (request.storeSkuId() == null) {
-                    throw BusinessException.badRequest("门店 SKU 规则必须选择门店商品");
+                    throw BusinessException.badRequest("门店商品规则必须选择门店商品");
                 }
             }
             case STORE -> {
@@ -242,20 +297,45 @@ public class SettlementService {
             }
             case SKU -> {
                 if (request.skuId() == null) {
-                    throw BusinessException.badRequest("SKU 规则必须选择 SKU");
+                    throw BusinessException.badRequest("链接规则必须选择商品链接");
                 }
             }
             case PLATFORM -> {
             }
         }
-        var totalRate = rate(request.merchantRentShareRate())
-            .add(rate(request.platformRentShareRate()))
-            .add(rate(request.investorRentShareRate()));
-        if (totalRate.compareTo(ONE) != 0) {
-            throw BusinessException.badRequest("门店、平台、出资方租金分成比例之和必须等于 1");
-        }
+        normalizeRuleChannel(request.sourceChannel());
+        normalizePriority(request.priority());
+        validateRates(
+            request.channelFeeRate(),
+            request.platformFeeRate(),
+            request.storeOperationRate(),
+            request.maintenanceFundRate(),
+            request.channelReferralRate(),
+            request.investorShareRate()
+        );
         if (request.expiredAt() != null && request.effectiveAt() != null && !request.expiredAt().isAfter(request.effectiveAt())) {
             throw BusinessException.badRequest("失效时间必须晚于生效时间");
+        }
+    }
+
+    private void validateRates(
+        BigDecimal channelFeeRate,
+        BigDecimal platformFeeRate,
+        BigDecimal storeOperationRate,
+        BigDecimal maintenanceFundRate,
+        BigDecimal channelReferralRate,
+        BigDecimal investorShareRate
+    ) {
+        var deductionRate = rate(channelFeeRate).add(rate(platformFeeRate));
+        if (deductionRate.compareTo(ONE) >= 0) {
+            throw BusinessException.badRequest("渠道扣点与平台扣点之和必须小于 1");
+        }
+        var distributionRate = rate(storeOperationRate)
+            .add(rate(maintenanceFundRate))
+            .add(rate(channelReferralRate))
+            .add(rate(investorShareRate));
+        if (distributionRate.compareTo(ONE) != 0) {
+            throw BusinessException.badRequest("门店运营、维修基金、渠道引流、出资方比例之和必须等于 1");
         }
     }
 
@@ -269,14 +349,18 @@ public class SettlementService {
             rule.ruleCode(),
             rule.ruleName(),
             rule.ruleScope().name(),
+            rule.sourceChannel(),
+            rule.priority(),
             rule.skuId(),
             rule.merchantId(),
             rule.storeId(),
             rule.storeSkuId(),
-            rule.merchantOrderFeeAmount(),
-            rule.merchantRentShareRate(),
-            rule.platformRentShareRate(),
-            rule.investorRentShareRate(),
+            rule.channelFeeRate(),
+            rule.platformFeeRate(),
+            rule.storeOperationRate(),
+            rule.maintenanceFundRate(),
+            rule.channelReferralRate(),
+            rule.investorShareRate(),
             rule.effectiveAt(),
             rule.expiredAt(),
             rule.status().name()
@@ -289,6 +373,8 @@ public class SettlementService {
             snapshot.snapshotNo(),
             snapshot.sourceType().name(),
             snapshot.sourceId(),
+            snapshot.calculationVersion().name(),
+            snapshot.sourceChannel(),
             snapshot.storeSkuId(),
             snapshot.skuId(),
             snapshot.merchantId(),
@@ -298,6 +384,7 @@ public class SettlementService {
             snapshot.matchedRuleId(),
             snapshot.matchedRuleScope().name(),
             snapshot.rentalAmount(),
+            snapshot.settlementBaseAmount(),
             snapshot.signFeeAmount(),
             snapshot.merchantOrderFeeAmount(),
             snapshot.merchantRentShareRate(),
@@ -309,22 +396,35 @@ public class SettlementService {
             snapshot.investorOperationFeeAmount(),
             snapshot.maintenanceFeeAmount(),
             snapshot.investorNetShareAmount(),
+            snapshot.channelFeeRate(),
+            snapshot.channelFeeAmount(),
+            snapshot.platformFeeRate(),
+            snapshot.platformFeeAmount(),
+            snapshot.distributableAmount(),
+            snapshot.storeOperationRate(),
+            snapshot.storeOperationAmount(),
+            snapshot.maintenanceFundRate(),
+            snapshot.maintenanceFundAmount(),
+            snapshot.channelReferralRate(),
+            snapshot.channelReferralAmount(),
+            snapshot.investorShareRate(),
+            snapshot.investorShareAmount(),
             snapshot.ruleSummary(),
             snapshot.createdAt()
         );
     }
 
-    private String summary(SettlementProfitRule rule, StoreSku storeSku) {
+    private String summary(SettlementProfitRule rule, StoreSku storeSku, String sourceChannel) {
         return "rule=" + rule.ruleCode()
             + ";scope=" + rule.ruleScope()
+            + ";channel=" + sourceChannel
             + ";storeSku=" + storeSku.storeSkuCode()
-            + ";merchantRate=" + rule.merchantRentShareRate()
-            + ";platformRate=" + rule.platformRentShareRate()
-            + ";investorRate=" + rule.investorRentShareRate();
-    }
-
-    private BigDecimal multiply(BigDecimal amount, BigDecimal rate) {
-        return amount.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+            + ";channelFeeRate=" + rule.channelFeeRate()
+            + ";platformFeeRate=" + rule.platformFeeRate()
+            + ";storeOperationRate=" + rule.storeOperationRate()
+            + ";maintenanceFundRate=" + rule.maintenanceFundRate()
+            + ";channelReferralRate=" + rule.channelReferralRate()
+            + ";investorShareRate=" + rule.investorShareRate();
     }
 
     private BigDecimal money(BigDecimal value) {
@@ -336,6 +436,30 @@ public class SettlementService {
             throw BusinessException.badRequest("分成比例必须在 0 到 1 之间");
         }
         return value.setScale(4, RoundingMode.HALF_UP);
+    }
+
+    private int normalizePriority(Integer value) {
+        var priority = value == null ? 0 : value;
+        if (priority < -10000 || priority > 10000) {
+            throw BusinessException.badRequest("规则优先级必须在 -10000 到 10000 之间");
+        }
+        return priority;
+    }
+
+    private String normalizeRuleChannel(String value) {
+        return value == null || value.isBlank() ? null : normalizeChannel(value);
+    }
+
+    private String normalizeSnapshotChannel(String value) {
+        return value == null || value.isBlank() ? "DIRECT" : normalizeChannel(value);
+    }
+
+    private String normalizeChannel(String value) {
+        var normalized = value.trim().toUpperCase(Locale.ROOT);
+        if (!normalized.matches("[A-Z0-9_]{2,32}")) {
+            throw BusinessException.badRequest("渠道编码格式不正确");
+        }
+        return normalized;
     }
 
     private RuleScope parseScope(String value) {

@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.xniu.rental.auth.dto.CurrentAccountResponse;
 import com.xniu.rental.auth.dto.SystemAccountCreateRequest;
+import com.xniu.rental.auth.dto.SystemAccountPermissionUpdateRequest;
 import com.xniu.rental.auth.dto.SystemAccountResetPasswordRequest;
 import com.xniu.rental.auth.dto.SystemAccountUpdateRequest;
 import com.xniu.rental.auth.repository.AccountRepository;
+import com.xniu.rental.auth.repository.AuthQueryRepository;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.CurrentAccount;
 import com.xniu.rental.auth.service.PasswordHasher;
@@ -33,6 +35,9 @@ class SystemManagementIntegrationTests {
 
     @Autowired
     private PasswordHasher passwordHasher;
+
+    @Autowired
+    private AuthQueryRepository authQueryRepository;
 
     @BeforeEach
     void setCurrentAccount() {
@@ -90,5 +95,27 @@ class SystemManagementIntegrationTests {
         assertThat(account.displayName()).isEqualTo("财务经理甲");
         assertThat(account.phone()).isEqualTo("13900000001");
         assertThat(passwordHasher.matches("Reset@2026", account.passwordHash())).isTrue();
+    }
+
+    @Test
+    void platformAdminCanGrantAndRevokeMerchantOrderCreatePermission() {
+        var merchantAccount = accountRepository.findByUsername("merchant_demo").orElseThrow();
+
+        var granted = systemManagementService.updateAccountPermissions(
+            merchantAccount.id(),
+            new SystemAccountPermissionUpdateRequest(List.of("order.create"))
+        );
+
+        assertThat(granted.directPermissions()).containsExactly("order.create");
+        assertThat(granted.permissions()).contains("order.create");
+        assertThat(authQueryRepository.findPermissionCodes(merchantAccount.id())).contains("order.create");
+
+        var revoked = systemManagementService.updateAccountPermissions(
+            merchantAccount.id(),
+            new SystemAccountPermissionUpdateRequest(List.of())
+        );
+
+        assertThat(revoked.directPermissions()).isEmpty();
+        assertThat(revoked.permissions()).doesNotContain("order.create");
     }
 }

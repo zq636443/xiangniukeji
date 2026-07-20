@@ -1,11 +1,13 @@
 package com.xniu.rental;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.xniu.rental.asset.service.MaintenanceService;
 import com.xniu.rental.auth.dto.CurrentAccountResponse;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.CurrentAccount;
+import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderBatchImportRequest;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderImportRowRequest;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderCreateRequest;
@@ -231,6 +233,61 @@ class ExternalRentalOrderIntegrationTests {
         assertThat(detail.rentals().get(0).sourcePlatform()).isEqualTo("OFFLINE");
         assertThat(detail.rentals().get(0).externalOrderNo()).isEqualTo("OFFLINE-BATCH-001");
         assertThat(detail.rentals().get(0).customerName()).isEqualTo("王五");
+    }
+
+    @Test
+    void integratedVehicleShouldSatisfyFrameAndBatteryRequirementsWithOneAsset() {
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES ('A-integrated-ext-test', 'INTEGRATED_VEHICLE', 'FRAME-INTEGRATED-EXT', 1, 1, 1, 'IDLE',
+                    4200.00, 0.00, NULL, CURRENT_DATE)
+            """);
+        var integratedAssetId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_item WHERE asset_code = 'A-integrated-ext-test'",
+            Long.class
+        );
+
+        assertThatThrownBy(() -> externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "INTEGRATED-WITH-BATTERY",
+            1L,
+            2L,
+            "错误绑定客户",
+            "13800135555",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            integratedAssetId,
+            2L,
+            new BigDecimal("399.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            null
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("无需再选择电池资产");
+
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "INTEGRATED-ONLY-FRAME",
+            1L,
+            2L,
+            "一体车补录客户",
+            "13800134444",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            integratedAssetId,
+            null,
+            new BigDecimal("399.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            null
+        ));
+
+        assertThat(created.frameAssetId()).isEqualTo(integratedAssetId);
+        assertThat(created.batteryAssetId()).isNull();
+        assertThat(assetStatus(integratedAssetId)).isEqualTo("RENTING");
     }
 
     private String assetStatus(Long assetId) {

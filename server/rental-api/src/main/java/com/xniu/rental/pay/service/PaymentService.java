@@ -7,6 +7,7 @@ import com.xniu.rental.bill.model.BillStatus;
 import com.xniu.rental.bill.repository.BillRepository;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.order.repository.OrderRepository;
+import com.xniu.rental.order.service.OrderRenewalService;
 import com.xniu.rental.overdue.service.OverdueService;
 import com.xniu.rental.pay.dto.AlipayTradeCreateResponse;
 import com.xniu.rental.pay.dto.PaymentCallbackResponse;
@@ -33,6 +34,7 @@ public class PaymentService {
     private final AuthorizationService authorizationService;
     private final AlipayGatewayClient alipayGatewayClient;
     private final OverdueService overdueService;
+    private final OrderRenewalService orderRenewalService;
 
     public PaymentService(
         PaymentRepository paymentRepository,
@@ -40,7 +42,8 @@ public class PaymentService {
         OrderRepository orderRepository,
         AuthorizationService authorizationService,
         AlipayGatewayClient alipayGatewayClient,
-        OverdueService overdueService
+        OverdueService overdueService,
+        OrderRenewalService orderRenewalService
     ) {
         this.paymentRepository = paymentRepository;
         this.billRepository = billRepository;
@@ -48,6 +51,7 @@ public class PaymentService {
         this.authorizationService = authorizationService;
         this.alipayGatewayClient = alipayGatewayClient;
         this.overdueService = overdueService;
+        this.orderRenewalService = orderRenewalService;
     }
 
     public List<PaymentResponse> listPayments(String status, Long billId, Long orderId) {
@@ -172,10 +176,11 @@ public class PaymentService {
         }
         var bill = billRepository.findBill(payment.billId()).orElseThrow(() -> BusinessException.badRequest("账单不存在"));
         var updatedPayment = paymentRepository.markPaid(payment.id(), paidAmount.setScale(2, RoundingMode.HALF_UP), alipayTradeNo);
-        billRepository.markPaid(bill.id(), paidAmount.setScale(2, RoundingMode.HALF_UP));
+        var paidBill = billRepository.markPaid(bill.id(), paidAmount.setScale(2, RoundingMode.HALF_UP));
         billRepository.addLog(bill.id(), bill.billStatus(), BillStatus.PAID, BillOperationType.PAYMENT_SUCCESS, null, remark);
         orderRepository.increasePaidAmount(payment.orderId(), paidAmount.setScale(2, RoundingMode.HALF_UP));
         overdueService.resolveByBillId(bill.id());
+        orderRenewalService.handlePaidBill(paidBill);
         return updatedPayment;
     }
 

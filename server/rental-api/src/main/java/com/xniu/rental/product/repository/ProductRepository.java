@@ -120,37 +120,44 @@ public class ProductRepository {
         return list.stream().findFirst();
     }
 
-    public ProductPackage createPackage(String code, Long skuId, String name, LeaseUnit unit, Integer leaseValue, Integer totalPeriods, BillDayMode billDayMode, Integer billDay) {
+    public Optional<ProductPackage> findPackageByCode(String packageCode) {
+        var list = jdbcTemplate.query("SELECT * FROM product_package WHERE package_code = ?", packageMapper, packageCode);
+        return list.stream().findFirst();
+    }
+
+    public ProductPackage createPackage(String code, Long skuId, String name, BigDecimal priceAmount, LeaseUnit unit, Integer leaseValue, Integer totalPeriods, BillDayMode billDayMode, Integer billDay) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             var statement = connection.prepareStatement("""
                 INSERT INTO product_package
-                (package_code, sku_id, package_name, lease_unit, lease_value, total_periods, bill_day_mode, bill_day)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (package_code, sku_id, package_name, price_amount, lease_unit, lease_value, total_periods, bill_day_mode, bill_day)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, code);
             statement.setLong(2, skuId);
             statement.setString(3, name);
-            statement.setString(4, unit.name());
-            statement.setInt(5, leaseValue);
-            statement.setInt(6, totalPeriods);
-            statement.setString(7, billDayMode.name());
+            statement.setBigDecimal(4, priceAmount);
+            statement.setString(5, unit.name());
+            statement.setInt(6, leaseValue);
+            statement.setInt(7, totalPeriods);
+            statement.setString(8, billDayMode.name());
             if (billDay == null) {
-                statement.setObject(8, null);
+                statement.setObject(9, null);
             } else {
-                statement.setInt(8, billDay);
+                statement.setInt(9, billDay);
             }
             return statement;
         }, keyHolder);
         return findPackage(keyHolder.getKey().longValue()).orElseThrow();
     }
 
-    public ProductPackage updatePackage(Long id, String name, LeaseUnit unit, Integer leaseValue, Integer totalPeriods, BillDayMode billDayMode, Integer billDay) {
+    public ProductPackage updatePackage(Long id, String name, BigDecimal priceAmount, LeaseUnit unit, Integer leaseValue, Integer totalPeriods, BillDayMode billDayMode, Integer billDay) {
         jdbcTemplate.update("""
             UPDATE product_package
-            SET package_name = ?, lease_unit = ?, lease_value = ?, total_periods = ?, bill_day_mode = ?, bill_day = ?
+            SET package_name = ?, price_amount = ?, lease_unit = ?, lease_value = ?, total_periods = ?, bill_day_mode = ?, bill_day = ?
             WHERE id = ?
-            """, name, unit.name(), leaseValue, totalPeriods, billDayMode.name(), billDay, id);
+            """, name, priceAmount, unit.name(), leaseValue, totalPeriods, billDayMode.name(), billDay, id);
+        jdbcTemplate.update("UPDATE store_sku_package SET rental_amount = ? WHERE package_id = ?", priceAmount, id);
         return findPackage(id).orElseThrow();
     }
 
@@ -175,6 +182,11 @@ public class ProductRepository {
 
     public Optional<StoreSku> findStoreSku(Long id) {
         var list = jdbcTemplate.query("SELECT * FROM store_sku WHERE id = ?", storeSkuMapper, id);
+        return list.stream().findFirst();
+    }
+
+    public Optional<StoreSku> findStoreSkuByCode(String storeSkuCode) {
+        var list = jdbcTemplate.query("SELECT * FROM store_sku WHERE store_sku_code = ?", storeSkuMapper, storeSkuCode);
         return list.stream().findFirst();
     }
 
@@ -223,9 +235,20 @@ public class ProductRepository {
         for (var row : rows) {
             jdbcTemplate.update("""
                 INSERT INTO store_sku_package
-                (store_sku_id, package_id, rental_amount, period_amount, deposit_amount)
-                VALUES (?, ?, ?, ?, ?)
-                """, storeSkuId, row.packageId(), row.rentalAmount(), row.periodAmount(), row.depositAmount());
+                (store_sku_id, package_id, rental_amount, period_amount, deposit_amount,
+                 auto_renew_enabled, renewal_unit, renewal_value, renewal_amount)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                storeSkuId,
+                row.packageId(),
+                row.rentalAmount(),
+                row.periodAmount(),
+                row.depositAmount(),
+                row.autoRenewEnabled(),
+                row.renewalUnit() == null ? null : row.renewalUnit().name(),
+                row.renewalValue(),
+                row.renewalAmount()
+            );
         }
     }
 
@@ -233,7 +256,16 @@ public class ProductRepository {
         return jdbcTemplate.query("SELECT * FROM store_sku_package WHERE store_sku_id = ? ORDER BY id", storeSkuPackageMapper, storeSkuId);
     }
 
-    public record PackagePriceRow(Long packageId, BigDecimal rentalAmount, BigDecimal periodAmount, BigDecimal depositAmount) {
+    public record PackagePriceRow(
+        Long packageId,
+        BigDecimal rentalAmount,
+        BigDecimal periodAmount,
+        BigDecimal depositAmount,
+        Boolean autoRenewEnabled,
+        LeaseUnit renewalUnit,
+        Integer renewalValue,
+        BigDecimal renewalAmount
+    ) {
     }
 
     private static class CategoryMapper implements RowMapper<ProductCategory> {
@@ -275,6 +307,7 @@ public class ProductRepository {
                 rs.getString("package_code"),
                 rs.getLong("sku_id"),
                 rs.getString("package_name"),
+                rs.getBigDecimal("price_amount"),
                 LeaseUnit.valueOf(rs.getString("lease_unit")),
                 rs.getInt("lease_value"),
                 rs.getInt("total_periods"),
@@ -318,8 +351,17 @@ public class ProductRepository {
                 rs.getBigDecimal("rental_amount"),
                 rs.getBigDecimal("period_amount"),
                 rs.getBigDecimal("deposit_amount"),
+                rs.getBoolean("auto_renew_enabled"),
+                nullableLeaseUnit(rs, "renewal_unit"),
+                getNullableInt(rs, "renewal_value"),
+                rs.getBigDecimal("renewal_amount"),
                 ProductStatus.valueOf(rs.getString("status"))
             );
         }
+    }
+
+    private static LeaseUnit nullableLeaseUnit(ResultSet rs, String column) throws SQLException {
+        var value = rs.getString(column);
+        return value == null ? null : LeaseUnit.valueOf(value);
     }
 }

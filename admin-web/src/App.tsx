@@ -73,7 +73,7 @@ import type { CurrentAccount, LoginResponse, Store } from './types/api';
 
 type WorkspaceMode = 'admin' | 'merchant' | 'investor';
 
-type LoginMode = 'admin' | 'merchant' | 'investor';
+type LoginMode = 'merchant' | 'investor';
 
 type NavItem = {
   key: string;
@@ -123,8 +123,8 @@ const adminMenuItems: NavItem[] = [
     permission: 'store.read',
     icon: <ProductOutlined />,
     children: [
-      { key: 'skus', label: 'SKU 管理', permission: 'store.read', icon: <ProductOutlined /> },
-      { key: 'packages', label: '套餐管理', permission: 'store.read', icon: <ProfileOutlined /> },
+      { key: 'skus', label: '链接管理', permission: 'store.read', icon: <ProductOutlined /> },
+      { key: 'packages', label: 'SKU 管理', permission: 'store.read', icon: <ProfileOutlined /> },
       { key: 'storeSkus', label: '门店商品', permission: 'store.read', icon: <ShopOutlined /> }
     ]
   },
@@ -203,33 +203,24 @@ const investorMenuItems: NavItem[] = [
   }
 ];
 
-const loginMeta: Record<LoginMode, { title: string; eyebrow: string; description: string; endpoint: string; initialValues: { username: string; password: string } }> = {
-  admin: {
-    title: '总部后台登录',
-    eyebrow: 'Headquarters Console',
-    description: '用于总部运营、财务、平台管理员查看全局经营与系统配置。',
-    endpoint: '/api/auth/admin/login',
-    initialValues: { username: 'admin', password: '123456' }
-  },
+const loginMeta: Record<LoginMode, { title: string; eyebrow: string; description: string; endpoint: string }> = {
   merchant: {
-    title: '商户后台登录',
-    eyebrow: 'Merchant Workspace',
-    description: '用于商户老板和门店成员查看自己门店的订单、资产、逾期与收益。',
-    endpoint: '/api/auth/merchant/login',
-    initialValues: { username: '', password: '' }
+    title: '运营后台登录',
+    eyebrow: 'Operations Workspace',
+    description: '平台管理员、商户老板和门店成员使用各自账号进入对应工作台。',
+    endpoint: '/api/auth/workspace/login'
   },
   investor: {
     title: '出资方登录',
     eyebrow: 'Investor Workspace',
     description: '用于出资方查看自己名下资产状态与收益分成。',
-    endpoint: '/api/auth/admin/login',
-    initialValues: { username: '', password: '' }
+    endpoint: '/api/auth/admin/login'
   }
 };
 
 export default function App() {
   const [account, setAccount] = useState<CurrentAccount | null>(null);
-  const [loginMode, setLoginMode] = useState<LoginMode>('admin');
+  const [loginMode, setLoginMode] = useState<LoginMode>('merchant');
   const [activeMenu, setActiveMenu] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [merchantStores, setMerchantStores] = useState<Store[]>([]);
@@ -247,7 +238,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    loginForm.setFieldsValue(loginMeta[loginMode].initialValues);
+    loginForm.resetFields();
   }, [loginMode, loginForm]);
 
   const workspaceMode = useMemo<WorkspaceMode | null>(() => {
@@ -355,7 +346,7 @@ export default function App() {
       setAccount(null);
       setMerchantStores([]);
       setActiveStoreId(undefined);
-      setLoginMode('admin');
+      setLoginMode('merchant');
     }
   };
 
@@ -385,7 +376,6 @@ export default function App() {
               block
               value={loginMode}
               options={[
-                { label: '总部登录', value: 'admin' },
                 { label: '商户登录', value: 'merchant' },
                 { label: '出资方登录', value: 'investor' }
               ]}

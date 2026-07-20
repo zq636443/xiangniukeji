@@ -65,6 +65,16 @@ public class AssetRepository {
         return assets.stream().findFirst();
     }
 
+    public Optional<AssetItem> findBySerialNoAndType(String serialNo, AssetType assetType) {
+        var assets = jdbcTemplate.query(
+            "SELECT * FROM asset_item WHERE serial_no = ? AND asset_type = ?",
+            mapper,
+            serialNo,
+            assetType.name()
+        );
+        return assets.stream().findFirst();
+    }
+
     public AssetItem create(
         String assetCode,
         AssetType assetType,
@@ -93,7 +103,7 @@ public class AssetRepository {
             setNullableLong(statement, 6, storeId);
             statement.setBigDecimal(7, purchaseAmount);
             statement.setBigDecimal(8, maintenanceFeeAmount);
-            statement.setBigDecimal(9, residualValue);
+            setNullableBigDecimal(statement, 9, residualValue);
             if (purchasedAt == null) {
                 statement.setObject(10, null);
             } else {
@@ -195,6 +205,14 @@ public class AssetRepository {
             statement.setObject(index, null);
         } else {
             statement.setLong(index, value);
+        }
+    }
+
+    private void setNullableBigDecimal(java.sql.PreparedStatement statement, int index, BigDecimal value) throws SQLException {
+        if (value == null) {
+            statement.setObject(index, null);
+        } else {
+            statement.setBigDecimal(index, value);
         }
     }
 

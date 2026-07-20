@@ -67,10 +67,30 @@ class MerchantStoreDeletionIntegrationTests {
             null
         ));
 
+        var inheritedRule = jdbcTemplate.queryForMap("""
+            SELECT rule_scope, store_id, channel_fee_rate, platform_fee_rate,
+                   store_operation_rate, maintenance_fund_rate, channel_referral_rate, investor_share_rate
+            FROM settlement_profit_rule
+            WHERE store_id = ?
+              AND rule_scope = 'STORE'
+              AND source_channel IS NULL
+              AND status = 'ENABLED'
+            """, created.id());
+        assertThat(inheritedRule.get("rule_scope")).isEqualTo("STORE");
+        assertThat(inheritedRule.get("store_id")).isEqualTo(created.id());
+        assertThat(inheritedRule.get("channel_fee_rate")).isEqualTo(new java.math.BigDecimal("0.0500"));
+        assertThat(inheritedRule.get("platform_fee_rate")).isEqualTo(new java.math.BigDecimal("0.0300"));
+        assertThat(inheritedRule.get("store_operation_rate")).isEqualTo(new java.math.BigDecimal("0.1500"));
+        assertThat(inheritedRule.get("maintenance_fund_rate")).isEqualTo(new java.math.BigDecimal("0.1000"));
+        assertThat(inheritedRule.get("channel_referral_rate")).isEqualTo(new java.math.BigDecimal("0.2000"));
+        assertThat(inheritedRule.get("investor_share_rate")).isEqualTo(new java.math.BigDecimal("0.5500"));
+
         merchantService.deleteStore(created.id());
 
         var count = jdbcTemplate.queryForObject("SELECT COUNT(1) FROM merchant_store WHERE id = ?", Integer.class, created.id());
         assertThat(count).isZero();
+        var ruleCount = jdbcTemplate.queryForObject("SELECT COUNT(1) FROM settlement_profit_rule WHERE store_id = ?", Integer.class, created.id());
+        assertThat(ruleCount).isZero();
     }
 
     @Test

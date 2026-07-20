@@ -17,6 +17,7 @@ public record VoucherVerification(
     VoucherVerifyStatus verifyStatus,
     String voucherTitle,
     BigDecimal voucherAmount,
+    BigDecimal verificationAmount,
     BigDecimal signFeeAmount,
     String externalPrepareId,
     String externalVerifyId,

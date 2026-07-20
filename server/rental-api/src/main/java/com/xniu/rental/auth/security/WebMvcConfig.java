@@ -23,6 +23,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             .excludePathPatterns(
                 "/api/auth/admin/login",
                 "/api/auth/merchant/login",
+                "/api/auth/workspace/login",
                 "/api/auth/alipay/login",
                 "/api/pay/alipay/notify",
                 "/api/pay/alipay/agreement/notify",
@@ -38,6 +39,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             .excludePathPatterns(
                 "/api/auth/admin/login",
                 "/api/auth/merchant/login",
+                "/api/auth/workspace/login",
                 "/api/auth/alipay/login",
                 "/api/pay/alipay/notify",
                 "/api/pay/alipay/agreement/notify",

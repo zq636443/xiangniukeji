@@ -35,8 +35,52 @@
           <picker :range="orderStatusLabels" :value="orderStatusIndex" @change="onOrderStatusChange">
             <view class="picker compact-picker">{{ orderStatusLabels[orderStatusIndex] }}</view>
           </picker>
-          <input v-model="orderKeyword" class="filter-input" placeholder="搜索订单号或用户 ID" />
+          <input v-model="orderKeyword" class="filter-input" placeholder="搜索订单、客户、电话或车架号" />
           <button class="mini-btn" :loading="orderLoading" @tap="loadOrders">刷新</button>
+        </view>
+        <view v-if="canCreateOrder" class="action-row order-create-action">
+          <button class="mini-btn" :disabled="storeSkus.length === 0" @tap="toggleOrderCreate">
+            {{ orderCreateVisible ? '收起新建订单' : '新建订单' }}
+          </button>
+        </view>
+        <view v-if="canCreateOrder && orderCreateVisible" class="asset-item order-create-form">
+          <view class="field compact">
+            <text>用户账号 ID</text>
+            <input v-model="orderCreateForm.userAccountId" type="number" placeholder="可不填写" />
+          </view>
+          <view class="field compact">
+            <text>客户姓名</text>
+            <input v-model="orderCreateForm.customerName" placeholder="请输入客户姓名" />
+          </view>
+          <view class="field compact">
+            <text>联系电话</text>
+            <input v-model="orderCreateForm.customerPhone" type="number" placeholder="请输入联系电话" />
+          </view>
+          <view class="field compact">
+            <text>门店商品</text>
+            <picker :range="storeSkuLabels" :value="orderCreateForm.storeSkuIndex" @change="onOrderStoreSkuChange">
+              <view class="picker">{{ storeSkuLabels[orderCreateForm.storeSkuIndex] || '请选择门店商品' }}</view>
+            </picker>
+          </view>
+          <view class="field compact">
+            <text>租赁 SKU</text>
+            <picker :range="orderPackageLabels" :value="orderCreateForm.packageIndex" @change="onOrderPackageChange">
+              <view class="picker">{{ orderPackageLabels[orderCreateForm.packageIndex] || '请选择租赁 SKU' }}</view>
+            </picker>
+          </view>
+          <view class="field compact">
+            <text>车架 / 车电一体资产</text>
+            <picker :range="orderFrameAssetLabels" :value="orderCreateForm.frameAssetIndex" @change="onOrderFrameAssetChange">
+              <view class="picker">{{ orderFrameAssetLabels[orderCreateForm.frameAssetIndex] }}</view>
+            </picker>
+          </view>
+          <view class="field compact">
+            <text>电池资产</text>
+            <picker :range="orderBatteryAssetLabels" :value="orderCreateForm.batteryAssetIndex" :disabled="orderUsesIntegratedVehicle" @change="onOrderBatteryAssetChange">
+              <view class="picker">{{ orderUsesIntegratedVehicle ? '车电一体无需独立电池' : orderBatteryAssetLabels[orderCreateForm.batteryAssetIndex] }}</view>
+            </picker>
+          </view>
+          <button class="primary" :loading="orderCreateSubmitting" @tap="createMerchantOrder">创建订单</button>
         </view>
         <view v-if="filteredOrders.length === 0" class="empty">当前筛选暂无订单</view>
         <view
@@ -50,9 +94,10 @@
             <text>{{ order.orderNo }}</text>
             <text class="asset-status">{{ orderStatusText(order.orderStatus) }}</text>
           </view>
-          <view class="asset-sub">用户 {{ order.userAccountId || '-' }} / {{ leaseText(order.leaseUnit, order.leaseValue) }} / {{ order.totalPeriods }} 期</view>
+          <view class="asset-sub">{{ order.customerName || '未填姓名' }} / {{ order.customerPhone || '未填电话' }}</view>
+          <view class="asset-sub">{{ order.storeSkuName || '商品' }} / {{ order.packageName || 'SKU' }} / {{ leaseText(order.leaseUnit, order.leaseValue) }}</view>
           <view class="asset-sub">应付 {{ money(order.payableAmount) }} / 已付 {{ money(order.paidAmount) }}</view>
-          <view class="asset-sub">车架 {{ order.frameAssetId || '-' }} / 电池 {{ order.batteryAssetId || '-' }}</view>
+          <view class="asset-sub">车架 {{ assetText(order.frameSerialNo, order.frameAssetCode, order.frameAssetId) }} / 电池 {{ assetText(order.batterySerialNo, order.batteryAssetCode, order.batteryAssetId) }}</view>
         </view>
       </view>
       <view v-if="selectedOrder" class="asset-panel">
@@ -63,8 +108,11 @@
             <text class="asset-status">{{ orderStatusText(selectedOrder.orderStatus) }}</text>
           </view>
           <view class="asset-sub">创建时间：{{ dateText(selectedOrder.createdAt) }}</view>
+          <view class="asset-sub">客户：{{ selectedOrder.customerName || '-' }} / {{ selectedOrder.customerPhone || '-' }}</view>
+          <view class="asset-sub">车架：{{ assetText(selectedOrder.frameSerialNo, selectedOrder.frameAssetCode, selectedOrder.frameAssetId) }} / 电池：{{ assetText(selectedOrder.batterySerialNo, selectedOrder.batteryAssetCode, selectedOrder.batteryAssetId) }}</view>
           <view class="asset-sub">预计归还：{{ dateText(selectedOrder.expectedReturnAt) }}</view>
           <view class="asset-sub">租金 {{ money(selectedOrder.rentalAmount) }} / 签单费 {{ money(selectedOrder.signFeeAmount) }} / 押金 {{ money(selectedOrder.depositAmount) }}</view>
+          <view class="asset-sub">{{ renewalText(selectedOrder) }}</view>
           <view v-if="selectedOrder.items.length > 0" class="tag-row">
             <text v-for="item in selectedOrder.items" :key="item.id" class="tag">{{ item.itemName }} {{ money(item.totalAmount) }}</text>
           </view>
@@ -83,22 +131,54 @@
         </view>
         <view class="section-subtitle">分润快照</view>
         <view v-if="settlement" class="settlement-grid">
-          <view>
-            <text>办单费</text>
-            <text>{{ money(settlement.merchantOrderFeeAmount) }}</text>
-          </view>
-          <view>
-            <text>门店租金分成</text>
-            <text>{{ money(settlement.merchantRentShareAmount) }}</text>
-          </view>
-          <view>
-            <text>平台租金分成</text>
-            <text>{{ money(settlement.platformRentShareAmount) }}</text>
-          </view>
-          <view>
-            <text>出资方净收益</text>
-            <text>{{ money(settlement.investorNetShareAmount) }}</text>
-          </view>
+          <template v-if="settlement.calculationVersion === 'PROFIT_V2'">
+            <view>
+              <text>实际结算金额</text>
+              <text>{{ money(settlement.settlementBaseAmount) }}</text>
+            </view>
+            <view>
+              <text>渠道核销扣点</text>
+              <text>{{ money(settlement.channelFeeAmount) }}</text>
+            </view>
+            <view>
+              <text>租赁平台扣点</text>
+              <text>{{ money(settlement.platformFeeAmount) }}</text>
+            </view>
+            <view>
+              <text>门店运营分润</text>
+              <text>{{ money(settlement.storeOperationAmount) }}</text>
+            </view>
+            <view>
+              <text>维修基金</text>
+              <text>{{ money(settlement.maintenanceFundAmount) }}</text>
+            </view>
+            <view>
+              <text>渠道引流分润</text>
+              <text>{{ money(settlement.channelReferralAmount) }}</text>
+            </view>
+            <view>
+              <text>出资方分润</text>
+              <text>{{ money(settlement.investorShareAmount) }}</text>
+            </view>
+          </template>
+          <template v-else>
+            <view>
+              <text>办单费</text>
+              <text>{{ money(settlement.merchantOrderFeeAmount) }}</text>
+            </view>
+            <view>
+              <text>门店租金分成</text>
+              <text>{{ money(settlement.merchantRentShareAmount) }}</text>
+            </view>
+            <view>
+              <text>平台租金分成</text>
+              <text>{{ money(settlement.platformRentShareAmount) }}</text>
+            </view>
+            <view>
+              <text>出资方净收益</text>
+              <text>{{ money(settlement.investorNetShareAmount) }}</text>
+            </view>
+          </template>
         </view>
         <view v-else class="empty">暂无分润快照</view>
       </view>
@@ -107,17 +187,17 @@
         <view v-if="assets.length === 0" class="empty">当前门店暂无资产</view>
         <view v-for="asset in assets" :key="asset.id" class="asset-item">
           <view class="asset-main">
-            <text>{{ asset.assetType === 'VEHICLE_FRAME' ? '车架' : '电池' }}</text>
+            <text>{{ assetTypeText(asset.assetType) }}</text>
             <text class="asset-status">{{ statusText(asset.status) }}</text>
           </view>
           <view class="asset-sub">{{ asset.serialNo }}</view>
           <view class="asset-sub">出资方：{{ asset.investorName || '-' }}</view>
-          <view class="asset-sub">维保费：{{ asset.maintenanceFeeAmount }} / 残值：{{ asset.residualValue }}</view>
+          <view class="asset-sub">残值：{{ asset.residualValue == null ? '-' : asset.residualValue }}</view>
           <view class="action-row">
             <button class="mini-btn" @tap="prepareMaintenance(asset.id)">登记维修</button>
           </view>
           <view v-if="asset.status === 'IDLE'" class="action-row">
-            <button v-if="asset.assetType === 'VEHICLE_FRAME'" class="mini-btn" @tap="fillFrameAsset(asset.id)">填入车架</button>
+            <button v-if="asset.assetType !== 'BATTERY'" class="mini-btn" @tap="fillFrameAsset(asset.id)">填入车架</button>
             <button v-if="asset.assetType === 'BATTERY'" class="mini-btn" @tap="fillBatteryAsset(asset.id)">填入电池</button>
             <button class="mini-btn" @tap="fillNewAsset(asset.id, asset.assetType)">作为更换资产</button>
           </view>
@@ -214,7 +294,7 @@
             <text>{{ record.maintenanceNo }}</text>
             <text class="asset-status">{{ record.maintenanceStatus }}</text>
           </view>
-          <view class="asset-sub">资产 {{ record.assetCode }} / {{ record.assetType === 'VEHICLE_FRAME' ? '车架' : '电池' }} / {{ responsibilityText(record.responsibilityType) }}</view>
+          <view class="asset-sub">资产 {{ record.assetCode }} / {{ assetTypeText(record.assetType) }} / {{ responsibilityText(record.responsibilityType) }}</view>
           <view class="asset-sub">配件费 {{ money(record.partsCost) }} / 总费用 {{ money(record.totalCost) }}</view>
           <view class="asset-sub">补门店 {{ money(record.merchantReimbursementAmount) }} / 扣出资方 {{ money(record.investorDeductAmount) }}</view>
           <view class="asset-sub">备注：{{ record.remark || '-' }}</view>
@@ -256,10 +336,16 @@
             <text class="asset-status">{{ voucherStatusText(item.verifyStatus) }}</text>
           </view>
           <view class="asset-sub">用户 {{ item.userAccountId || '-' }} / 订单 {{ item.orderId || '-' }} / 签单费账单 {{ item.signFeeBillId || '-' }}</view>
-          <view class="asset-sub">核销金额 {{ money(item.voucherAmount) }} / 签单费 {{ money(item.signFeeAmount) }}</view>
+          <view class="asset-sub">参考金额 {{ money(item.voucherAmount) }} / 实际核销 {{ item.verificationAmount == null ? '待补录' : money(item.verificationAmount) }}</view>
+          <view class="asset-sub">签单费 {{ money(item.signFeeAmount) }}</view>
           <view v-if="item.failureReason" class="asset-sub">失败原因：{{ item.failureReason }}</view>
           <view v-if="item.exceptionReason" class="asset-sub">异常原因：{{ item.exceptionReason }}</view>
+          <view v-if="!item.orderId && item.verifyStatus !== 'CONSUMING' && item.verifyStatus !== 'CONSUMED'" class="field compact">
+            <text>核销金额</text>
+            <input v-model="verificationAmountInputs[item.id]" type="digit" placeholder="客户未填写时由门店补录" />
+          </view>
           <view class="action-row">
+            <button v-if="!item.orderId && item.verifyStatus !== 'CONSUMING' && item.verifyStatus !== 'CONSUMED'" class="mini-btn" @tap="saveVerificationAmount(item)">保存金额</button>
             <button class="mini-btn" @tap="markVoucherException(item.id)">标记异常</button>
           </view>
         </view>
@@ -291,14 +377,15 @@
           <input v-model="fulfillment.orderId" type="number" placeholder="请输入订单 ID" />
         </view>
         <view class="field compact">
-          <text>车架资产 ID</text>
+          <text>车架 / 车电一体资产 ID</text>
           <input v-model="fulfillment.frameAssetId" type="number" placeholder="取车绑定车架，可空" />
         </view>
         <view class="field compact">
           <text>电池资产 ID</text>
           <input v-model="fulfillment.batteryAssetId" type="number" placeholder="取车绑定电池，可空" />
         </view>
-        <button class="primary" :loading="fulfillmentLoading" @tap="pickupAssets">取车绑定</button>
+        <button v-if="selectedOrder?.orderStatus === 'PENDING_PAYMENT'" class="primary" :loading="fulfillmentLoading" @tap="shipWithoutPayment">免付款发货</button>
+        <button v-if="selectedOrder?.orderStatus === 'PENDING_PICKUP'" class="primary" :loading="fulfillmentLoading" @tap="pickupAssets">取车绑定</button>
         <view class="field compact">
           <text>更换类型</text>
           <picker :range="replaceTypeLabels" :value="replaceTypeIndex" @change="onReplaceTypeChange">
@@ -351,6 +438,7 @@ import type {
   SettlementIncomeEntry,
   SettlementSnapshot,
   Store,
+  StoreSku,
   VoucherRecord
 } from '../../types/api';
 
@@ -359,12 +447,14 @@ const orderLoading = ref(false);
 const fulfillmentLoading = ref(false);
 const account = ref<CurrentAccount | null>(null);
 const stores = ref<Store[]>([]);
+const storeSkus = ref<StoreSku[]>([]);
 const assets = ref<Asset[]>([]);
 const spareStocks = ref<StoreSparePartStock[]>([]);
 const spareLogs = ref<SparePartStockLog[]>([]);
 const maintenanceRecords = ref<AssetMaintenance[]>([]);
 const overdues = ref<OverdueCase[]>([]);
 const vouchers = ref<VoucherRecord[]>([]);
+const verificationAmountInputs = reactive<Record<number, string>>({});
 const incomeEntries = ref<SettlementIncomeEntry[]>([]);
 const orders = ref<RentalOrder[]>([]);
 const selectedOrder = ref<RentalOrder | null>(null);
@@ -373,6 +463,8 @@ const settlement = ref<SettlementSnapshot | null>(null);
 const currentStoreId = ref<number | null>(uni.getStorageSync('xniu_current_store_id') || null);
 const orderKeyword = ref('');
 const orderStatusIndex = ref(0);
+const orderCreateVisible = ref(false);
+const orderCreateSubmitting = ref(false);
 const voucherLoading = ref(false);
 const incomeLoading = ref(false);
 const inventoryLoading = ref(false);
@@ -388,6 +480,15 @@ const fulfillment = reactive({
   frameAssetId: '',
   batteryAssetId: '',
   newAssetId: ''
+});
+const orderCreateForm = reactive({
+  userAccountId: '',
+  customerName: '',
+  customerPhone: '',
+  storeSkuIndex: 0,
+  packageIndex: 0,
+  frameAssetIndex: 0,
+  batteryAssetIndex: 0
 });
 const maintenanceForm = reactive({
   assetId: '',
@@ -406,13 +507,25 @@ const maintenanceTypeValues = ['REPAIR', 'MAINTENANCE', 'REPLACE_PART', 'INSPECT
 const maintenanceTypeLabels = ['维修', '保养', '换件', '检测'];
 const responsibilityValues = ['ROUTINE_MAINTENANCE', 'CUSTOMER_DAMAGE', 'MERCHANT_RESPONSIBILITY', 'PLATFORM_SUBSIDY'] as const;
 const responsibilityLabels = ['日常资产维护', '客户损坏', '门店责任', '平台兜底'];
-const orderStatusValues = ['', 'PENDING_PICKUP', 'RENTING', 'PENDING_RETURN', 'PENDING_SUPPLEMENT', 'COMPLETED', 'CANCELLED', 'EXCEPTION'] as const;
-const orderStatusLabels = ['全部订单', '待取车', '租赁中', '待归还', '待补缴', '已完成', '已取消', '异常'];
+const orderStatusValues = ['', 'PENDING_PAYMENT', 'PENDING_PICKUP', 'RENTING', 'PENDING_RETURN', 'PENDING_SUPPLEMENT', 'COMPLETED', 'CANCELLED', 'EXCEPTION'] as const;
+const orderStatusLabels = ['全部订单', '待支付', '待取车', '租赁中', '待归还', '待补缴', '已完成', '已取消', '异常'];
 const voucherStatusValues = ['', 'PREPARED', 'WAITING_SIGN_FEE', 'CONSUMED', 'FAILED', 'EXCEPTION'] as const;
 const voucherStatusLabels = ['全部核销', '已核销准备', '待签单费', '已核销', '失败', '异常'];
 const incomeStatusValues = ['', 'PENDING', 'SETTLED', 'FROZEN'] as const;
 const incomeStatusLabels = ['全部收益', '待结算', '已结算', '已冻结'];
 const lastFulfillmentNo = ref('');
+
+const canCreateOrder = computed(() => account.value?.permissions.includes('order.create') ?? false);
+const selectedOrderStoreSku = computed(() => storeSkus.value[orderCreateForm.storeSkuIndex]);
+const orderPackages = computed(() => (selectedOrderStoreSku.value?.packages ?? []).filter((item) => item.status === 'ENABLED'));
+const orderFrameAssets = computed(() => assets.value.filter((item) => item.assetType !== 'BATTERY' && item.status === 'IDLE'));
+const orderBatteryAssets = computed(() => assets.value.filter((item) => item.assetType === 'BATTERY' && item.status === 'IDLE'));
+const storeSkuLabels = computed(() => storeSkus.value.map((item) => item.displayName));
+const orderPackageLabels = computed(() => orderPackages.value.map((item) => `${item.packageName} / ${money(item.rentalAmount)}`));
+const orderFrameAssetLabels = computed(() => ['暂不绑定', ...orderFrameAssets.value.map((item) => `${item.serialNo} / ${assetTypeText(item.assetType)}`)]);
+const orderBatteryAssetLabels = computed(() => ['暂不绑定', ...orderBatteryAssets.value.map((item) => item.serialNo)]);
+const selectedOrderFrameAsset = computed(() => orderCreateForm.frameAssetIndex > 0 ? orderFrameAssets.value[orderCreateForm.frameAssetIndex - 1] : undefined);
+const orderUsesIntegratedVehicle = computed(() => selectedOrderFrameAsset.value?.assetType === 'INTEGRATED_VEHICLE');
 
 const scopeText = computed(() => {
   if (!account.value || account.value.storeScopes.length === 0) {
@@ -435,6 +548,10 @@ const filteredOrders = computed(() => {
   return orders.value.filter((order) => {
     return order.orderNo.toLowerCase().includes(keyword)
       || String(order.userAccountId || '').includes(keyword)
+      || String(order.customerName || '').toLowerCase().includes(keyword)
+      || String(order.customerPhone || '').includes(keyword)
+      || String(order.frameSerialNo || order.frameAssetCode || '').toLowerCase().includes(keyword)
+      || String(order.batterySerialNo || order.batteryAssetCode || '').toLowerCase().includes(keyword)
       || String(order.id).includes(keyword);
   });
 });
@@ -478,6 +595,7 @@ function logout() {
   uni.removeStorageSync('xniu_current_store_id');
   account.value = null;
   stores.value = [];
+  storeSkus.value = [];
   assets.value = [];
   spareStocks.value = [];
   spareLogs.value = [];
@@ -489,6 +607,7 @@ function logout() {
   selectedOrder.value = null;
   orderBills.value = [];
   settlement.value = null;
+  orderCreateVisible.value = false;
   lastFulfillmentNo.value = '';
   currentStoreId.value = null;
 }
@@ -505,6 +624,7 @@ async function loadStores() {
       loadOverdues(currentStoreId.value),
       loadVouchers(),
       loadIncomeEntries(),
+      loadStoreSkus(currentStoreId.value),
       loadOrders()
     ]);
   }
@@ -517,6 +637,7 @@ async function selectStore(storeId: number) {
   orderBills.value = [];
   settlement.value = null;
   resetMaintenanceForm();
+  resetOrderCreateForm();
   await Promise.all([
     loadAssets(storeId),
     loadSpareInventory(storeId),
@@ -524,8 +645,18 @@ async function selectStore(storeId: number) {
     loadOverdues(storeId),
     loadVouchers(),
     loadIncomeEntries(),
+    loadStoreSkus(storeId),
     loadOrders()
   ]);
+}
+
+async function loadStoreSkus(storeId: number) {
+  if (!canCreateOrder.value) {
+    storeSkus.value = [];
+    return;
+  }
+  storeSkus.value = await request<StoreSku[]>(`/api/merchant/products/store-skus?storeId=${storeId}`);
+  resetOrderCreateForm();
 }
 
 async function loadAssets(storeId: number) {
@@ -563,6 +694,9 @@ async function loadVouchers() {
     const status = voucherStatusValues[voucherStatusIndex.value];
     const query = status ? `&status=${status}` : '';
     vouchers.value = await request<VoucherRecord[]>(`/api/merchant/vouchers?storeId=${currentStoreId.value}${query}`);
+    vouchers.value.forEach((item) => {
+      verificationAmountInputs[item.id] = item.verificationAmount == null ? '' : String(item.verificationAmount);
+    });
   } catch (error) {
     uni.showToast({ title: error instanceof Error ? error.message : '核销记录加载失败', icon: 'none' });
   } finally {
@@ -616,6 +750,87 @@ async function loadOrders() {
   }
 }
 
+function toggleOrderCreate() {
+  orderCreateVisible.value = !orderCreateVisible.value;
+}
+
+function resetOrderCreateForm() {
+  orderCreateForm.userAccountId = '';
+  orderCreateForm.customerName = '';
+  orderCreateForm.customerPhone = '';
+  orderCreateForm.storeSkuIndex = 0;
+  orderCreateForm.packageIndex = 0;
+  orderCreateForm.frameAssetIndex = 0;
+  orderCreateForm.batteryAssetIndex = 0;
+}
+
+function onOrderStoreSkuChange(event: { detail: { value: number } }) {
+  orderCreateForm.storeSkuIndex = Number(event.detail.value);
+  orderCreateForm.packageIndex = 0;
+  orderCreateForm.frameAssetIndex = 0;
+  orderCreateForm.batteryAssetIndex = 0;
+}
+
+function onOrderPackageChange(event: { detail: { value: number } }) {
+  orderCreateForm.packageIndex = Number(event.detail.value);
+}
+
+function onOrderFrameAssetChange(event: { detail: { value: number } }) {
+  orderCreateForm.frameAssetIndex = Number(event.detail.value);
+  if (orderUsesIntegratedVehicle.value) {
+    orderCreateForm.batteryAssetIndex = 0;
+  }
+}
+
+function onOrderBatteryAssetChange(event: { detail: { value: number } }) {
+  if (orderUsesIntegratedVehicle.value) {
+    orderCreateForm.batteryAssetIndex = 0;
+    return;
+  }
+  orderCreateForm.batteryAssetIndex = Number(event.detail.value);
+}
+
+async function createMerchantOrder() {
+  const storeSku = selectedOrderStoreSku.value;
+  const rentalPackage = orderPackages.value[orderCreateForm.packageIndex];
+  if (!storeSku || !rentalPackage) {
+    uni.showToast({ title: '请选择门店商品和 SKU', icon: 'none' });
+    return;
+  }
+  if (!orderCreateForm.customerName.trim() || !orderCreateForm.customerPhone.trim()) {
+    uni.showToast({ title: '请填写客户姓名和电话', icon: 'none' });
+    return;
+  }
+  orderCreateSubmitting.value = true;
+  try {
+    const created = await request<RentalOrder>('/api/merchant/orders', {
+      method: 'POST',
+      data: {
+        userAccountId: toOptionalNumber(orderCreateForm.userAccountId),
+        customerName: orderCreateForm.customerName.trim(),
+        customerPhone: orderCreateForm.customerPhone.trim(),
+        storeSkuId: storeSku.id,
+        packageId: rentalPackage.packageId,
+        frameAssetId: orderCreateForm.frameAssetIndex > 0 ? orderFrameAssets.value[orderCreateForm.frameAssetIndex - 1]?.id : undefined,
+        batteryAssetId: !orderUsesIntegratedVehicle.value && orderCreateForm.batteryAssetIndex > 0 ? orderBatteryAssets.value[orderCreateForm.batteryAssetIndex - 1]?.id : undefined
+      }
+    });
+    orderCreateVisible.value = false;
+    resetOrderCreateForm();
+    await loadOrders();
+    await selectOrder(created, false);
+    uni.showToast({ title: '订单已创建', icon: 'success' });
+  } catch (error) {
+    uni.showToast({ title: error instanceof Error ? error.message : '订单创建失败', icon: 'none' });
+  } finally {
+    orderCreateSubmitting.value = false;
+  }
+}
+
+function assetText(serialNo?: string | null, assetCode?: string | null, assetId?: number | null) {
+  return serialNo || assetCode || (assetId ? `#${assetId}` : '-');
+}
+
 async function selectOrder(order: RentalOrder, toast = true) {
   selectedOrder.value = order;
   fulfillment.orderId = String(order.id);
@@ -666,6 +881,27 @@ async function markVoucherException(id: number) {
   }
 }
 
+async function saveVerificationAmount(item: VoucherRecord) {
+  const amount = Number(verificationAmountInputs[item.id]);
+  if (!verificationAmountInputs[item.id]?.trim() || !Number.isFinite(amount) || amount < 0) {
+    uni.showToast({ title: '请输入正确的核销金额', icon: 'none' });
+    return;
+  }
+  voucherLoading.value = true;
+  try {
+    await request(`/api/merchant/vouchers/${item.id}/verification-amount`, {
+      method: 'POST',
+      data: { verificationAmount: amount }
+    });
+    await loadVouchers();
+    uni.showToast({ title: '核销金额已保存', icon: 'success' });
+  } catch (error) {
+    uni.showToast({ title: error instanceof Error ? error.message : '核销金额保存失败', icon: 'none' });
+  } finally {
+    voucherLoading.value = false;
+  }
+}
+
 async function pickupAssets() {
   const orderId = ensureOrderId();
   if (!orderId) return;
@@ -688,6 +924,43 @@ async function pickupAssets() {
   } finally {
     fulfillmentLoading.value = false;
   }
+}
+
+async function shipWithoutPayment() {
+  const orderId = ensureOrderId();
+  if (!orderId) return;
+  if (!await confirmUnpaidShipment()) return;
+  fulfillmentLoading.value = true;
+  try {
+    const result = await request<AssetHandover>(`/api/merchant/orders/${orderId}/ship`, {
+      method: 'POST',
+      data: {
+        frameAssetId: toOptionalNumber(fulfillment.frameAssetId),
+        batteryAssetId: toOptionalNumber(fulfillment.batteryAssetId),
+        remark: '商户端选择免付款发货'
+      }
+    });
+    lastFulfillmentNo.value = result.handoverNo;
+    await refreshCurrentStore();
+    await refreshSelectedOrder();
+    uni.showToast({ title: '已免付款发货', icon: 'success' });
+  } catch (error) {
+    uni.showToast({ title: error instanceof Error ? error.message : '发货失败', icon: 'none' });
+  } finally {
+    fulfillmentLoading.value = false;
+  }
+}
+
+function confirmUnpaidShipment(): Promise<boolean> {
+  return new Promise((resolve) => {
+    uni.showModal({
+      title: '确认免付款发货',
+      content: '该订单尚未付款，发货后将直接进入租赁中。确认继续吗？',
+      confirmText: '确认发货',
+      success: (result) => resolve(result.confirm),
+      fail: () => resolve(false)
+    });
+  });
 }
 
 async function replaceAsset() {
@@ -752,6 +1025,7 @@ async function refreshCurrentStore() {
       loadOverdues(currentStoreId.value),
       loadVouchers(),
       loadIncomeEntries(),
+      loadStoreSkus(currentStoreId.value),
       loadOrders()
     ]);
   }
@@ -798,6 +1072,9 @@ function onIncomeStatusChange(event: { detail: { value: number } }) {
 
 function fillFrameAsset(assetId: number) {
   fulfillment.frameAssetId = String(assetId);
+  if (assets.value.find((item) => item.id === assetId)?.assetType === 'INTEGRATED_VEHICLE') {
+    fulfillment.batteryAssetId = '';
+  }
 }
 
 function fillBatteryAsset(assetId: number) {
@@ -806,7 +1083,7 @@ function fillBatteryAsset(assetId: number) {
 
 function fillNewAsset(assetId: number, assetType: Asset['assetType']) {
   fulfillment.newAssetId = String(assetId);
-  replaceTypeIndex.value = assetType === 'VEHICLE_FRAME' ? 0 : 1;
+  replaceTypeIndex.value = assetType === 'BATTERY' ? 1 : 0;
 }
 
 function prepareMaintenance(assetId: number) {
@@ -900,6 +1177,11 @@ function statusText(status: AssetStatus) {
   return map[status];
 }
 
+function assetTypeText(assetType: Asset['assetType']) {
+  if (assetType === 'INTEGRATED_VEHICLE') return '车电一体';
+  return assetType === 'VEHICLE_FRAME' ? '车架' : '电池';
+}
+
 function collectionText(status: CollectionStatus) {
   const map: Record<CollectionStatus, string> = {
     PENDING: '待催缴',
@@ -931,11 +1213,12 @@ function orderStatusText(status: OrderStatus) {
 }
 
 function billTypeText(value: string) {
-  const map: Record<string, string> = {
-    INITIAL: '首期账单',
-    PERIODIC: '周期账单',
-    OVERDUE: '逾期账单'
-  };
+	  const map: Record<string, string> = {
+	    INITIAL: '首期账单',
+	    PERIODIC: '周期账单',
+	    RENEWAL: '续租账单',
+	    OVERDUE: '逾期账单'
+	  };
   return map[value] || value;
 }
 
@@ -985,6 +1268,7 @@ function incomeStatusText(value: SettlementIncomeEntry['entryStatus']) {
 
 function incomeLineText(value: SettlementIncomeEntry['lineType']) {
   const map: Partial<Record<SettlementIncomeEntry['lineType'], string>> = {
+    STORE_OPERATION_SHARE: '门店运营分润',
     MERCHANT_ORDER_FEE: '门店办单费',
     MERCHANT_RENT_SHARE: '门店租金分成'
   };
@@ -1022,6 +1306,13 @@ function responsibilityText(value: AssetMaintenance['responsibilityType']) {
 
 function leaseText(unit: 'DAY' | 'MONTH', value: number) {
   return `${value}${unit === 'DAY' ? '天' : '个月'}`;
+}
+
+function renewalText(item: { autoRenewEnabled?: boolean; renewalUnit?: 'DAY' | 'MONTH' | null; renewalValue?: number | null; renewalAmount?: number | null; renewalCount?: number | null }) {
+  if (!item.autoRenewEnabled) {
+    return '到期未还不自动续租';
+  }
+  return `到期未还按 ${money(item.renewalAmount || 0)} / ${leaseText(item.renewalUnit || 'MONTH', item.renewalValue || 1)} 自动续租，已续 ${item.renewalCount || 0} 次`;
 }
 
 function dateText(value?: string | null) {
@@ -1102,6 +1393,14 @@ function money(value: number | string | null | undefined) {
   align-items: center;
   gap: 12rpx;
   margin-bottom: 16rpx;
+}
+
+.order-create-action {
+  margin-bottom: 16rpx;
+}
+
+.order-create-form {
+  background: #f8fafc;
 }
 
 .filter-input {

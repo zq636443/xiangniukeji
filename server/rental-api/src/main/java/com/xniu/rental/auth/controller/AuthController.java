@@ -34,6 +34,11 @@ public class AuthController {
         return ApiResponse.ok(authService.merchantLogin(request));
     }
 
+    @PostMapping("/workspace/login")
+    public ApiResponse<LoginResponse> workspaceLogin(@Valid @RequestBody PasswordLoginRequest request) {
+        return ApiResponse.ok(authService.workspaceLogin(request));
+    }
+
     @PostMapping("/alipay/login")
     public ApiResponse<LoginResponse> alipayLogin(@Valid @RequestBody AlipayLoginRequest request) {
         return ApiResponse.ok(authService.alipayLogin(request));

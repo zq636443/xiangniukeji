@@ -4,6 +4,7 @@ public enum BillGenerationType {
     INITIAL,
     PERIODIC,
     PLAN,
+    RENEWAL,
     OVERDUE,
     MANUAL
 }

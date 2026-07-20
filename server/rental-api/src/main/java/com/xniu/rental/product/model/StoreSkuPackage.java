@@ -9,6 +9,10 @@ public record StoreSkuPackage(
     BigDecimal rentalAmount,
     BigDecimal periodAmount,
     BigDecimal depositAmount,
+    Boolean autoRenewEnabled,
+    LeaseUnit renewalUnit,
+    Integer renewalValue,
+    BigDecimal renewalAmount,
     ProductStatus status
 ) {
 }

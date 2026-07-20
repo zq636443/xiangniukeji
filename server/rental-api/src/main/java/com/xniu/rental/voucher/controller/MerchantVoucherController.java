@@ -3,6 +3,7 @@ package com.xniu.rental.voucher.controller;
 import com.xniu.rental.common.ApiResponse;
 import com.xniu.rental.voucher.dto.VoucherExceptionRequest;
 import com.xniu.rental.voucher.dto.VoucherResponse;
+import com.xniu.rental.voucher.dto.VoucherVerificationAmountRequest;
 import com.xniu.rental.voucher.service.VoucherService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -36,5 +37,13 @@ public class MerchantVoucherController {
     @PostMapping("/{id}/exception")
     public ApiResponse<VoucherResponse> markException(@PathVariable Long id, @Valid @RequestBody VoucherExceptionRequest request) {
         return ApiResponse.ok(voucherService.markException(id, request.reason()));
+    }
+
+    @PostMapping("/{id}/verification-amount")
+    public ApiResponse<VoucherResponse> updateVerificationAmount(
+        @PathVariable Long id,
+        @Valid @RequestBody VoucherVerificationAmountRequest request
+    ) {
+        return ApiResponse.ok(voucherService.updateMerchantVerificationAmount(id, request));
     }
 }

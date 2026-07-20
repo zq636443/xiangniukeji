@@ -57,13 +57,17 @@ public class AuthService {
     @Transactional
     public LoginResponse merchantLogin(PasswordLoginRequest request) {
         var account = passwordLogin(request);
-        if (account.accountType() != AccountType.MERCHANT_OWNER
-            && account.accountType() != AccountType.STORE_MANAGER
-            && account.accountType() != AccountType.STORE_OPERATOR
-            && account.accountType() != AccountType.STORE_STAFF
-            && account.accountType() != AccountType.MAINTENANCE_STAFF
-            && account.accountType() != AccountType.WAREHOUSE_STAFF) {
+        if (!isMerchantAccount(account.accountType())) {
             throw BusinessException.forbidden("当前账号不是商户账号");
+        }
+        return createLogin(account);
+    }
+
+    @Transactional
+    public LoginResponse workspaceLogin(PasswordLoginRequest request) {
+        var account = passwordLogin(request);
+        if (!isPlatformAccount(account.accountType()) && !isMerchantAccount(account.accountType())) {
+            throw BusinessException.forbidden("当前账号不能登录运营后台");
         }
         return createLogin(account);
     }
@@ -167,6 +171,19 @@ public class AuthService {
         if (account.status() != AccountStatus.ENABLED) {
             throw BusinessException.forbidden("账号已停用");
         }
+    }
+
+    private boolean isPlatformAccount(AccountType accountType) {
+        return accountType == AccountType.PLATFORM_ADMIN || accountType == AccountType.FINANCE;
+    }
+
+    private boolean isMerchantAccount(AccountType accountType) {
+        return accountType == AccountType.MERCHANT_OWNER
+            || accountType == AccountType.STORE_MANAGER
+            || accountType == AccountType.STORE_OPERATOR
+            || accountType == AccountType.STORE_STAFF
+            || accountType == AccountType.MAINTENANCE_STAFF
+            || accountType == AccountType.WAREHOUSE_STAFF;
     }
 
     private String generateToken() {
