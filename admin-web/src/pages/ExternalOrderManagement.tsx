@@ -159,15 +159,21 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
 
   const frameAssetOptions = useMemo(() => {
     return assets
-      .filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE') && item.status === 'IDLE')
+      .filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE')
+        && item.status === 'IDLE'
+        && item.currentMerchantId === selectedStoreSku?.merchantId
+        && item.currentStoreId === selectedStoreSku?.storeId)
       .map((item) => ({ label: formatAssetLabel(item), value: item.id }));
-  }, [assets]);
+  }, [assets, selectedStoreSku]);
 
   const batteryAssetOptions = useMemo(() => {
     return assets
-      .filter((item) => item.assetType === 'BATTERY' && item.status === 'IDLE')
+      .filter((item) => item.assetType === 'BATTERY'
+        && item.status === 'IDLE'
+        && item.currentMerchantId === selectedStoreSku?.merchantId
+        && item.currentStoreId === selectedStoreSku?.storeId)
       .map((item) => ({ label: formatAssetLabel(item), value: item.id }));
-  }, [assets]);
+  }, [assets, selectedStoreSku]);
 
   const integratedVehicleSelected = useMemo(
     () => assets.some((item) => item.id === selectedFrameAssetId && item.assetType === 'INTEGRATED_VEHICLE'),
@@ -442,7 +448,16 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           </Space>
           <Space size={12} style={{ width: '100%' }} align="start">
             <Form.Item name="storeSkuId" label="门店商品" rules={[{ required: true, message: '请选择门店商品' }]} style={{ flex: 1 }}>
-              <Select options={storeSkuOptions} onChange={() => createForm.setFieldValue('packageId', undefined)} />
+              <Select
+                showSearch
+                optionFilterProp="label"
+                options={storeSkuOptions}
+                onChange={() => createForm.setFieldsValue({
+                  packageId: undefined,
+                  frameAssetId: undefined,
+                  batteryAssetId: undefined
+                })}
+              />
             </Form.Item>
             <Form.Item name="packageId" label="SKU" rules={[{ required: true, message: '请选择 SKU' }]} style={{ flex: 1 }}>
               <Select options={packageOptions} disabled={!selectedStoreSku} />
@@ -497,15 +512,25 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           <Space size={12} style={{ width: '100%' }} align="start">
             {selectedStoreSku?.needFrameAsset !== false ? (
               <Form.Item name="frameAssetId" label="车架 / 车电一体资产" rules={selectedStoreSku?.needFrameAsset ? [{ required: true, message: '请选择车架或车电一体资产' }] : undefined} style={{ flex: 1 }}>
-                <Select allowClear options={frameAssetOptions} />
+                <Select
+                  showSearch
+                  allowClear
+                  optionFilterProp="label"
+                  placeholder="输入车架号或资产编号搜索"
+                  notFoundContent={selectedStoreSku ? '该门店暂无空闲车架或车电一体资产' : '请先选择门店商品'}
+                  options={frameAssetOptions}
+                />
               </Form.Item>
             ) : null}
             {selectedStoreSku?.needBatteryAsset !== false ? (
               <Form.Item name="batteryAssetId" label="电池资产" rules={selectedStoreSku?.needBatteryAsset && !integratedVehicleSelected ? [{ required: true, message: '请选择电池资产' }] : undefined} style={{ flex: 1 }}>
                 <Select
+                  showSearch
                   allowClear
+                  optionFilterProp="label"
                   disabled={integratedVehicleSelected}
-                  placeholder={integratedVehicleSelected ? '车电一体无需独立电池' : undefined}
+                  placeholder={integratedVehicleSelected ? '车电一体无需独立电池' : '输入电池号或资产编号搜索'}
+                  notFoundContent={selectedStoreSku ? '该门店暂无空闲电池资产' : '请先选择门店商品'}
                   options={batteryAssetOptions}
                 />
               </Form.Item>
@@ -676,7 +701,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
 
 function formatAssetLabel(asset: Asset) {
   const type = asset.assetType === 'INTEGRATED_VEHICLE' ? '车电一体' : asset.assetType === 'VEHICLE_FRAME' ? '车架' : '电池';
-  return `${asset.serialNo} / ${type}${asset.storeName ? ` / ${asset.storeName}` : ''}`;
+  return `${asset.serialNo} / ${asset.assetCode} / ${type}${asset.storeName ? ` / ${asset.storeName}` : ''}`;
 }
 
 function calculateExpectedReturnAt(startedAt: Dayjs | undefined, selectedPackage?: StoreSku['packages'][number]) {

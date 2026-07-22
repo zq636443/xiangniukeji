@@ -385,12 +385,14 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
     })), [selectedStoreSku]);
 
   const frameOptions = useMemo(() => assets
-    .filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE') && item.status === 'IDLE')
-    .map((item) => ({ label: `${item.serialNo} / ${item.assetTypeName || assetTypeText(item.assetType)}`, value: item.id })), [assets]);
+    .filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE')
+      && item.status === 'IDLE'
+      && item.currentStoreId === storeId)
+    .map((item) => ({ label: assetSelectLabel(item), value: item.id })), [assets, storeId]);
 
   const batteryOptions = useMemo(() => assets
-    .filter((item) => item.assetType === 'BATTERY' && item.status === 'IDLE')
-    .map((item) => ({ label: item.serialNo, value: item.id })), [assets]);
+    .filter((item) => item.assetType === 'BATTERY' && item.status === 'IDLE' && item.currentStoreId === storeId)
+    .map((item) => ({ label: assetSelectLabel(item), value: item.id })), [assets, storeId]);
 
   const replaceAssetOptions = useMemo(() => {
     return assets
@@ -400,7 +402,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
           : item.assetType === 'BATTERY';
         return typeMatches && item.status === 'IDLE';
       })
-      .map((item) => ({ label: `${item.serialNo} / ${item.assetTypeName || assetTypeText(item.assetType)}`, value: item.id }));
+      .map((item) => ({ label: assetSelectLabel(item), value: item.id }));
   }, [assets, replaceAssetType]);
 
   const integratedCreateAssetSelected = useMemo(
@@ -794,13 +796,23 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
             <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
-            <Select allowClear options={frameOptions} />
+            <Select
+              showSearch
+              allowClear
+              optionFilterProp="label"
+              placeholder="输入车架号或资产编号搜索"
+              notFoundContent="该门店暂无空闲车架或车电一体资产"
+              options={frameOptions}
+            />
           </Form.Item>
           <Form.Item name="batteryAssetId" label="电池资产">
             <Select
+              showSearch
               allowClear
+              optionFilterProp="label"
               disabled={integratedCreateAssetSelected}
-              placeholder={integratedCreateAssetSelected ? '车电一体无需独立电池' : undefined}
+              placeholder={integratedCreateAssetSelected ? '车电一体无需独立电池' : '输入电池号或资产编号搜索，可不选'}
+              notFoundContent="该门店暂无空闲电池资产"
               options={batteryOptions}
             />
           </Form.Item>
@@ -959,7 +971,11 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
         <Form form={pickupForm} layout="vertical" onFinish={submitPickup}>
           <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
             <Select
+              showSearch
               allowClear
+              optionFilterProp="label"
+              placeholder="输入车架号或资产编号搜索"
+              notFoundContent="该门店暂无空闲车架或车电一体资产"
               options={frameOptions}
               onChange={(value) => {
                 if (assets.some((item) => item.id === value && item.assetType === 'INTEGRATED_VEHICLE')) {
@@ -975,9 +991,12 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
               return (
                 <Form.Item name="batteryAssetId" label="电池资产">
                   <Select
+                    showSearch
                     allowClear
+                    optionFilterProp="label"
                     disabled={integratedVehicleSelected}
-                    placeholder={integratedVehicleSelected ? '车电一体无需独立电池' : undefined}
+                    placeholder={integratedVehicleSelected ? '车电一体无需独立电池' : '输入电池号或资产编号搜索'}
+                    notFoundContent="该门店暂无空闲电池资产"
                     options={batteryOptions}
                   />
                 </Form.Item>
@@ -1002,7 +1021,13 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
             />
           </Form.Item>
           <Form.Item name="newAssetId" label="新资产" rules={[{ required: true, message: '请选择新资产' }]}>
-            <Select options={replaceAssetOptions} />
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="输入资产编号或序列号搜索"
+              notFoundContent="该门店暂无符合条件的空闲资产"
+              options={replaceAssetOptions}
+            />
           </Form.Item>
           <Form.Item name="oldAssetResultStatus" label="原资产状态" rules={[{ required: true, message: '请选择原资产状态' }]}>
             <Select options={assetResultStatusOptions} />
@@ -2087,6 +2112,10 @@ function assetTypeText(value: Asset['assetType']) {
   if (value === 'VEHICLE_FRAME') return '车架';
   if (value === 'BATTERY') return '电池';
   return '普通资产';
+}
+
+function assetSelectLabel(asset: Asset) {
+  return `${asset.serialNo} / ${asset.assetCode} / ${asset.assetTypeName || assetTypeText(asset.assetType)}`;
 }
 
 function maintenanceColumns() {

@@ -302,6 +302,54 @@ class ExternalRentalOrderIntegrationTests {
         assertThat(assetStatus(integratedAssetId)).isEqualTo("RENTING");
     }
 
+    @Test
+    void createExternalOrderShouldRejectAssetOutsideSelectedStore() {
+        var otherStore = merchantService.createStore(new StoreRequest(
+            1L,
+            "补录测试其他门店",
+            "深圳市南山区其他路 28 号",
+            "09:00-22:00",
+            null,
+            null
+        ));
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES ('A-integrated-other-store', 'INTEGRATED_VEHICLE',
+                    (SELECT id FROM asset_type_definition WHERE type_code = 'INTEGRATED_VEHICLE'),
+                    'FRAME-OTHER-STORE', 1, 1, ?, 'IDLE',
+                    4200.00, 0.00, NULL, CURRENT_DATE)
+            """, otherStore.id());
+        var assetId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_item WHERE asset_code = 'A-integrated-other-store'",
+            Long.class
+        );
+
+        assertThatThrownBy(() -> externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "OTHER-STORE-ASSET",
+            1L,
+            2L,
+            "跨门店错误客户",
+            "13800136666",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            assetId,
+            null,
+            new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            null
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("不属于当前下单门店");
+
+        assertThat(assetStatus(assetId)).isEqualTo("IDLE");
+        assertThat(assetStore(assetId)).isEqualTo(otherStore.id());
+    }
+
     private String assetStatus(Long assetId) {
         return jdbcTemplate.queryForObject("SELECT status FROM asset_item WHERE id = ?", String.class, assetId);
     }

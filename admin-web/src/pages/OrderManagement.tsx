@@ -668,6 +668,7 @@ export function OrderManagement() {
               allowClear
               optionFilterProp="label"
               placeholder="输入车架号、资产编号或类型搜索"
+              notFoundContent={selectedStoreSku ? '该门店暂无空闲车架或车电一体资产' : '请先选择门店商品'}
               options={frameAssetOptions}
             />
           </Form.Item>
@@ -678,6 +679,7 @@ export function OrderManagement() {
               optionFilterProp="label"
               disabled={integratedVehicleSelected}
               placeholder={integratedVehicleSelected ? '车电一体无需独立电池' : '输入电池号或资产编号搜索，可不选'}
+              notFoundContent={selectedStoreSku ? '该门店暂无空闲电池资产' : '请先选择门店商品'}
               options={batteryAssetOptions}
             />
           </Form.Item>

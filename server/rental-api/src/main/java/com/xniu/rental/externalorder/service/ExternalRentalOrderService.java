@@ -310,8 +310,8 @@ public class ExternalRentalOrderService {
         if (asset.status() != AssetStatus.IDLE) {
             throw BusinessException.badRequest("所选资产不是空闲状态");
         }
-        if (asset.currentMerchantId() != null && !asset.currentMerchantId().equals(storeSku.merchantId())) {
-            throw BusinessException.badRequest("所选资产当前归属其他商户门店");
+        if (!storeSku.merchantId().equals(asset.currentMerchantId()) || !storeSku.storeId().equals(asset.currentStoreId())) {
+            throw BusinessException.badRequest("所选资产不属于当前下单门店");
         }
         if (externalRentalOrderRepository.findActiveByAsset(assetId).isPresent()) {
             throw BusinessException.badRequest("所选资产已被其他补录订单占用");
@@ -320,17 +320,6 @@ public class ExternalRentalOrderService {
             .anyMatch(item -> item.orderStatus() != OrderStatus.COMPLETED && item.orderStatus() != OrderStatus.CANCELLED);
         if (formalOrderOccupied) {
             throw BusinessException.badRequest("所选资产已被正式订单占用");
-        }
-        if (!storeSku.merchantId().equals(asset.currentMerchantId()) || !storeSku.storeId().equals(asset.currentStoreId())) {
-            assetRepository.transferStore(assetId, storeSku.merchantId(), storeSku.storeId());
-            assetRepository.insertLocationHistory(
-                assetId,
-                asset.currentMerchantId(),
-                asset.currentStoreId(),
-                storeSku.merchantId(),
-                storeSku.storeId(),
-                "外部补录订单创建自动调拨到下单门店"
-            );
         }
         assetRepository.updateStatus(assetId, AssetStatus.RENTING, LocalDateTime.now());
         assetRepository.insertStatusLog(assetId, asset.status(), AssetStatus.RENTING, currentAccountId(), remark);
