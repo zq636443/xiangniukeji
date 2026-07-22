@@ -160,7 +160,7 @@ public class OrderService {
         var asset = assetRepository.findById(assetId)
             .orElseThrow(() -> BusinessException.badRequest("资产不存在"));
         if (!asset.assetType().canBindAs(expectedType)) {
-            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择车架或车电一体资产" : "请选择电池资产");
+            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择主资产或自定义资产" : "请选择电池资产");
         }
         if (asset.status() != AssetStatus.IDLE) {
             throw BusinessException.badRequest("资产不是空闲状态");
@@ -257,7 +257,7 @@ public class OrderService {
             orderRepository.addItem(order.id(), OrderItemType.DEPOSIT, null, "押金", 1, packagePrice.depositAmount(), packagePrice.depositAmount());
         }
         if (request.frameAssetId() != null) {
-            orderRepository.addItem(order.id(), OrderItemType.ASSET_FRAME, request.frameAssetId(), "车架资产", 1, BigDecimal.ZERO, BigDecimal.ZERO);
+            orderRepository.addItem(order.id(), OrderItemType.ASSET_FRAME, request.frameAssetId(), frameAsset.assetTypeName() + "资产", 1, BigDecimal.ZERO, BigDecimal.ZERO);
         }
         if (request.batteryAssetId() != null) {
             orderRepository.addItem(order.id(), OrderItemType.ASSET_BATTERY, request.batteryAssetId(), "电池资产", 1, BigDecimal.ZERO, BigDecimal.ZERO);

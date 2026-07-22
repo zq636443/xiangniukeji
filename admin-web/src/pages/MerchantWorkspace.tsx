@@ -385,7 +385,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
     })), [selectedStoreSku]);
 
   const frameOptions = useMemo(() => assets
-    .filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE')
+    .filter((item) => item.assetType !== 'BATTERY'
       && item.status === 'IDLE'
       && item.currentStoreId === storeId)
     .map((item) => ({ label: assetSelectLabel(item), value: item.id })), [assets, storeId]);
@@ -398,7 +398,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
     return assets
       .filter((item) => {
         const typeMatches = replaceAssetType === 'VEHICLE_FRAME'
-          ? item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE'
+          ? item.assetType !== 'BATTERY'
           : item.assetType === 'BATTERY';
         return typeMatches && item.status === 'IDLE';
       })
@@ -448,7 +448,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       '状态',
       '商品',
       'SKU',
-      '车架号',
+      '主资产编号',
       '电池号',
       '实际核销金额',
       '应付金额',
@@ -701,7 +701,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
             { title: '电话', dataIndex: 'customerPhone', render: (value?: string | null) => value || '-' },
             { title: '状态', dataIndex: 'orderStatus', render: orderStatusTag },
             { title: '租期', render: (_, record) => `${record.leaseValue}${record.leaseUnit === 'DAY' ? '天' : '月'} / ${record.totalPeriods}期` },
-            { title: '车架号', render: (_, record) => assetText(record.frameSerialNo, record.frameAssetCode, record.frameAssetId) },
+            { title: '主资产编号', render: (_, record) => assetText(record.frameSerialNo, record.frameAssetCode, record.frameAssetId) },
             { title: '电池号', render: (_, record) => assetText(record.batterySerialNo, record.batteryAssetCode, record.batteryAssetId) },
             { title: '实际核销金额', dataIndex: 'verificationAmount', render: money },
             { title: '应付', dataIndex: 'payableAmount', render: money },
@@ -795,13 +795,13 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
           >
             <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
+          <Form.Item name="frameAssetId" label="主资产（支持全部自定义类型）">
             <Select
               showSearch
               allowClear
               optionFilterProp="label"
-              placeholder="输入车架号或资产编号搜索"
-              notFoundContent="该门店暂无空闲车架或车电一体资产"
+              placeholder="输入序列号、资产编号或自定义类型搜索"
+              notFoundContent="该门店暂无空闲主资产或自定义资产"
               options={frameOptions}
             />
           </Form.Item>
@@ -887,7 +887,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
               <Descriptions.Item label="客户姓名">{selectedOrder.customerName || '-'}</Descriptions.Item>
               <Descriptions.Item label="联系电话">{selectedOrder.customerPhone || '-'}</Descriptions.Item>
               <Descriptions.Item label="商品 / SKU">{selectedOrder.storeSkuName || '-'} / {selectedOrder.packageName || '-'}</Descriptions.Item>
-              <Descriptions.Item label="车架资产">{assetText(selectedOrder.frameSerialNo, selectedOrder.frameAssetCode, selectedOrder.frameAssetId)}</Descriptions.Item>
+              <Descriptions.Item label="主资产">{assetText(selectedOrder.frameSerialNo, selectedOrder.frameAssetCode, selectedOrder.frameAssetId)}</Descriptions.Item>
               <Descriptions.Item label="电池资产">{assetText(selectedOrder.batterySerialNo, selectedOrder.batteryAssetCode, selectedOrder.batteryAssetId)}</Descriptions.Item>
               <Descriptions.Item label="基础租期">{selectedOrder.leaseValue}{selectedOrder.leaseUnit === 'DAY' ? '天' : '个月'}</Descriptions.Item>
               <Descriptions.Item label="好评赠送">{selectedOrder.reviewBonusDays} 天</Descriptions.Item>
@@ -969,13 +969,13 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
 
       <Modal title={pickupMode === 'SHIP' ? '免付款发货' : '取车绑定资产'} open={pickupOpen} onCancel={() => setPickupOpen(false)} onOk={() => pickupForm.submit()} confirmLoading={actionLoading} destroyOnHidden>
         <Form form={pickupForm} layout="vertical" onFinish={submitPickup}>
-          <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
+          <Form.Item name="frameAssetId" label="主资产（支持全部自定义类型）">
             <Select
               showSearch
               allowClear
               optionFilterProp="label"
-              placeholder="输入车架号或资产编号搜索"
-              notFoundContent="该门店暂无空闲车架或车电一体资产"
+              placeholder="输入序列号、资产编号或自定义类型搜索"
+              notFoundContent="该门店暂无空闲主资产或自定义资产"
               options={frameOptions}
               onChange={(value) => {
                 if (assets.some((item) => item.id === value && item.assetType === 'INTEGRATED_VEHICLE')) {
@@ -1014,7 +1014,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
           <Form.Item name="assetType" label="资产类型" rules={[{ required: true, message: '请选择资产类型' }]}>
             <Select
               options={[
-                { label: '车架（含车电一体）', value: 'VEHICLE_FRAME' },
+                { label: '主资产（含全部自定义类型）', value: 'VEHICLE_FRAME' },
                 { label: '电池', value: 'BATTERY' }
               ]}
               onChange={() => replaceForm.setFieldValue('newAssetId', undefined)}
@@ -1040,7 +1040,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
 
       <Modal title="归还并结束订单" open={returnOpen} onCancel={() => setReturnOpen(false)} onOk={() => returnForm.submit()} confirmLoading={actionLoading} destroyOnHidden>
         <Form form={returnForm} layout="vertical" onFinish={submitReturn}>
-          <Form.Item name="frameResultStatus" label="车架归还状态" rules={[{ required: true, message: '请选择车架状态' }]}>
+          <Form.Item name="frameResultStatus" label="主资产归还状态" rules={[{ required: true, message: '请选择主资产状态' }]}>
             <Select options={assetResultStatusOptions} />
           </Form.Item>
           <Form.Item name="batteryResultStatus" label="电池归还状态" rules={[{ required: true, message: '请选择电池状态' }]}>

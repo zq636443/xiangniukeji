@@ -162,10 +162,10 @@ export function OrderManagement() {
       value: pkg.packageId
     })), [selectedStoreSku]);
 
-  const frameAssetOptions = useMemo(() => assets.filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE')
+  const frameAssetOptions = useMemo(() => assets.filter((item) => item.assetType !== 'BATTERY'
     && item.status === 'IDLE'
     && item.currentStoreId === selectedStoreSku?.storeId).map((item) => ({
-    label: `${item.serialNo} / ${item.assetCode} / ${item.assetType === 'INTEGRATED_VEHICLE' ? '车电一体' : '车架'}`,
+    label: `${item.serialNo} / ${item.assetCode} / ${item.assetTypeName || primaryAssetTypeText(item)}`,
     value: item.id
   })), [assets, selectedStoreSku]);
 
@@ -182,10 +182,10 @@ export function OrderManagement() {
   );
 
   const pickupFrameAssetOptions = useMemo(() => assets
-    .filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE')
+    .filter((item) => item.assetType !== 'BATTERY'
       && item.status === 'IDLE'
       && item.currentStoreId === selectedOrder?.storeId)
-    .map((item) => ({ label: `${item.serialNo} / ${item.assetType === 'INTEGRATED_VEHICLE' ? '车电一体' : '车架'}`, value: item.id })), [assets, selectedOrder]);
+    .map((item) => ({ label: `${item.serialNo} / ${item.assetCode} / ${item.assetTypeName || primaryAssetTypeText(item)}`, value: item.id })), [assets, selectedOrder]);
 
   const pickupBatteryAssetOptions = useMemo(() => assets
     .filter((item) => item.assetType === 'BATTERY' && item.status === 'IDLE' && item.currentStoreId === selectedOrder?.storeId)
@@ -199,11 +199,11 @@ export function OrderManagement() {
   const replaceAssetOptions = useMemo(() => assets
     .filter((item) => {
       const typeMatches = replaceAssetType === 'VEHICLE_FRAME'
-        ? item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE'
+        ? item.assetType !== 'BATTERY'
         : item.assetType === 'BATTERY';
       return typeMatches && item.status === 'IDLE' && item.currentStoreId === selectedOrder?.storeId;
     })
-    .map((item) => ({ label: `${item.serialNo} / ${item.assetType === 'INTEGRATED_VEHICLE' ? '车电一体' : item.assetType === 'BATTERY' ? '电池' : '车架'}`, value: item.id })),
+    .map((item) => ({ label: `${item.serialNo} / ${item.assetCode} / ${item.assetTypeName || primaryAssetTypeText(item)}`, value: item.id })),
   [assets, replaceAssetType, selectedOrder]);
 
   const selectedOrderStoreSku = useMemo(
@@ -258,7 +258,7 @@ export function OrderManagement() {
       '门店',
       '商品',
       'SKU',
-      '车架号',
+      '主资产编号',
       '电池号',
       '租金',
       '实际核销金额',
@@ -398,7 +398,7 @@ export function OrderManagement() {
   async function submitPickup(values: PickupForm) {
     if (!selectedOrder) return;
     if (!values.frameAssetId && !values.batteryAssetId) {
-      message.error('请至少选择车架、车电一体或电池资产');
+      message.error('请至少选择主资产、自定义资产或电池资产');
       return;
     }
     setActionLoading(true);
@@ -507,7 +507,7 @@ export function OrderManagement() {
                   <Descriptions.Item label="门店">{record.storeName || `#${record.storeId}`}</Descriptions.Item>
                   <Descriptions.Item label="商品">{record.storeSkuName || `#${record.storeSkuId}`}</Descriptions.Item>
                   <Descriptions.Item label="SKU">{record.packageName || `#${record.packageId}`}</Descriptions.Item>
-                  <Descriptions.Item label="车架资产">{assetText(record.frameSerialNo, record.frameAssetCode, record.frameAssetId)}</Descriptions.Item>
+                  <Descriptions.Item label="主资产">{assetText(record.frameSerialNo, record.frameAssetCode, record.frameAssetId)}</Descriptions.Item>
                   <Descriptions.Item label="电池资产">{assetText(record.batterySerialNo, record.batteryAssetCode, record.batteryAssetId)}</Descriptions.Item>
                   <Descriptions.Item label="租期">{leaseText(record)}</Descriptions.Item>
                   <Descriptions.Item label="自动续租">{renewalText(record)}</Descriptions.Item>
@@ -580,7 +580,7 @@ export function OrderManagement() {
             { title: '门店', width: 150, render: (_, record) => record.storeName || `#${record.storeId}` },
             { title: '商品', width: 170, render: (_, record) => record.storeSkuName || `#${record.storeSkuId}` },
             { title: 'SKU', width: 140, render: (_, record) => record.packageName || `#${record.packageId}` },
-            { title: '车架号', width: 160, render: (_, record) => assetText(record.frameSerialNo, record.frameAssetCode, record.frameAssetId) },
+            { title: '主资产编号', width: 160, render: (_, record) => assetText(record.frameSerialNo, record.frameAssetCode, record.frameAssetId) },
             { title: '电池号', width: 160, render: (_, record) => assetText(record.batterySerialNo, record.batteryAssetCode, record.batteryAssetId) },
             { title: '实际核销金额', dataIndex: 'verificationAmount', width: 130, render: moneyText },
             { title: '应付', dataIndex: 'payableAmount', width: 100, render: moneyText },
@@ -662,13 +662,13 @@ export function OrderManagement() {
           >
             <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
+          <Form.Item name="frameAssetId" label="主资产（支持全部自定义类型）">
             <Select
               showSearch
               allowClear
               optionFilterProp="label"
-              placeholder="输入车架号、资产编号或类型搜索"
-              notFoundContent={selectedStoreSku ? '该门店暂无空闲车架或车电一体资产' : '请先选择门店商品'}
+              placeholder="输入序列号、资产编号或自定义类型搜索"
+              notFoundContent={selectedStoreSku ? '该门店暂无空闲主资产或自定义资产' : '请先选择门店商品'}
               options={frameAssetOptions}
             />
           </Form.Item>
@@ -738,8 +738,8 @@ export function OrderManagement() {
         destroyOnHidden
       >
         <Form form={pickupForm} layout="vertical" onFinish={submitPickup}>
-          <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
-            <Select allowClear options={pickupFrameAssetOptions} />
+          <Form.Item name="frameAssetId" label="主资产（支持全部自定义类型）">
+            <Select showSearch allowClear optionFilterProp="label" options={pickupFrameAssetOptions} />
           </Form.Item>
           <Form.Item name="batteryAssetId" label="电池资产">
             <Select
@@ -765,7 +765,7 @@ export function OrderManagement() {
           <Form.Item name="assetType" label="资产类型" rules={[{ required: true, message: '请选择资产类型' }]}>
             <Select
               options={[
-                { label: '车架（含车电一体）', value: 'VEHICLE_FRAME' },
+                { label: '主资产（含全部自定义类型）', value: 'VEHICLE_FRAME' },
                 { label: '电池', value: 'BATTERY' }
               ]}
               onChange={() => replaceForm.setFieldValue('newAssetId', undefined)}
@@ -794,7 +794,7 @@ export function OrderManagement() {
             <Select options={returnStoreOptions} />
           </Form.Item>
           {selectedOrder?.frameAssetId ? (
-            <Form.Item name="frameResultStatus" label="车架归还状态" rules={[{ required: true, message: '请选择车架状态' }]}>
+            <Form.Item name="frameResultStatus" label="主资产归还状态" rules={[{ required: true, message: '请选择主资产状态' }]}>
               <Select options={assetResultStatusOptions} />
             </Form.Item>
           ) : null}
@@ -838,6 +838,12 @@ function statusText(status?: OrderStatus | null) {
 
 function assetText(serialNo?: string | null, assetCode?: string | null, assetId?: number | null) {
   return serialNo || assetCode || (assetId ? `#${assetId}` : '-');
+}
+
+function primaryAssetTypeText(asset: Asset) {
+  if (asset.assetType === 'INTEGRATED_VEHICLE') return '车电一体';
+  if (asset.assetType === 'VEHICLE_FRAME') return '车架';
+  return '自定义资产';
 }
 
 function dateText(value?: string | null) {

@@ -36,6 +36,7 @@ class OrderBatchImportIntegrationTests {
 
     @BeforeEach
     void setAdminAccount() {
+        jdbcTemplate.update("UPDATE store_sku SET status = 'ON_SHELF' WHERE id = 1");
         AuthContext.set(new CurrentAccount(
             "admin-order-import-token",
             new CurrentAccountResponse(

@@ -47,6 +47,7 @@ class OrderLeaseBonusIntegrationTests {
 
     @BeforeEach
     void setAdminAccount() {
+        jdbcTemplate.update("UPDATE store_sku SET status = 'ON_SHELF' WHERE id = 1");
         jdbcTemplate.update("""
             UPDATE asset_item
             SET status = 'IDLE', current_merchant_id = 1, current_store_id = 1

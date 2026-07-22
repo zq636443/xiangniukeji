@@ -101,6 +101,15 @@ public class AssetRepository {
         return assets.stream().findFirst();
     }
 
+    public Optional<AssetItem> findPrimaryOrderAssetBySerialNo(String serialNo) {
+        var assets = jdbcTemplate.query(
+            ASSET_SELECT + " WHERE a.serial_no = ? AND a.asset_type <> 'BATTERY' ORDER BY a.id DESC",
+            mapper,
+            serialNo
+        );
+        return assets.stream().findFirst();
+    }
+
     public AssetItem create(
         String assetCode,
         AssetType assetType,

@@ -151,10 +151,9 @@ public class OrderBatchImportService {
         if (normalized == null) {
             return null;
         }
-        return assetRepository.findBySerialNoAndType(normalized, AssetType.VEHICLE_FRAME)
-            .or(() -> assetRepository.findBySerialNoAndType(normalized, AssetType.INTEGRATED_VEHICLE))
+        return assetRepository.findPrimaryOrderAssetBySerialNo(normalized)
             .map(asset -> asset.id())
-            .orElseThrow(() -> BusinessException.badRequest("车架号不存在"));
+            .orElseThrow(() -> BusinessException.badRequest("主资产编号不存在"));
     }
 
     private Long optionalPositiveLong(String value, String fieldName) {

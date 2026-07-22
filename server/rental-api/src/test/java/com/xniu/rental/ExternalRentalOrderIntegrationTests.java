@@ -46,6 +46,7 @@ class ExternalRentalOrderIntegrationTests {
 
     @BeforeEach
     void setCurrentAccount() {
+        jdbcTemplate.update("UPDATE store_sku SET status = 'ON_SHELF' WHERE id = 1");
         AuthContext.set(new CurrentAccount(
             "test-token",
             new CurrentAccountResponse(
@@ -300,6 +301,77 @@ class ExternalRentalOrderIntegrationTests {
         assertThat(created.frameAssetId()).isEqualTo(integratedAssetId);
         assertThat(created.batteryAssetId()).isNull();
         assertThat(assetStatus(integratedAssetId)).isEqualTo("RENTING");
+    }
+
+    @Test
+    void customAssetTypeShouldBeSelectableAsExternalOrderPrimaryAsset() {
+        var suffix = String.valueOf(System.nanoTime());
+        jdbcTemplate.update("""
+            INSERT INTO asset_type_definition
+            (type_code, type_name, asset_class, serial_label, system_defined, sort_order, status)
+            VALUES (?, ?, 'GENERAL', '资产编号', 0, 90, 'ENABLED')
+            """, "CUSTOM_EXTERNAL_" + suffix, "小黄鸭车电一体-" + suffix);
+        var typeId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_type_definition WHERE type_code = ?",
+            Long.class,
+            "CUSTOM_EXTERNAL_" + suffix
+        );
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES (?, 'GENERAL', ?, ?, 1, 1, 1, 'IDLE', 4200.00, 0.00, NULL, CURRENT_DATE)
+            """, "A-custom-external-" + suffix, typeId, "CUSTOM-EXTERNAL-" + suffix);
+        var customAssetId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_item WHERE asset_code = ?",
+            Long.class,
+            "A-custom-external-" + suffix
+        );
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES (?, 'BATTERY',
+                    (SELECT id FROM asset_type_definition WHERE type_code = 'BATTERY'),
+                    ?, 1, 1, 1, 'IDLE', 1800.00, 0.00, NULL, CURRENT_DATE)
+            """, "A-custom-external-battery-" + suffix, "CUSTOM-EXTERNAL-BATTERY-" + suffix);
+        var batteryAssetId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_item WHERE asset_code = ?",
+            Long.class,
+            "A-custom-external-battery-" + suffix
+        );
+
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "CUSTOM-ASSET-" + suffix,
+            1L,
+            2L,
+            "自定义补录客户",
+            "13800131111",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            customAssetId,
+            batteryAssetId,
+            new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            null
+        ));
+
+        assertThat(created.frameAssetId()).isEqualTo(customAssetId);
+        assertThat(assetStatus(customAssetId)).isEqualTo("RENTING");
+
+        externalRentalOrderService.terminate(created.id(), new ExternalRentalOrderTerminateRequest(
+            1L,
+            "IDLE",
+            "IDLE",
+            "测试结束",
+            "自定义资产归还"
+        ));
+
+        assertThat(assetStatus(customAssetId)).isEqualTo("IDLE");
+        assertThat(assetStatus(batteryAssetId)).isEqualTo("IDLE");
     }
 
     @Test

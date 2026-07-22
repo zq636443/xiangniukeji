@@ -7,7 +7,10 @@ public enum AssetType {
     GENERAL;
 
     public boolean canBindAs(AssetType slotType) {
-        return this == slotType || (slotType == VEHICLE_FRAME && this == INTEGRATED_VEHICLE);
+        if (slotType == VEHICLE_FRAME) {
+            return this != BATTERY;
+        }
+        return this == slotType;
     }
 
     public boolean isIntegratedVehicle() {

@@ -102,11 +102,11 @@ public class AssetFulfillmentService {
         }
         var batteryAssetId = integratedVehicle ? null : request.batteryAssetId() == null ? order.batteryAssetId() : request.batteryAssetId();
         if (frameAssetId == null && batteryAssetId == null) {
-            throw BusinessException.badRequest("请至少绑定车架或电池");
+            throw BusinessException.badRequest("请至少绑定主资产或电池资产");
         }
         var batteryAsset = batteryAssetId == null ? null : ensureAssetReadyForOrder(batteryAssetId, AssetType.BATTERY, order);
         if (frameAsset != null) {
-            markAssetStatus(frameAsset.id(), AssetStatus.RENTING, defaultRemark + "：绑定车架");
+            markAssetStatus(frameAsset.id(), AssetStatus.RENTING, defaultRemark + "：绑定主资产");
         }
         if (batteryAsset != null) {
             markAssetStatus(batteryAsset.id(), AssetStatus.RENTING, defaultRemark + "：绑定电池");
@@ -201,7 +201,7 @@ public class AssetFulfillmentService {
         var frameStatus = parseReturnStatus(request.frameResultStatus(), AssetStatus.IDLE);
         var batteryStatus = parseReturnStatus(request.batteryResultStatus(), AssetStatus.IDLE);
         if (order.frameAssetId() != null) {
-            returnAssetToStore(order.frameAssetId(), frameStatus, order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "归还车架"));
+            returnAssetToStore(order.frameAssetId(), frameStatus, order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "归还主资产"));
         }
         if (order.batteryAssetId() != null) {
             returnAssetToStore(order.batteryAssetId(), batteryStatus, order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "归还电池"));
@@ -273,7 +273,7 @@ public class AssetFulfillmentService {
     private AssetItem ensureAssetReadyForOrder(Long assetId, AssetType expectedType, RentalOrder order) {
         var asset = ensureAsset(assetId);
         if (!asset.assetType().canBindAs(expectedType)) {
-            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择车架或车电一体资产" : "请选择电池资产");
+            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择主资产或自定义资产" : "请选择电池资产");
         }
         if (asset.status() != AssetStatus.IDLE) {
             throw BusinessException.badRequest("资产不是空闲状态");
@@ -295,6 +295,7 @@ public class AssetFulfillmentService {
     private void closeActiveFrameUsage(Long orderId, String endReason) {
         fulfillmentRepository.closeActiveUsage(orderId, AssetType.VEHICLE_FRAME, endReason);
         fulfillmentRepository.closeActiveUsage(orderId, AssetType.INTEGRATED_VEHICLE, endReason);
+        fulfillmentRepository.closeActiveUsage(orderId, AssetType.GENERAL, endReason);
     }
 
     private void markAssetStatus(Long assetId, AssetStatus nextStatus, String remark) {

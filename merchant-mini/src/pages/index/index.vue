@@ -35,7 +35,7 @@
           <picker :range="orderStatusLabels" :value="orderStatusIndex" @change="onOrderStatusChange">
             <view class="picker compact-picker">{{ orderStatusLabels[orderStatusIndex] }}</view>
           </picker>
-          <input v-model="orderKeyword" class="filter-input" placeholder="搜索订单、客户、电话或车架号" />
+          <input v-model="orderKeyword" class="filter-input" placeholder="搜索订单、客户、电话或资产编号" />
           <button class="mini-btn" :loading="orderLoading" @tap="loadOrders">刷新</button>
         </view>
         <view v-if="canCreateOrder" class="action-row order-create-action">
@@ -73,7 +73,7 @@
             <input v-model="orderCreateForm.verificationAmount" type="digit" placeholder="请输入实际核销金额" />
           </view>
           <view class="field compact">
-            <text>车架 / 车电一体资产</text>
+            <text>主资产（支持全部自定义类型）</text>
             <picker :range="orderFrameAssetLabels" :value="orderCreateForm.frameAssetIndex" @change="onOrderFrameAssetChange">
               <view class="picker">{{ orderFrameAssetLabels[orderCreateForm.frameAssetIndex] }}</view>
             </picker>
@@ -101,7 +101,7 @@
           <view class="asset-sub">{{ order.customerName || '未填姓名' }} / {{ order.customerPhone || '未填电话' }}</view>
           <view class="asset-sub">{{ order.storeSkuName || '商品' }} / {{ order.packageName || 'SKU' }} / {{ leaseText(order.leaseUnit, order.leaseValue) }}</view>
           <view class="asset-sub">实际核销 {{ money(order.verificationAmount) }} / 应付 {{ money(order.payableAmount) }} / 已付 {{ money(order.paidAmount) }}</view>
-          <view class="asset-sub">车架 {{ assetText(order.frameSerialNo, order.frameAssetCode, order.frameAssetId) }} / 电池 {{ assetText(order.batterySerialNo, order.batteryAssetCode, order.batteryAssetId) }}</view>
+          <view class="asset-sub">主资产 {{ assetText(order.frameSerialNo, order.frameAssetCode, order.frameAssetId) }} / 电池 {{ assetText(order.batterySerialNo, order.batteryAssetCode, order.batteryAssetId) }}</view>
         </view>
       </view>
       <view v-if="selectedOrder" class="asset-panel">
@@ -113,7 +113,7 @@
           </view>
           <view class="asset-sub">创建时间：{{ dateText(selectedOrder.createdAt) }}</view>
           <view class="asset-sub">客户：{{ selectedOrder.customerName || '-' }} / {{ selectedOrder.customerPhone || '-' }}</view>
-          <view class="asset-sub">车架：{{ assetText(selectedOrder.frameSerialNo, selectedOrder.frameAssetCode, selectedOrder.frameAssetId) }} / 电池：{{ assetText(selectedOrder.batterySerialNo, selectedOrder.batteryAssetCode, selectedOrder.batteryAssetId) }}</view>
+          <view class="asset-sub">主资产：{{ assetText(selectedOrder.frameSerialNo, selectedOrder.frameAssetCode, selectedOrder.frameAssetId) }} / 电池：{{ assetText(selectedOrder.batterySerialNo, selectedOrder.batteryAssetCode, selectedOrder.batteryAssetId) }}</view>
           <view class="asset-sub">预计归还：{{ dateText(selectedOrder.expectedReturnAt) }}</view>
           <view class="asset-sub">赠送租期：好评 {{ selectedOrder.reviewBonusDays }} 天 / 活动 {{ selectedOrder.campaignBonusDays }} 天 / 合计 {{ selectedOrder.totalBonusDays }} 天</view>
           <view class="asset-sub">实际核销 {{ money(selectedOrder.verificationAmount) }} / 租金 {{ money(selectedOrder.rentalAmount) }}</view>
@@ -229,9 +229,9 @@
             <button class="mini-btn" @tap="prepareMaintenance(asset.id)">登记维修</button>
           </view>
           <view v-if="asset.status === 'IDLE'" class="action-row">
-            <button v-if="asset.assetType === 'VEHICLE_FRAME' || asset.assetType === 'INTEGRATED_VEHICLE'" class="mini-btn" @tap="fillFrameAsset(asset.id)">填入车架</button>
+            <button v-if="asset.assetType !== 'BATTERY'" class="mini-btn" @tap="fillFrameAsset(asset.id)">填入主资产</button>
             <button v-if="asset.assetType === 'BATTERY'" class="mini-btn" @tap="fillBatteryAsset(asset.id)">填入电池</button>
-            <button v-if="asset.assetType !== 'GENERAL'" class="mini-btn" @tap="fillNewAsset(asset.id, asset.assetType)">作为更换资产</button>
+            <button class="mini-btn" @tap="fillNewAsset(asset.id, asset.assetType)">作为更换资产</button>
           </view>
         </view>
       </view>
@@ -409,8 +409,8 @@
           <input v-model="fulfillment.orderId" type="number" placeholder="请输入订单 ID" />
         </view>
         <view class="field compact">
-          <text>车架 / 车电一体资产 ID</text>
-          <input v-model="fulfillment.frameAssetId" type="number" placeholder="取车绑定车架，可空" />
+          <text>主资产 ID</text>
+          <input v-model="fulfillment.frameAssetId" type="number" placeholder="取车绑定主资产，可空" />
         </view>
         <view class="field compact">
           <text>电池资产 ID</text>
@@ -541,7 +541,7 @@ const maintenanceForm = reactive({
 });
 const replaceTypeIndex = ref(0);
 const replaceTypes = ['VEHICLE_FRAME', 'BATTERY'] as const;
-const replaceTypeLabels = ['车架', '电池'];
+const replaceTypeLabels = ['主资产', '电池'];
 const maintenanceTypeValues = ['REPAIR', 'MAINTENANCE', 'REPLACE_PART', 'INSPECTION'] as const;
 const maintenanceTypeLabels = ['维修', '保养', '换件', '检测'];
 const responsibilityValues = ['ROUTINE_MAINTENANCE', 'CUSTOMER_DAMAGE', 'MERCHANT_RESPONSIBILITY', 'PLATFORM_SUBSIDY'] as const;
@@ -570,7 +570,7 @@ const orderFrameAssets = computed(() => assets.value.filter((item) => item.asset
 const orderBatteryAssets = computed(() => assets.value.filter((item) => item.assetType === 'BATTERY' && item.status === 'IDLE'));
 const storeSkuLabels = computed(() => storeSkus.value.map((item) => item.displayName));
 const orderPackageLabels = computed(() => orderPackages.value.map((item) => `${item.packageName} / ${money(item.rentalAmount)}`));
-const orderFrameAssetLabels = computed(() => ['暂不绑定', ...orderFrameAssets.value.map((item) => `${item.serialNo} / ${assetTypeText(item.assetType)}`)]);
+const orderFrameAssetLabels = computed(() => ['暂不绑定', ...orderFrameAssets.value.map((item) => `${item.serialNo} / ${item.assetTypeName || assetTypeText(item.assetType)}`)]);
 const orderBatteryAssetLabels = computed(() => ['暂不绑定', ...orderBatteryAssets.value.map((item) => item.serialNo)]);
 const selectedOrderFrameAsset = computed(() => orderCreateForm.frameAssetIndex > 0 ? orderFrameAssets.value[orderCreateForm.frameAssetIndex - 1] : undefined);
 const orderUsesIntegratedVehicle = computed(() => selectedOrderFrameAsset.value?.assetType === 'INTEGRATED_VEHICLE');

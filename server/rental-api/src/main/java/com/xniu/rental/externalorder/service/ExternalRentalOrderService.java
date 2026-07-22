@@ -167,7 +167,7 @@ public class ExternalRentalOrderService {
         if (expectedReturnAt != null && expectedReturnAt.isBefore(request.rentStartedAt())) {
             throw BusinessException.badRequest("预计归还时间不能早于起租时间");
         }
-        var frameAsset = request.frameAssetId() == null ? null : occupyAsset(request.frameAssetId(), AssetType.VEHICLE_FRAME, storeSku, "外部补录订单绑定车架");
+        var frameAsset = request.frameAssetId() == null ? null : occupyAsset(request.frameAssetId(), AssetType.VEHICLE_FRAME, storeSku, "外部补录订单绑定主资产");
         var batteryAsset = request.batteryAssetId() == null ? null : occupyAsset(request.batteryAssetId(), AssetType.BATTERY, storeSku, "外部补录订单绑定电池");
         var externalRentalAmount = normalizeMoney(request.externalRentalAmount(), packagePricing.rentalAmount());
         var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), externalRentalAmount);
@@ -218,7 +218,7 @@ public class ExternalRentalOrderService {
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         var returnStore = resolveReturnStore(order, request.returnStoreId());
         if (order.frameAssetId() != null) {
-            returnAssetToStore(order.frameAssetId(), parseReturnStatus(request.frameResultStatus(), AssetStatus.IDLE), order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "外部补录订单归还车架"));
+            returnAssetToStore(order.frameAssetId(), parseReturnStatus(request.frameResultStatus(), AssetStatus.IDLE), order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "外部补录订单归还主资产"));
         }
         if (order.batteryAssetId() != null) {
             returnAssetToStore(order.batteryAssetId(), parseReturnStatus(request.batteryResultStatus(), AssetStatus.IDLE), order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "外部补录订单归还电池"));
@@ -251,7 +251,7 @@ public class ExternalRentalOrderService {
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         var returnStore = resolveReturnStore(order, request.returnStoreId());
         if (order.frameAssetId() != null) {
-            returnAssetToStore(order.frameAssetId(), parseReturnStatus(request.frameResultStatus(), AssetStatus.IDLE), order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "外部补录订单提前终止归还车架"));
+            returnAssetToStore(order.frameAssetId(), parseReturnStatus(request.frameResultStatus(), AssetStatus.IDLE), order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "外部补录订单提前终止归还主资产"));
         }
         if (order.batteryAssetId() != null) {
             returnAssetToStore(order.batteryAssetId(), parseReturnStatus(request.batteryResultStatus(), AssetStatus.IDLE), order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "外部补录订单提前终止归还电池"));
@@ -279,17 +279,17 @@ public class ExternalRentalOrderService {
     private void validateRequestAssets(ExternalRentalOrderCreateRequest request, ProductSku sku) {
         var frameAsset = request.frameAssetId() == null ? null : ensureAsset(request.frameAssetId());
         if (frameAsset != null && !frameAsset.assetType().canBindAs(AssetType.VEHICLE_FRAME)) {
-            throw BusinessException.badRequest("请选择车架或车电一体资产");
+            throw BusinessException.badRequest("请选择主资产或自定义资产");
         }
         var integratedVehicle = frameAsset != null && frameAsset.assetType().isIntegratedVehicle();
         if (Boolean.TRUE.equals(sku.needFrameAsset()) && request.frameAssetId() == null) {
-            throw BusinessException.badRequest("当前商品链接必须绑定车架资产");
+            throw BusinessException.badRequest("当前商品链接必须绑定主资产");
         }
         if (Boolean.TRUE.equals(sku.needBatteryAsset()) && request.batteryAssetId() == null && !integratedVehicle) {
             throw BusinessException.badRequest("当前商品链接必须绑定电池资产");
         }
         if (!Boolean.TRUE.equals(sku.needFrameAsset()) && request.frameAssetId() != null) {
-            throw BusinessException.badRequest("当前商品链接不需要绑定车架资产");
+            throw BusinessException.badRequest("当前商品链接不需要绑定主资产");
         }
         if (!Boolean.TRUE.equals(sku.needBatteryAsset()) && request.batteryAssetId() != null) {
             throw BusinessException.badRequest("当前商品链接不需要绑定电池资产");
@@ -305,7 +305,7 @@ public class ExternalRentalOrderService {
     private AssetItem occupyAsset(Long assetId, AssetType expectedType, StoreSku storeSku, String remark) {
         var asset = ensureAsset(assetId);
         if (!asset.assetType().canBindAs(expectedType)) {
-            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择车架或车电一体资产" : "请选择电池资产");
+            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择主资产或自定义资产" : "请选择电池资产");
         }
         if (asset.status() != AssetStatus.IDLE) {
             throw BusinessException.badRequest("所选资产不是空闲状态");

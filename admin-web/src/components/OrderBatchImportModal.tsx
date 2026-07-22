@@ -38,7 +38,7 @@ const templateHeaders = [
   '门店商品编码',
   'SKU编码',
   '实际核销金额',
-  '车架号(车电一体填此列)',
+  '主资产编号(支持自定义类型)',
   '电池号(选填)',
   '下单时间(YYYY-MM-DD HH:mm)',
   '预计取车时间(选填)'
@@ -51,7 +51,7 @@ const headerAliases: Record<keyof Omit<OrderImportRow, 'lineNo'>, string[]> = {
   storeSkuCode: ['门店商品编码', 'storeSkuCode'],
   packageCode: ['SKU编码', 'SKU 编码', '套餐编码', 'packageCode'],
   verificationAmount: ['实际核销金额', '核销金额', 'verificationAmount'],
-  frameSerialNo: ['车架号(车电一体填此列)', '车架号（车电一体填此列）', '车架号(选填)', '车架号（选填）', '车架号', 'frameSerialNo'],
+  frameSerialNo: ['主资产编号(支持自定义类型)', '主资产编号（支持自定义类型）', '主资产编号', '车架号(车电一体填此列)', '车架号（车电一体填此列）', '车架号(选填)', '车架号（选填）', '车架号', 'frameSerialNo'],
   batterySerialNo: ['电池号(选填)', '电池号（选填）', '电池号', 'batterySerialNo'],
   orderedAt: ['下单时间(YYYY-MM-DD HH:mm)', '下单时间（YYYY-MM-DD HH:mm）', '下单时间', 'orderedAt'],
   expectedPickupAt: ['预计取车时间(选填)', '预计取车时间（选填）', '预计取车时间', 'expectedPickupAt']
@@ -156,7 +156,7 @@ export function OrderBatchImportModal({ open, endpoint, onClose, onImported }: O
                 { title: '商品编码', dataIndex: 'storeSkuCode', width: 190 },
                 { title: 'SKU编码', dataIndex: 'packageCode', width: 160 },
                 { title: '实际核销金额', dataIndex: 'verificationAmount', width: 130 },
-                { title: '车架号', dataIndex: 'frameSerialNo', width: 160, render: textOrDash },
+                { title: '主资产编号', dataIndex: 'frameSerialNo', width: 160, render: textOrDash },
                 { title: '电池号', dataIndex: 'batterySerialNo', width: 160, render: textOrDash },
                 { title: '下单时间', dataIndex: 'orderedAt', width: 170, render: textOrDash },
                 { title: '预计取车', dataIndex: 'expectedPickupAt', width: 170, render: textOrDash }
@@ -218,8 +218,7 @@ function buildOrderTemplateCsv(storeSkus: StoreSku[], assets: Asset[]) {
   const width = templateHeaders.length;
   const firstStoreSku = storeSkus[0];
   const firstPackage = firstStoreSku?.packages.find((item) => item.status === 'ENABLED');
-  const firstFrameAsset = assets.find((item) => item.status === 'IDLE'
-    && (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE'));
+  const firstFrameAsset = assets.find((item) => item.status === 'IDLE' && item.assetType !== 'BATTERY');
   const firstBatteryAsset = firstFrameAsset?.assetType === 'INTEGRATED_VEHICLE'
     ? undefined
     : assets.find((item) => item.status === 'IDLE' && item.assetType === 'BATTERY');
@@ -260,12 +259,12 @@ function buildOrderTemplateCsv(storeSkus: StoreSku[], assets: Asset[]) {
     .filter((asset) => asset.status === 'IDLE')
     .map((asset) => [
       '#空闲资产',
-      assetTypeText(asset.assetType),
+      asset.assetTypeName || assetTypeText(asset.assetType),
       '',
       '',
       '',
       '',
-      asset.assetType === 'VEHICLE_FRAME' || asset.assetType === 'INTEGRATED_VEHICLE' ? asset.serialNo : '',
+      asset.assetType !== 'BATTERY' ? asset.serialNo : '',
       asset.assetType === 'BATTERY' ? asset.serialNo : '',
       '',
       ''
@@ -357,5 +356,7 @@ function textOrDash(value?: string | null) {
 
 function assetTypeText(assetType: Asset['assetType']) {
   if (assetType === 'INTEGRATED_VEHICLE') return '车电一体';
-  return assetType === 'VEHICLE_FRAME' ? '车架' : '电池';
+  if (assetType === 'VEHICLE_FRAME') return '车架';
+  if (assetType === 'BATTERY') return '电池';
+  return '自定义资产';
 }

@@ -159,7 +159,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
 
   const frameAssetOptions = useMemo(() => {
     return assets
-      .filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE')
+      .filter((item) => item.assetType !== 'BATTERY'
         && item.status === 'IDLE'
         && item.currentMerchantId === selectedStoreSku?.merchantId
         && item.currentStoreId === selectedStoreSku?.storeId)
@@ -396,7 +396,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               width: 220,
               render: (_, record) => (
                 <div>
-                  <div>车架: {record.frameAssetSerialNo || '-'}</div>
+                  <div>主资产: {record.frameAssetSerialNo || '-'}</div>
                   <div>电池: {record.batteryAssetSerialNo || '-'}</div>
                 </div>
               )
@@ -511,13 +511,13 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           </Space>
           <Space size={12} style={{ width: '100%' }} align="start">
             {selectedStoreSku?.needFrameAsset !== false ? (
-              <Form.Item name="frameAssetId" label="车架 / 车电一体资产" rules={selectedStoreSku?.needFrameAsset ? [{ required: true, message: '请选择车架或车电一体资产' }] : undefined} style={{ flex: 1 }}>
+              <Form.Item name="frameAssetId" label="主资产（支持全部自定义类型）" rules={selectedStoreSku?.needFrameAsset ? [{ required: true, message: '请选择主资产或自定义资产' }] : undefined} style={{ flex: 1 }}>
                 <Select
                   showSearch
                   allowClear
                   optionFilterProp="label"
-                  placeholder="输入车架号或资产编号搜索"
-                  notFoundContent={selectedStoreSku ? '该门店暂无空闲车架或车电一体资产' : '请先选择门店商品'}
+                  placeholder="输入序列号、资产编号或自定义类型搜索"
+                  notFoundContent={selectedStoreSku ? '该门店暂无空闲主资产或自定义资产' : '请先选择门店商品'}
                   options={frameAssetOptions}
                 />
               </Form.Item>
@@ -556,7 +556,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             type="info"
             showIcon
             message="一行一单，支持英文逗号或 Tab 分隔"
-            description="字段顺序：来源平台,外部订单号,门店商品ID,SKU ID,客户姓名,客户手机号,起租时间,预计归还时间,车架资产ID,电池资产ID,外部订单租金,实际核销金额,签单费,押金,备注。车电一体只填车架资产ID，电池资产ID留空。"
+            description="字段顺序：来源平台,外部订单号,门店商品ID,SKU ID,客户姓名,客户手机号,起租时间,预计归还时间,主资产ID,电池资产ID,外部订单租金,实际核销金额,签单费,押金,备注。主资产支持车架、车电一体和全部自定义类型。"
           />
           <Input.TextArea
             rows={10}
@@ -663,7 +663,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               <Descriptions.Item label="门店商品">{selectedOrder.storeSkuDisplayName || '-'}</Descriptions.Item>
               <Descriptions.Item label="SKU">{selectedOrder.packageName || '-'}</Descriptions.Item>
               <Descriptions.Item label="租期">{leaseText(selectedOrder.leaseUnit, selectedOrder.leaseValue, selectedOrder.totalPeriods)}</Descriptions.Item>
-              <Descriptions.Item label="车架资产">{selectedOrder.frameAssetSerialNo || '-'}</Descriptions.Item>
+              <Descriptions.Item label="主资产">{selectedOrder.frameAssetSerialNo || '-'}</Descriptions.Item>
               <Descriptions.Item label="电池资产">{selectedOrder.batteryAssetSerialNo || '-'}</Descriptions.Item>
               <Descriptions.Item label="外部订单租金">{moneyText(selectedOrder.externalRentalAmount)}</Descriptions.Item>
               <Descriptions.Item label="实际核销金额">{moneyText(selectedOrder.verificationAmount)}</Descriptions.Item>
@@ -700,7 +700,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
 }
 
 function formatAssetLabel(asset: Asset) {
-  const type = asset.assetType === 'INTEGRATED_VEHICLE' ? '车电一体' : asset.assetType === 'VEHICLE_FRAME' ? '车架' : '电池';
+  const type = asset.assetTypeName || (asset.assetType === 'INTEGRATED_VEHICLE' ? '车电一体' : asset.assetType === 'VEHICLE_FRAME' ? '车架' : asset.assetType === 'BATTERY' ? '电池' : '自定义资产');
   return `${asset.serialNo} / ${asset.assetCode} / ${type}${asset.storeName ? ` / ${asset.storeName}` : ''}`;
 }
 

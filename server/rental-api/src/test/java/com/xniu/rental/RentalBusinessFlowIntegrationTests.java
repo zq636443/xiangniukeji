@@ -99,6 +99,7 @@ class RentalBusinessFlowIntegrationTests {
 
     @BeforeEach
     void setCurrentAccount() {
+        jdbcTemplate.update("UPDATE store_sku SET status = 'ON_SHELF' WHERE id = 1");
         jdbcTemplate.update("""
             UPDATE asset_item
             SET status = 'IDLE', current_merchant_id = 1, current_store_id = 1
@@ -407,6 +408,70 @@ class RentalBusinessFlowIntegrationTests {
 
         assertThat(assetStatus(integratedAssetId)).isEqualTo("IDLE");
         assertThat(orderStatus(order.id())).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void customAssetTypeShouldWorkAsPrimaryOrderAssetThroughPickupAndReturn() {
+        var suffix = String.valueOf(System.nanoTime());
+        jdbcTemplate.update("""
+            INSERT INTO asset_type_definition
+            (type_code, type_name, asset_class, serial_label, system_defined, sort_order, status)
+            VALUES (?, ?, 'GENERAL', '资产编号', 0, 90, 'ENABLED')
+            """, "CUSTOM_ORDER_" + suffix, "小豆芽车电一体-" + suffix);
+        var typeId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_type_definition WHERE type_code = ?",
+            Long.class,
+            "CUSTOM_ORDER_" + suffix
+        );
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES (?, 'GENERAL', ?, ?, 1, 1, 1, 'IDLE', 4200.00, 0.00, NULL, CURRENT_DATE)
+            """, "A-custom-order-" + suffix, typeId, "CUSTOM-ORDER-" + suffix);
+        var customAssetId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_item WHERE asset_code = ?",
+            Long.class,
+            "A-custom-order-" + suffix
+        );
+
+        var order = orderService.createOrder(new OrderCreateRequest(
+            null,
+            "自定义资产客户",
+            "13800139999",
+            1L,
+            2L,
+            customAssetId,
+            null,
+            null
+        ));
+
+        assertThat(order.frameAssetId()).isEqualTo(customAssetId);
+        assertThat(order.items()).extracting("itemType").contains("ASSET_FRAME");
+        transition(order.id(), "PENDING_REAL_NAME");
+        transition(order.id(), "PENDING_AGREEMENT");
+        transition(order.id(), "PENDING_DEPOSIT_AUTH");
+        transition(order.id(), "PENDING_VERIFY");
+        transition(order.id(), "PENDING_PICKUP");
+
+        assetFulfillmentService.pickup(order.id(), new AssetPickupRequest(null, null, "自定义资产取车"));
+
+        assertThat(assetStatus(customAssetId)).isEqualTo("RENTING");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT asset_type FROM order_asset_usage WHERE order_id = ? AND usage_status = 'ACTIVE'",
+            String.class,
+            order.id()
+        )).isEqualTo("GENERAL");
+
+        assetFulfillmentService.returnAssets(order.id(), new AssetReturnRequest(null, "IDLE", null, "自定义资产归还"));
+
+        assertThat(assetStatus(customAssetId)).isEqualTo("IDLE");
+        assertThat(orderStatus(order.id())).isEqualTo("COMPLETED");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM order_asset_usage WHERE order_id = ? AND usage_status = 'ACTIVE'",
+            Integer.class,
+            order.id()
+        )).isZero();
     }
 
     @Test
