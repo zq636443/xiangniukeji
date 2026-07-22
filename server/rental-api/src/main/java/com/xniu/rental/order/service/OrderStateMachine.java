@@ -10,16 +10,14 @@ import org.springframework.stereotype.Component;
 public class OrderStateMachine {
 
     private final Map<OrderStatus, Set<OrderStatus>> transitions = Map.ofEntries(
-        Map.entry(OrderStatus.PENDING_PAYMENT, Set.of(OrderStatus.PENDING_REAL_NAME, OrderStatus.CANCELLED, OrderStatus.EXCEPTION)),
-        Map.entry(OrderStatus.PENDING_REAL_NAME, Set.of(OrderStatus.PENDING_AGREEMENT, OrderStatus.CANCELLED, OrderStatus.EXCEPTION)),
-        Map.entry(OrderStatus.PENDING_AGREEMENT, Set.of(OrderStatus.PENDING_DEPOSIT_AUTH, OrderStatus.CANCELLED, OrderStatus.EXCEPTION)),
-        Map.entry(OrderStatus.PENDING_DEPOSIT_AUTH, Set.of(OrderStatus.PENDING_VERIFY, OrderStatus.CANCELLED, OrderStatus.EXCEPTION)),
-        Map.entry(OrderStatus.PENDING_VERIFY, Set.of(OrderStatus.PENDING_PICKUP, OrderStatus.CANCELLED, OrderStatus.EXCEPTION)),
-        Map.entry(OrderStatus.PENDING_PICKUP, Set.of(OrderStatus.RENTING, OrderStatus.CANCELLED, OrderStatus.EXCEPTION)),
-        Map.entry(OrderStatus.RENTING, Set.of(OrderStatus.PENDING_RETURN, OrderStatus.OVERDUE, OrderStatus.EXCEPTION)),
-        Map.entry(OrderStatus.PENDING_RETURN, Set.of(OrderStatus.COMPLETED, OrderStatus.OVERDUE, OrderStatus.EXCEPTION)),
-        Map.entry(OrderStatus.OVERDUE, Set.of(OrderStatus.PENDING_SUPPLEMENT, OrderStatus.COMPLETED, OrderStatus.EXCEPTION)),
-        Map.entry(OrderStatus.PENDING_SUPPLEMENT, Set.of(OrderStatus.RENTING, OrderStatus.COMPLETED, OrderStatus.EXCEPTION))
+        Map.entry(OrderStatus.PENDING_PAYMENT, Set.of(OrderStatus.PENDING_REAL_NAME)),
+        Map.entry(OrderStatus.PENDING_REAL_NAME, Set.of(OrderStatus.PENDING_AGREEMENT)),
+        Map.entry(OrderStatus.PENDING_AGREEMENT, Set.of(OrderStatus.PENDING_DEPOSIT_AUTH)),
+        Map.entry(OrderStatus.PENDING_DEPOSIT_AUTH, Set.of(OrderStatus.PENDING_VERIFY)),
+        Map.entry(OrderStatus.PENDING_VERIFY, Set.of(OrderStatus.PENDING_PICKUP)),
+        Map.entry(OrderStatus.RENTING, Set.of(OrderStatus.PENDING_RETURN, OrderStatus.OVERDUE)),
+        Map.entry(OrderStatus.PENDING_RETURN, Set.of(OrderStatus.OVERDUE)),
+        Map.entry(OrderStatus.OVERDUE, Set.of(OrderStatus.PENDING_SUPPLEMENT))
     );
 
     private final Set<OrderStatus> cancellable = Set.of(

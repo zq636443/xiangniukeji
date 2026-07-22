@@ -9,6 +9,7 @@ import {
   FileProtectOutlined,
   FileSearchOutlined,
   LockOutlined,
+  LoginOutlined,
   LogoutOutlined,
   PayCircleOutlined,
   ProductOutlined,
@@ -120,12 +121,12 @@ const adminMenuItems: NavItem[] = [
   {
     key: 'product-group',
     label: '商品管理',
-    permission: 'store.read',
+    permission: 'product.read',
     icon: <ProductOutlined />,
     children: [
-      { key: 'skus', label: '链接管理', permission: 'store.read', icon: <ProductOutlined /> },
-      { key: 'packages', label: 'SKU 管理', permission: 'store.read', icon: <ProfileOutlined /> },
-      { key: 'storeSkus', label: '门店商品', permission: 'store.read', icon: <ShopOutlined /> }
+      { key: 'skus', label: '链接管理', permission: 'product.read', icon: <ProductOutlined /> },
+      { key: 'packages', label: 'SKU 管理', permission: 'product.read', icon: <ProfileOutlined /> },
+      { key: 'storeSkus', label: '门店商品', permission: 'product.read', icon: <ShopOutlined /> }
     ]
   },
   {
@@ -205,15 +206,15 @@ const investorMenuItems: NavItem[] = [
 
 const loginMeta: Record<LoginMode, { title: string; eyebrow: string; description: string; endpoint: string }> = {
   merchant: {
-    title: '运营后台登录',
-    eyebrow: 'Operations Workspace',
-    description: '平台管理员、商户老板和门店成员使用各自账号进入对应工作台。',
+    title: '运营工作台登录',
+    eyebrow: '电牛哥运营中心',
+    description: '平台管理员、商户老板和门店人员使用各自账号登录。',
     endpoint: '/api/auth/workspace/login'
   },
   investor: {
-    title: '出资方登录',
-    eyebrow: 'Investor Workspace',
-    description: '用于出资方查看自己名下资产状态与收益分成。',
+    title: '出资方工作台登录',
+    eyebrow: '电牛哥运营中心',
+    description: '出资方使用专属账号查看名下资产状态与收益分成。',
     endpoint: '/api/auth/admin/login'
   }
 };
@@ -347,6 +348,7 @@ export default function App() {
       setMerchantStores([]);
       setActiveStoreId(undefined);
       setLoginMode('merchant');
+      loginForm.resetFields();
     }
   };
 
@@ -354,44 +356,85 @@ export default function App() {
     return (
       <ConfigProvider theme={appTheme}>
         <div className="login-page">
-          <section className="login-visual">
-            <div className="login-mark">XN</div>
-            <Typography.Title level={1}>享牛租赁运营平台</Typography.Title>
-            <Typography.Paragraph>
-              总部看全局，商户看门店，统一在一套业务系统里协同履约、资产和收益。
-            </Typography.Paragraph>
-            <div className="login-kpis">
-              <span>门店订单</span>
-              <span>资产履约</span>
-              <span>分润结算</span>
+          <section className="login-branding">
+            <div className="login-brand-copy">
+              <div className="login-brand-lockup">
+                <img src="/dianniuge-mascot.png" alt="电牛哥" />
+                <div>
+                  <strong>电牛哥</strong>
+                  <span>租赁运营平台</span>
+                </div>
+              </div>
+              <div className="login-brand-message">
+                <Typography.Text className="login-brand-eyebrow">DIANNIUGE RENTAL OPERATIONS</Typography.Text>
+                <Typography.Title level={1}>电牛哥租赁运营平台</Typography.Title>
+                <Typography.Paragraph>
+                  总部、商户与门店统一协作，让订单履约、租赁资产和收益结算始终清晰可控。
+                </Typography.Paragraph>
+              </div>
+              <div className="login-capabilities">
+                <div className="login-capability">
+                  <span className="login-capability-icon"><ProfileOutlined /></span>
+                  <div>
+                    <strong>门店订单</strong>
+                    <span>下单、履约与归还进度集中处理</span>
+                  </div>
+                </div>
+                <div className="login-capability">
+                  <span className="login-capability-icon"><BankOutlined /></span>
+                  <div>
+                    <strong>资产履约</strong>
+                    <span>车辆、电池与维保状态统一管理</span>
+                  </div>
+                </div>
+                <div className="login-capability">
+                  <span className="login-capability-icon"><DollarOutlined /></span>
+                  <div>
+                    <strong>分润结算</strong>
+                    <span>门店收益与月结数据清楚可查</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="login-mascot-stage">
+              <img src="/dianniuge-mascot.png" alt="电牛哥品牌形象" />
             </div>
           </section>
-          <section className="login-panel">
-            <Typography.Text className="login-eyebrow">{loginMeta[loginMode].eyebrow}</Typography.Text>
-            <Typography.Title level={3}>{loginMeta[loginMode].title}</Typography.Title>
-            <Typography.Paragraph className="login-tip">
-              {loginMeta[loginMode].description}
-            </Typography.Paragraph>
-            <Segmented
-              block
-              value={loginMode}
-              options={[
-                { label: '商户登录', value: 'merchant' },
-                { label: '出资方登录', value: 'investor' }
-              ]}
-              onChange={(value) => setLoginMode(value as LoginMode)}
-            />
-            <Form form={loginForm} layout="vertical" onFinish={handleLogin} className="login-form">
-              <Form.Item name="username" label="账号" rules={[{ required: true, message: '请输入账号' }]}>
-                <Input size="large" prefix={<UserOutlined />} placeholder="请输入账号" autoComplete="username" />
-              </Form.Item>
-              <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
-                <Input.Password size="large" prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
-              </Form.Item>
-              <Button className="login-submit" type="primary" htmlType="submit" loading={loading} block>
-                登录
-              </Button>
-            </Form>
+          <section className="login-access">
+            <div className="login-panel">
+              <div className="login-panel-brand">
+                <img src="/dianniuge-mascot.png" alt="" aria-hidden="true" />
+                <div>
+                  <strong>电牛哥</strong>
+                  <span>统一运营入口</span>
+                </div>
+              </div>
+              <Typography.Text className="login-eyebrow">{loginMeta[loginMode].eyebrow}</Typography.Text>
+              <Typography.Title level={3}>{loginMeta[loginMode].title}</Typography.Title>
+              <Typography.Paragraph className="login-tip">
+                {loginMeta[loginMode].description}
+              </Typography.Paragraph>
+              <Segmented
+                block
+                value={loginMode}
+                options={[
+                  { label: '商户登录', value: 'merchant' },
+                  { label: '出资方登录', value: 'investor' }
+                ]}
+                onChange={(value) => setLoginMode(value as LoginMode)}
+              />
+              <Form form={loginForm} layout="vertical" onFinish={handleLogin} className="login-form" autoComplete="off">
+                <Form.Item name="username" label="账号" rules={[{ required: true, message: '请输入账号' }]}>
+                  <Input size="large" prefix={<UserOutlined />} placeholder="请输入账号" autoComplete="off" />
+                </Form.Item>
+                <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
+                  <Input.Password size="large" prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="new-password" />
+                </Form.Item>
+                <Button className="login-submit" type="primary" htmlType="submit" loading={loading} icon={<LoginOutlined />} block>
+                  登录
+                </Button>
+              </Form>
+            </div>
           </section>
         </div>
       </ConfigProvider>
@@ -403,10 +446,14 @@ export default function App() {
       <Layout className="app-shell">
         <Layout.Sider width={248} className="sider" theme="dark">
           <div className="brand">
-            <div className="brand-logo">享</div>
+            <div className="brand-logo">
+              <img src="/dianniuge-mascot.png" alt="电牛哥" />
+            </div>
             <div>
-              <div className="brand-title">享牛科技</div>
-              <div className="brand-subtitle">{workspaceMode === 'merchant' ? 'Merchant Workspace' : 'Rental Console'}</div>
+              <div className="brand-title">电牛哥</div>
+              <div className="brand-subtitle">
+                {workspaceMode === 'merchant' ? '商户运营平台' : workspaceMode === 'investor' ? '出资方工作台' : '租赁运营平台'}
+              </div>
             </div>
           </div>
           <Menu

@@ -283,6 +283,66 @@ class RentalBusinessFlowIntegrationTests {
     }
 
     @Test
+    void crossStoreReturnRequiresEnabledStoreAndProductPermission() {
+        var returnStoreCode = "S-return-" + System.nanoTime();
+        jdbcTemplate.update(
+            "INSERT INTO merchant_store (merchant_id, store_code, store_name, address, qr_content) VALUES (1, ?, '跨店归还测试门店', '测试地址', ?)",
+            returnStoreCode,
+            "xniu://store/" + returnStoreCode
+        );
+        var returnStoreId = jdbcTemplate.queryForObject(
+            "SELECT id FROM merchant_store WHERE store_code = ?",
+            Long.class,
+            returnStoreCode
+        );
+        var order = orderService.createOrder(new OrderCreateRequest(
+            null,
+            "跨店归还客户",
+            "13800136666",
+            1L,
+            2L,
+            1L,
+            2L,
+            null
+        ));
+        transition(order.id(), "PENDING_REAL_NAME");
+        transition(order.id(), "PENDING_AGREEMENT");
+        transition(order.id(), "PENDING_DEPOSIT_AUTH");
+        transition(order.id(), "PENDING_VERIFY");
+        transition(order.id(), "PENDING_PICKUP");
+        assetFulfillmentService.pickup(order.id(), new AssetPickupRequest(null, null, "跨店归还测试取车"));
+
+        jdbcTemplate.update("UPDATE product_sku SET support_cross_store_return = 0 WHERE id = ?", order.skuId());
+        assertThatThrownBy(() -> assetFulfillmentService.returnAssets(
+            order.id(),
+            new AssetReturnRequest(returnStoreId, "IDLE", "IDLE", "未开放跨店归还")
+        ))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("不支持跨门店归还");
+
+        jdbcTemplate.update("UPDATE product_sku SET support_cross_store_return = 1 WHERE id = ?", order.skuId());
+        jdbcTemplate.update("UPDATE merchant_store SET status = 'DISABLED' WHERE id = ?", returnStoreId);
+        assertThatThrownBy(() -> assetFulfillmentService.returnAssets(
+            order.id(),
+            new AssetReturnRequest(returnStoreId, "IDLE", "IDLE", "停用门店归还")
+        ))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("归还门店已停用");
+
+        jdbcTemplate.update("UPDATE merchant_store SET status = 'ENABLED' WHERE id = ?", returnStoreId);
+        assetFulfillmentService.returnAssets(
+            order.id(),
+            new AssetReturnRequest(returnStoreId, "IDLE", "IDLE", "允许跨店归还")
+        );
+
+        assertThat(orderStatus(order.id())).isEqualTo("COMPLETED");
+        assertThat(jdbcTemplate.queryForObject("SELECT current_store_id FROM asset_item WHERE id = 1", Long.class))
+            .isEqualTo(returnStoreId);
+        assertThat(jdbcTemplate.queryForObject("SELECT current_store_id FROM asset_item WHERE id = 2", Long.class))
+            .isEqualTo(returnStoreId);
+    }
+
+    @Test
     void integratedVehicleOrderShouldOnlyBindFrameSlotThroughPickupAndReturn() {
         var integratedAssetId = insertIntegratedVehicle("A-integrated-direct", "FRAME-INTEGRATED-DIRECT");
 

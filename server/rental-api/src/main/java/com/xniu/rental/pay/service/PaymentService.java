@@ -101,7 +101,7 @@ public class PaymentService {
             PayChannel.ALIPAY,
             PayStatus.CREATED,
             bill.payableAmount().subtract(bill.paidAmount()).setScale(2, RoundingMode.HALF_UP),
-            "享牛租赁账单 " + bill.billNo(),
+            "电牛哥租赁账单 " + bill.billNo(),
             payerAlipayUserId
         )));
         try {

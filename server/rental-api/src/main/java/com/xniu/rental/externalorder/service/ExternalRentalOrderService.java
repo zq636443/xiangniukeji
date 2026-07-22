@@ -22,13 +22,18 @@ import com.xniu.rental.externalorder.model.ExternalRentalOrder;
 import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
 import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
 import com.xniu.rental.merchant.model.MerchantStore;
+import com.xniu.rental.merchant.model.MerchantStatus;
+import com.xniu.rental.merchant.model.StoreStatus;
+import com.xniu.rental.merchant.repository.MerchantRepository;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.order.model.OrderStatus;
 import com.xniu.rental.order.repository.OrderRepository;
 import com.xniu.rental.product.model.ProductPackage;
 import com.xniu.rental.product.model.ProductSku;
+import com.xniu.rental.product.model.ProductStatus;
 import com.xniu.rental.product.model.StoreSku;
 import com.xniu.rental.product.model.StoreSkuPackage;
+import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -47,6 +52,7 @@ public class ExternalRentalOrderService {
     private final AssetRepository assetRepository;
     private final OrderRepository orderRepository;
     private final StoreRepository storeRepository;
+    private final MerchantRepository merchantRepository;
     private final AuthorizationService authorizationService;
     private final TransactionTemplate transactionTemplate;
 
@@ -56,6 +62,7 @@ public class ExternalRentalOrderService {
         AssetRepository assetRepository,
         OrderRepository orderRepository,
         StoreRepository storeRepository,
+        MerchantRepository merchantRepository,
         AuthorizationService authorizationService,
         TransactionTemplate transactionTemplate
     ) {
@@ -64,6 +71,7 @@ public class ExternalRentalOrderService {
         this.assetRepository = assetRepository;
         this.orderRepository = orderRepository;
         this.storeRepository = storeRepository;
+        this.merchantRepository = merchantRepository;
         this.authorizationService = authorizationService;
         this.transactionTemplate = transactionTemplate;
     }
@@ -348,8 +356,17 @@ public class ExternalRentalOrderService {
     private MerchantStore resolveReturnStore(ExternalRentalOrder order, Long returnStoreId) {
         var resolvedStoreId = returnStoreId == null ? order.storeId() : returnStoreId;
         var store = ensureStore(resolvedStoreId);
+        if (store.status() != StoreStatus.ENABLED) {
+            throw BusinessException.badRequest("归还门店已停用");
+        }
         if (!store.merchantId().equals(order.merchantId())) {
             throw BusinessException.badRequest("暂不支持跨商户归还");
+        }
+        if (!store.id().equals(order.storeId())) {
+            var sku = productRepository.findSku(order.skuId()).orElseThrow(() -> BusinessException.badRequest("订单商品链接不存在"));
+            if (!Boolean.TRUE.equals(sku.supportCrossStoreReturn())) {
+                throw BusinessException.badRequest("当前商品链接不支持跨门店归还");
+            }
         }
         return store;
     }
@@ -481,11 +498,30 @@ public class ExternalRentalOrderService {
     }
 
     private StoreSku ensureStoreSku(Long id) {
-        return productRepository.findStoreSku(id).orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
+        var storeSku = productRepository.findStoreSku(id).orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
+        if (storeSku.status() != StoreSkuStatus.ON_SHELF) {
+            throw BusinessException.badRequest("门店商品未上架");
+        }
+        var merchant = merchantRepository.findById(storeSku.merchantId()).orElseThrow(() -> BusinessException.badRequest("商户不存在"));
+        if (merchant.status() != MerchantStatus.ENABLED) {
+            throw BusinessException.badRequest("商户已停用");
+        }
+        var store = storeRepository.findById(storeSku.storeId()).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+        if (store.status() != StoreStatus.ENABLED) {
+            throw BusinessException.badRequest("门店已停用");
+        }
+        if (!store.merchantId().equals(storeSku.merchantId())) {
+            throw BusinessException.badRequest("门店商品商户关系异常");
+        }
+        return storeSku;
     }
 
     private ProductSku ensureSku(Long id) {
-        return productRepository.findSku(id).orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
+        var sku = productRepository.findSku(id).orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
+        if (sku.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("商品链接已停用");
+        }
+        return sku;
     }
 
     private ProductPackage ensureStoreSkuPackage(StoreSku storeSku, Long packageId) {
@@ -493,7 +529,13 @@ public class ExternalRentalOrderService {
             .filter(item -> item.packageId().equals(packageId))
             .findFirst()
             .orElseThrow(() -> BusinessException.badRequest("当前门店商品未配置该 SKU"));
+        if (configured.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("门店 SKU 已停用");
+        }
         var packageTemplate = productRepository.findPackage(configured.packageId()).orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
+        if (packageTemplate.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("SKU 已停用");
+        }
         if (!packageTemplate.skuId().equals(storeSku.skuId())) {
             throw BusinessException.badRequest("SKU 与门店商品不匹配");
         }
@@ -502,7 +544,7 @@ public class ExternalRentalOrderService {
 
     private StoreSkuPackage storeSkuPackageAmount(Long storeSkuId, Long packageId) {
         return productRepository.listStoreSkuPackages(storeSkuId).stream()
-            .filter(item -> item.packageId().equals(packageId))
+            .filter(item -> item.packageId().equals(packageId) && item.status() == ProductStatus.ENABLED)
             .findFirst()
             .orElseThrow(() -> BusinessException.badRequest("当前门店商品未配置该 SKU 价格"));
     }

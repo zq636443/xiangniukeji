@@ -70,6 +70,8 @@ export function SystemManagement({ mode }: SystemManagementProps) {
   const [passwordForm] = Form.useForm<ResetPasswordForm>();
   const [roleForm] = Form.useForm<RoleForm>();
   const [scopeForm] = Form.useForm<ScopeForm>();
+  const createRoleCode = Form.useWatch('roleCode', createForm);
+  const createMerchantId = Form.useWatch('merchantId', createForm);
 
   useEffect(() => {
     void loadAll();
@@ -79,6 +81,10 @@ export function SystemManagement({ mode }: SystemManagementProps) {
     label: merchant.merchantName,
     value: merchant.id
   })), [merchants]);
+
+  const enabledMerchantOptions = useMemo(() => merchants
+    .filter((merchant) => merchant.status === 'ENABLED')
+    .map((merchant) => ({ label: merchant.merchantName, value: merchant.id })), [merchants]);
 
   const investorOptions = useMemo(() => investors.map((investor) => ({
     label: investor.investorName,
@@ -90,9 +96,17 @@ export function SystemManagement({ mode }: SystemManagementProps) {
       return [];
     }
     return stores
-      .filter((store) => store.merchantId === selectedAccount.merchantId)
+      .filter((store) => store.merchantId === selectedAccount.merchantId && store.status === 'ENABLED')
       .map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id }));
   }, [selectedAccount, stores]);
+
+  const createStoreOptions = useMemo(() => stores
+    .filter((store) => store.merchantId === createMerchantId && store.status === 'ENABLED')
+    .map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id })), [createMerchantId, stores]);
+
+  const createMerchantScoped = Boolean(createRoleCode && merchantRoleOptions.some((item) => item.value === createRoleCode));
+  const createInvestorScoped = createRoleCode === 'INVESTOR';
+  const createNonOwnerMerchant = createMerchantScoped && createRoleCode !== 'MERCHANT_OWNER';
 
   async function loadAll() {
     setLoading(true);
@@ -550,38 +564,30 @@ export function SystemManagement({ mode }: SystemManagementProps) {
           <Form.Item name="password" label="初始密码" rules={[{ required: true, message: '请输入初始密码' }]}>
             <Input.Password />
           </Form.Item>
-          <Form.Item noStyle shouldUpdate={(prev, next) => prev.roleCode !== next.roleCode}>
-            {({ getFieldValue }) => {
-              const roleCode = getFieldValue('roleCode') as SystemAccount['accountType'] | undefined;
-              const merchantScoped = Boolean(roleCode && merchantRoleOptions.some((item) => item.value === roleCode));
-              const investorScoped = roleCode === 'INVESTOR';
-              const nonOwnerMerchant = merchantScoped && roleCode !== 'MERCHANT_OWNER';
-              return (
-                <>
-                  {merchantScoped ? (
-                    <Form.Item preserve={false} name="merchantId" label="所属商户" rules={[{ required: true, message: '请选择所属商户' }]}>
-                      <Select options={merchantOptions} />
-                    </Form.Item>
-                  ) : null}
-                  {investorScoped ? (
-                    <Form.Item preserve={false} name="investorId" label="所属出资方" rules={[{ required: true, message: '请选择所属出资方' }]}>
-                      <Select options={investorOptions} />
-                    </Form.Item>
-                  ) : null}
-                  {nonOwnerMerchant ? (
-                    <Form.Item preserve={false} name="storeIds" label="授权门店" rules={[{ required: true, message: '请至少选择一个门店' }]}>
-                      <Select
-                        mode="multiple"
-                        options={stores
-                          .filter((store) => store.merchantId === getFieldValue('merchantId'))
-                          .map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id }))}
-                      />
-                    </Form.Item>
-                  ) : null}
-                </>
-              );
-            }}
-          </Form.Item>
+          {createMerchantScoped ? (
+            <Form.Item preserve={false} name="merchantId" label="所属商户" rules={[{ required: true, message: '请选择所属商户' }]}>
+              <Select options={enabledMerchantOptions} />
+            </Form.Item>
+          ) : null}
+          {createInvestorScoped ? (
+            <Form.Item preserve={false} name="investorId" label="所属出资方" rules={[{ required: true, message: '请选择所属出资方' }]}>
+              <Select options={investorOptions} />
+            </Form.Item>
+          ) : null}
+          {createNonOwnerMerchant ? (
+            <Form.Item preserve={false} name="storeIds" label="授权门店" rules={[{ required: true, message: '请至少选择一个门店' }]}>
+              <Select
+                mode="multiple"
+                options={createStoreOptions}
+                placeholder={createMerchantId ? '选择该账号可访问的门店' : '请先选择所属商户'}
+              />
+            </Form.Item>
+          ) : null}
+          {createRoleCode === 'MERCHANT_OWNER' ? (
+            <Form.Item label="授权门店">
+              <Typography.Text type="secondary">商户老板自动继承所属商户当前及以后新增的全部门店。</Typography.Text>
+            </Form.Item>
+          ) : null}
         </Form>
       </Modal>
     </Space>

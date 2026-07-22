@@ -24,6 +24,7 @@ import com.xniu.rental.merchant.repository.MerchantRepository;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.pay.config.AlipayProperties;
 import com.xniu.rental.pay.service.AlipayGatewayClient;
+import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.service.SettlementService;
 import java.util.ArrayList;
 import java.util.List;
@@ -44,6 +45,7 @@ public class MerchantService {
     private final AlipayGatewayClient alipayGatewayClient;
     private final AlipayProperties alipayProperties;
     private final SettlementService settlementService;
+    private final ProductRepository productRepository;
 
     public MerchantService(
         MerchantRepository merchantRepository,
@@ -55,7 +57,8 @@ public class MerchantService {
         PasswordHasher passwordHasher,
         AlipayGatewayClient alipayGatewayClient,
         AlipayProperties alipayProperties,
-        SettlementService settlementService
+        SettlementService settlementService,
+        ProductRepository productRepository
     ) {
         this.merchantRepository = merchantRepository;
         this.storeRepository = storeRepository;
@@ -67,6 +70,7 @@ public class MerchantService {
         this.alipayGatewayClient = alipayGatewayClient;
         this.alipayProperties = alipayProperties;
         this.settlementService = settlementService;
+        this.productRepository = productRepository;
     }
 
     public List<MerchantResponse> listMerchants(String keyword) {
@@ -108,6 +112,9 @@ public class MerchantService {
     public MerchantResponse updateMerchantStatus(Long id, MerchantStatus status) {
         authorizationService.requirePermission("merchant.write");
         ensureMerchantExists(id);
+        if (status == MerchantStatus.DISABLED) {
+            productRepository.offShelfStoreSkusByMerchant(id);
+        }
         return toResponse(merchantRepository.updateStatus(id, status));
     }
 
@@ -119,7 +126,7 @@ public class MerchantService {
     @Transactional
     public StoreResponse createStore(StoreRequest request) {
         authorizationService.requirePermission("store.write");
-        ensureMerchantExists(request.merchantId());
+        ensureEnabledMerchant(request.merchantId());
         var storeCode = nextCode("S");
         var qrContent = createStoreQrContent(storeCode, request.storeName());
         var store = storeRepository.create(
@@ -187,6 +194,9 @@ public class MerchantService {
     public StoreResponse updateStoreStatus(Long id, StoreStatus status) {
         authorizationService.requirePermission("store.write");
         ensureStoreExists(id);
+        if (status == StoreStatus.DISABLED) {
+            productRepository.offShelfStoreSkusByStore(id);
+        }
         return toResponse(storeRepository.updateStatus(id, status));
     }
 
@@ -199,7 +209,7 @@ public class MerchantService {
     @Transactional
     public EmployeeResponse createEmployee(EmployeeRequest request) {
         authorizationService.requirePermission("merchant.write");
-        ensureMerchantExists(request.merchantId());
+        ensureEnabledMerchant(request.merchantId());
         var accountType = resolveEmployeeAccountType(request.roleCode());
         var storeIds = normalizeStoreIds(request);
         var account = createMerchantScopedAccount(
@@ -275,6 +285,9 @@ public class MerchantService {
         if (stores.size() != storeIds.size() || stores.stream().anyMatch(store -> !store.merchantId().equals(request.merchantId()))) {
             throw BusinessException.badRequest("门店不属于所选商户");
         }
+        if (stores.stream().anyMatch(store -> store.status() != StoreStatus.ENABLED)) {
+            throw BusinessException.badRequest("停用门店不能授权给账号");
+        }
         return storeIds;
     }
 
@@ -334,6 +347,14 @@ public class MerchantService {
 
     private Merchant ensureMerchantExists(Long merchantId) {
         return merchantRepository.findById(merchantId).orElseThrow(() -> BusinessException.badRequest("商户不存在"));
+    }
+
+    private Merchant ensureEnabledMerchant(Long merchantId) {
+        var merchant = ensureMerchantExists(merchantId);
+        if (merchant.status() != MerchantStatus.ENABLED) {
+            throw BusinessException.badRequest("商户已停用");
+        }
+        return merchant;
     }
 
     private MerchantStore ensureStoreExists(Long storeId) {

@@ -1,4 +1,4 @@
-import { DownloadOutlined, ExportOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
+import { DownloadOutlined, ExportOutlined, GiftOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
 import {
   Alert,
   Button,
@@ -76,6 +76,12 @@ type ReturnForm = {
   remark?: string;
 };
 
+type LeaseBonusForm = {
+  bonusType: 'REVIEW' | 'CAMPAIGN';
+  bonusDays: number;
+  remark?: string;
+};
+
 type CreateOrderForm = {
   userAccountId?: number;
   customerName: string;
@@ -122,6 +128,10 @@ const assetStatusOptions: { label: string; value: AssetStatus }[] = [
   { label: '异常', value: 'EXCEPTION' }
 ];
 
+const assetResultStatusOptions = assetStatusOptions.filter((item) =>
+  ['IDLE', 'PENDING_REPAIR', 'SCRAPPED', 'EXCEPTION'].includes(item.value)
+);
+
 const assetTypeOptions: { label: string; value: Asset['assetType'] }[] = [
   { label: '车架', value: 'VEHICLE_FRAME' },
   { label: '电池', value: 'BATTERY' },
@@ -136,7 +146,7 @@ const collectionStatusOptions: { label: string; value: CollectionStatus; color: 
   { label: '坏账', value: 'BAD_DEBT', color: 'red' }
 ];
 
-export function MerchantDashboard({ storeId, stores }: MerchantPageProps) {
+export function MerchantDashboard({ account, storeId, stores }: MerchantPageProps) {
   const [orders, setOrders] = useState<RentalOrder[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [overdues, setOverdues] = useState<OverdueCase[]>([]);
@@ -144,6 +154,7 @@ export function MerchantDashboard({ storeId, stores }: MerchantPageProps) {
   const [statements, setStatements] = useState<SettlementStatement[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const canReadSettlement = account.permissions.includes('settlement.read') || account.permissions.includes('system.admin');
 
   async function loadData() {
     if (!storeId) {
@@ -161,8 +172,12 @@ export function MerchantDashboard({ storeId, stores }: MerchantPageProps) {
         http.get<unknown, RentalOrder[]>('/api/merchant/orders', { params: { storeId } }),
         http.get<unknown, Asset[]>(`/api/merchant/assets/stores/${storeId}`),
         http.get<unknown, OverdueCase[]>('/api/merchant/overdues', { params: { storeId, overdueStatus: 'OPEN' } }),
-        http.get<unknown, SettlementIncomeEntry[]>('/api/merchant/settlement/income/entries', { params: { storeId } }),
-        http.get<unknown, SettlementStatement[]>('/api/merchant/settlement/statements', { params: { storeId } })
+        canReadSettlement
+          ? http.get<unknown, SettlementIncomeEntry[]>('/api/merchant/settlement/income/entries', { params: { storeId } })
+          : Promise.resolve([]),
+        canReadSettlement
+          ? http.get<unknown, SettlementStatement[]>('/api/merchant/settlement/statements', { params: { storeId } })
+          : Promise.resolve([])
       ]);
       setOrders(orderData);
       setAssets(assetData);
@@ -178,7 +193,7 @@ export function MerchantDashboard({ storeId, stores }: MerchantPageProps) {
 
   useEffect(() => {
     void loadData();
-  }, [storeId]);
+  }, [storeId, canReadSettlement]);
 
   const metrics = useMemo(() => ({
     pendingPickup: orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').length,
@@ -203,7 +218,9 @@ export function MerchantDashboard({ storeId, stores }: MerchantPageProps) {
           <Typography.Text className="page-eyebrow">Merchant Workspace</Typography.Text>
           <Typography.Title level={3}>商户工作台</Typography.Title>
           <Typography.Text type="secondary">
-            {currentStore ? `${currentStore.storeName} / 现场履约、逾期跟进、资产和收益总览` : '按当前门店查看经营数据'}
+            {currentStore
+              ? `${currentStore.storeName} / 现场履约、逾期跟进、资产${canReadSettlement ? '和收益' : ''}总览`
+              : '按当前门店查看经营数据'}
           </Typography.Text>
         </div>
         <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={loadData}>刷新数据</Button>
@@ -217,8 +234,8 @@ export function MerchantDashboard({ storeId, stores }: MerchantPageProps) {
         <Metric title="逾期订单" value={metrics.overdue} />
         <Metric title="空闲资产" value={metrics.idleAssets} />
         <Metric title="异常/维修资产" value={metrics.exceptionAssets} />
-        <Metric title="待结算收益" value={money(metrics.pendingIncome)} />
-        <Metric title="最近月结金额" value={money(metrics.latestStatementIncome)} />
+        {canReadSettlement ? <Metric title="待结算收益" value={money(metrics.pendingIncome)} /> : null}
+        {canReadSettlement ? <Metric title="最近月结金额" value={money(metrics.latestStatementIncome)} /> : null}
       </Space>
 
       <div className="section">
@@ -257,26 +274,28 @@ export function MerchantDashboard({ storeId, stores }: MerchantPageProps) {
         />
       </div>
 
-      <div className="section">
-        <Typography.Title level={5}>最近月结单</Typography.Title>
-        <Table
-          rowKey="id"
-          size="small"
-          loading={loading}
-          dataSource={statements.slice(0, 6)}
-          pagination={false}
-          locale={{ emptyText: <Empty description="暂无月结单" /> }}
-          columns={[
-            { title: '月结单号', dataIndex: 'statementNo' },
-            { title: '月份', dataIndex: 'statementMonth' },
-            { title: '签单费', dataIndex: 'signFeeIncomeAmount', render: money },
-            { title: '租金分润', dataIndex: 'rentShareIncomeAmount', render: money },
-            { title: '维保扣减', dataIndex: 'maintenanceDeductAmount', render: money },
-            { title: '应结算', dataIndex: 'payableAmount', render: money },
-            { title: '状态', dataIndex: 'status', render: statementStatusTag }
-          ]}
-        />
-      </div>
+      {canReadSettlement ? (
+        <div className="section">
+          <Typography.Title level={5}>最近月结单</Typography.Title>
+          <Table
+            rowKey="id"
+            size="small"
+            loading={loading}
+            dataSource={statements.slice(0, 6)}
+            pagination={false}
+            locale={{ emptyText: <Empty description="暂无月结单" /> }}
+            columns={[
+              { title: '月结单号', dataIndex: 'statementNo' },
+              { title: '月份', dataIndex: 'statementMonth' },
+              { title: '签单费', dataIndex: 'signFeeIncomeAmount', render: money },
+              { title: '租金分润', dataIndex: 'rentShareIncomeAmount', render: money },
+              { title: '维保扣减', dataIndex: 'maintenanceDeductAmount', render: money },
+              { title: '应结算', dataIndex: 'payableAmount', render: money },
+              { title: '状态', dataIndex: 'status', render: statementStatusTag }
+            ]}
+          />
+        </div>
+      ) : null}
     </Space>
   );
 }
@@ -317,7 +336,9 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
   const [createOpen, setCreateOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [leaseBonusOpen, setLeaseBonusOpen] = useState(false);
   const [pickupOpen, setPickupOpen] = useState(false);
+  const [pickupMode, setPickupMode] = useState<'PICKUP' | 'SHIP'>('PICKUP');
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [bills, setBills] = useState<RentalBill[]>([]);
@@ -325,6 +346,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [createForm] = Form.useForm<CreateOrderForm>();
+  const [leaseBonusForm] = Form.useForm<LeaseBonusForm>();
   const [pickupForm] = Form.useForm<PickupForm>();
   const [replaceForm] = Form.useForm<ReplaceForm>();
   const [returnForm] = Form.useForm<ReturnForm>();
@@ -332,6 +354,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
   const selectedCreateFrameAssetId = Form.useWatch('frameAssetId', createForm);
   const replaceAssetType = Form.useWatch('assetType', replaceForm);
   const canCreateOrder = account.permissions.includes('order.create');
+  const canOperateOrder = account.permissions.includes('order.operate');
   const currentStore = stores.find((item) => item.id === storeId);
   const selectedStoreSku = useMemo(
     () => storeSkus.find((item) => item.id === selectedStoreSkuId),
@@ -418,6 +441,9 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       '已付金额',
       '租期',
       '自动续租',
+      '好评赠送天数',
+      '活动赠送天数',
+      '赠送合计天数',
       '下单时间',
       '预计归还',
       '系统录入时间'
@@ -435,6 +461,9 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       order.paidAmount,
       `${order.leaseValue}${order.leaseUnit === 'DAY' ? '天' : '月'} / ${order.totalPeriods}期`,
       renewalText(order),
+      order.reviewBonusDays,
+      order.campaignBonusDays,
+      order.totalBonusDays,
       order.orderedAt,
       order.expectedReturnAt,
       order.createdAt
@@ -499,18 +528,55 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
     }
   }
 
+  function openLeaseBonus(order: RentalOrder) {
+    setSelectedOrder(order);
+    leaseBonusForm.resetFields();
+    leaseBonusForm.setFieldsValue({ bonusType: 'REVIEW', bonusDays: 2 });
+    setLeaseBonusOpen(true);
+  }
+
+  async function submitLeaseBonus(values: LeaseBonusForm) {
+    if (!selectedOrder) {
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const updated = await http.post<unknown, RentalOrder>(`/api/merchant/orders/${selectedOrder.id}/lease-bonuses`, values);
+      setOrders((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setSelectedOrder(updated);
+      setLeaseBonusOpen(false);
+      leaseBonusForm.resetFields();
+      message.success(`已赠送 ${values.bonusDays} 天租期`);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  function openPickup(order: RentalOrder, mode: 'PICKUP' | 'SHIP') {
+    setSelectedOrder(order);
+    setPickupMode(mode);
+    pickupForm.resetFields();
+    pickupForm.setFieldsValue({
+      frameAssetId: order.frameAssetId ?? undefined,
+      batteryAssetId: order.batteryAssetId ?? undefined,
+      remark: mode === 'SHIP' ? '商户 Web 免付款发货' : '商户 Web 取车绑定'
+    });
+    setPickupOpen(true);
+  }
+
   async function submitPickup(values: PickupForm) {
     if (!selectedOrder) {
       return;
     }
     setActionLoading(true);
     try {
-      await http.post(`/api/merchant/orders/${selectedOrder.id}/pickup-assets`, {
+      const endpoint = pickupMode === 'SHIP' ? 'ship' : 'pickup-assets';
+      await http.post(`/api/merchant/orders/${selectedOrder.id}/${endpoint}`, {
         frameAssetId: values.frameAssetId,
         batteryAssetId: values.batteryAssetId,
-        remark: values.remark || '商户 Web 取车绑定'
+        remark: values.remark || (pickupMode === 'SHIP' ? '商户 Web 免付款发货' : '商户 Web 取车绑定')
       });
-      message.success('取车资产已绑定');
+      message.success(pickupMode === 'SHIP' ? '订单已免付款发货并开始租赁' : '取车资产已绑定');
       setPickupOpen(false);
       pickupForm.resetFields();
       await Promise.all([loadAll(), refreshCurrentOrder(selectedOrder.id)]);
@@ -611,7 +677,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
           loading={loading}
           dataSource={orders}
           pagination={false}
-          scroll={{ x: 1500 }}
+          scroll={{ x: 1650 }}
           columns={[
             { title: '序号', width: 70, render: (_value, _record, index) => index + 1 },
             { title: '订单号', dataIndex: 'orderNo' },
@@ -623,33 +689,38 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
             { title: '电池号', render: (_, record) => assetText(record.batterySerialNo, record.batteryAssetCode, record.batteryAssetId) },
             { title: '应付', dataIndex: 'payableAmount', render: money },
             { title: '已付', dataIndex: 'paidAmount', render: money },
+            { title: '赠送租期', dataIndex: 'totalBonusDays', render: (value: number) => `${value} 天` },
             { title: '下单时间', dataIndex: 'orderedAt', render: dateText },
             {
               title: '操作',
               render: (_, record) => (
                 <Space wrap>
                   <Button size="small" onClick={() => openDetail(record)}>详情</Button>
-                  <Button size="small" onClick={() => {
-                    setSelectedOrder(record);
-                    pickupForm.setFieldsValue({ frameAssetId: record.frameAssetId ?? undefined, batteryAssetId: record.batteryAssetId ?? undefined, remark: '商户 Web 取车绑定' });
-                    setPickupOpen(true);
-                  }}>
-                    取车
-                  </Button>
-                  <Button size="small" onClick={() => {
+                  {canOperateOrder && canGrantLeaseBonus(record) ? (
+                    <Button size="small" icon={<GiftOutlined />} onClick={() => openLeaseBonus(record)}>
+                      赠送租期
+                    </Button>
+                  ) : null}
+                  {canOperateOrder && record.orderStatus === 'PENDING_PAYMENT' ? (
+                    <Button size="small" onClick={() => openPickup(record, 'SHIP')}>免付款发货</Button>
+                  ) : null}
+                  {canOperateOrder && record.orderStatus === 'PENDING_PICKUP' ? (
+                    <Button size="small" onClick={() => openPickup(record, 'PICKUP')}>取车</Button>
+                  ) : null}
+                  {canOperateOrder && canReplaceOrderAsset(record) ? <Button size="small" onClick={() => {
                     setSelectedOrder(record);
                     replaceForm.setFieldsValue({ assetType: 'VEHICLE_FRAME', oldAssetResultStatus: 'IDLE', remark: '商户 Web 更换资产' });
                     setReplaceOpen(true);
                   }}>
                     更换资产
-                  </Button>
-                  <Button size="small" danger onClick={() => {
+                  </Button> : null}
+                  {canOperateOrder && canReturnOrderAssets(record) ? <Button size="small" danger onClick={() => {
                     setSelectedOrder(record);
                     returnForm.setFieldsValue({ frameResultStatus: 'IDLE', batteryResultStatus: 'IDLE', remark: '商户 Web 归还结束订单' });
                     setReturnOpen(true);
                   }}>
                     归还结束
-                  </Button>
+                  </Button> : null}
                 </Space>
               )
             }
@@ -725,6 +796,35 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       />
 
       <Modal
+        title="赠送租期"
+        open={leaseBonusOpen}
+        onCancel={() => setLeaseBonusOpen(false)}
+        onOk={() => leaseBonusForm.submit()}
+        confirmLoading={actionLoading}
+        destroyOnHidden
+      >
+        <Form form={leaseBonusForm} layout="vertical" onFinish={submitLeaseBonus}>
+          <Form.Item name="bonusType" label="赠送类型" rules={[{ required: true, message: '请选择赠送类型' }]}>
+            <Select
+              options={[
+                { label: '好评赠送', value: 'REVIEW' },
+                { label: '活动赠送', value: 'CAMPAIGN' }
+              ]}
+              onChange={(value: LeaseBonusForm['bonusType']) => {
+                leaseBonusForm.setFieldValue('bonusDays', value === 'REVIEW' ? 2 : 15);
+              }}
+            />
+          </Form.Item>
+          <Form.Item name="bonusDays" label="赠送天数" rules={[{ required: true, message: '请输入赠送天数' }]}>
+            <InputNumber min={1} max={999} precision={0} addonAfter="天" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <Input maxLength={255} placeholder="如：客户完成平台好评、暑期活动赠送" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
         title="订单详情"
         open={detailOpen}
         onCancel={() => {
@@ -747,9 +847,32 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
               <Descriptions.Item label="商品 / SKU">{selectedOrder.storeSkuName || '-'} / {selectedOrder.packageName || '-'}</Descriptions.Item>
               <Descriptions.Item label="车架资产">{assetText(selectedOrder.frameSerialNo, selectedOrder.frameAssetCode, selectedOrder.frameAssetId)}</Descriptions.Item>
               <Descriptions.Item label="电池资产">{assetText(selectedOrder.batterySerialNo, selectedOrder.batteryAssetCode, selectedOrder.batteryAssetId)}</Descriptions.Item>
+              <Descriptions.Item label="基础租期">{selectedOrder.leaseValue}{selectedOrder.leaseUnit === 'DAY' ? '天' : '个月'}</Descriptions.Item>
+              <Descriptions.Item label="好评赠送">{selectedOrder.reviewBonusDays} 天</Descriptions.Item>
+              <Descriptions.Item label="活动赠送">{selectedOrder.campaignBonusDays} 天</Descriptions.Item>
+              <Descriptions.Item label="赠送合计">{selectedOrder.totalBonusDays} 天</Descriptions.Item>
+              <Descriptions.Item label="预计归还">{dateText(selectedOrder.expectedReturnAt)}</Descriptions.Item>
               <Descriptions.Item label="下单时间">{dateText(selectedOrder.orderedAt)}</Descriptions.Item>
               <Descriptions.Item label="系统录入时间">{dateText(selectedOrder.createdAt)}</Descriptions.Item>
             </Descriptions>
+            <div className="section">
+              <Typography.Title level={5}>赠送租期记录</Typography.Title>
+              <Table
+                rowKey="id"
+                size="small"
+                dataSource={selectedOrder.leaseBonuses}
+                pagination={false}
+                locale={{ emptyText: <Empty description="暂无赠送租期记录" /> }}
+                columns={[
+                  { title: '类型', dataIndex: 'bonusType', render: leaseBonusTypeText },
+                  { title: '天数', dataIndex: 'bonusDays', render: (value: number) => `${value} 天` },
+                  { title: '备注', dataIndex: 'remark', render: (value?: string | null) => value || '-' },
+                  { title: '顺延前', dataIndex: 'expectedReturnBefore', render: dateText },
+                  { title: '顺延后', dataIndex: 'expectedReturnAfter', render: dateText },
+                  { title: '操作时间', dataIndex: 'createdAt', render: dateText }
+                ]}
+              />
+            </div>
             <div className="section">
               <Typography.Title level={5}>账单列表</Typography.Title>
               <Table
@@ -800,7 +923,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
         ) : null}
       </Modal>
 
-      <Modal title="取车绑定资产" open={pickupOpen} onCancel={() => setPickupOpen(false)} onOk={() => pickupForm.submit()} confirmLoading={actionLoading} destroyOnHidden>
+      <Modal title={pickupMode === 'SHIP' ? '免付款发货' : '取车绑定资产'} open={pickupOpen} onCancel={() => setPickupOpen(false)} onOk={() => pickupForm.submit()} confirmLoading={actionLoading} destroyOnHidden>
         <Form form={pickupForm} layout="vertical" onFinish={submitPickup}>
           <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
             <Select
@@ -850,7 +973,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
             <Select options={replaceAssetOptions} />
           </Form.Item>
           <Form.Item name="oldAssetResultStatus" label="原资产状态" rules={[{ required: true, message: '请选择原资产状态' }]}>
-            <Select options={assetStatusOptions} />
+            <Select options={assetResultStatusOptions} />
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input />
@@ -861,10 +984,10 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       <Modal title="归还并结束订单" open={returnOpen} onCancel={() => setReturnOpen(false)} onOk={() => returnForm.submit()} confirmLoading={actionLoading} destroyOnHidden>
         <Form form={returnForm} layout="vertical" onFinish={submitReturn}>
           <Form.Item name="frameResultStatus" label="车架归还状态" rules={[{ required: true, message: '请选择车架状态' }]}>
-            <Select options={assetStatusOptions} />
+            <Select options={assetResultStatusOptions} />
           </Form.Item>
           <Form.Item name="batteryResultStatus" label="电池归还状态" rules={[{ required: true, message: '请选择电池状态' }]}>
-            <Select options={assetStatusOptions} />
+            <Select options={assetResultStatusOptions} />
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input />
@@ -1668,6 +1791,22 @@ function renewalText(order: RentalOrder) {
   if (!order.autoRenewEnabled) return '未开启';
   const unit = order.renewalUnit === 'DAY' ? '天' : '个月';
   return `${order.renewalValue || 1}${unit} / ${money(order.renewalAmount)} / 已续 ${order.renewalCount} 次`;
+}
+
+function canGrantLeaseBonus(order: RentalOrder) {
+  return !['OVERDUE', 'PENDING_SUPPLEMENT', 'COMPLETED', 'CANCELLED', 'EXCEPTION'].includes(order.orderStatus);
+}
+
+function canReplaceOrderAsset(order: RentalOrder) {
+  return ['RENTING', 'PENDING_RETURN', 'PENDING_SUPPLEMENT'].includes(order.orderStatus);
+}
+
+function canReturnOrderAssets(order: RentalOrder) {
+  return ['RENTING', 'PENDING_RETURN', 'OVERDUE', 'PENDING_SUPPLEMENT'].includes(order.orderStatus);
+}
+
+function leaseBonusTypeText(value: 'REVIEW' | 'CAMPAIGN') {
+  return value === 'REVIEW' ? '好评赠送' : '活动赠送';
 }
 
 function assetText(serialNo?: string | null, assetCode?: string | null, assetId?: number | null) {

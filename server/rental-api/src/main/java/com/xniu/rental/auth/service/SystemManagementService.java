@@ -18,6 +18,8 @@ import com.xniu.rental.auth.repository.SystemManagementRepository;
 import com.xniu.rental.auth.repository.SystemManagementRepository.AccountRow;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.investor.repository.InvestorRepository;
+import com.xniu.rental.merchant.model.MerchantStatus;
+import com.xniu.rental.merchant.model.StoreStatus;
 import com.xniu.rental.merchant.repository.MerchantRepository;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import java.util.List;
@@ -196,6 +198,9 @@ public class SystemManagementService {
         if (stores.size() != storeIds.size() || stores.stream().anyMatch(store -> !store.merchantId().equals(account.merchantId()))) {
             throw BusinessException.badRequest("门店不属于当前商户");
         }
+        if (stores.stream().anyMatch(store -> store.status() != StoreStatus.ENABLED)) {
+            throw BusinessException.badRequest("停用门店不能授权给账号");
+        }
         systemManagementRepository.clearStoreScopes(accountId);
         for (var storeId : storeIds) {
             systemManagementRepository.insertSingleStoreScope(accountId, account.merchantId(), storeId);
@@ -253,7 +258,10 @@ public class SystemManagementService {
             if (request.merchantId() == null) {
                 throw BusinessException.badRequest("商户侧账号必须绑定所属商户");
             }
-            merchantRepository.findById(request.merchantId()).orElseThrow(() -> BusinessException.badRequest("商户不存在"));
+            var merchant = merchantRepository.findById(request.merchantId()).orElseThrow(() -> BusinessException.badRequest("商户不存在"));
+            if (merchant.status() != MerchantStatus.ENABLED) {
+                throw BusinessException.badRequest("停用商户不能新增账号");
+            }
             return;
         }
         if (INVESTOR_ROLE_CODES.contains(accountType.name())) {
@@ -285,6 +293,9 @@ public class SystemManagementService {
         var stores = storeRepository.findByIds(result);
         if (stores.size() != result.size() || stores.stream().anyMatch(store -> !store.merchantId().equals(merchantId))) {
             throw BusinessException.badRequest("门店不属于所选商户");
+        }
+        if (stores.stream().anyMatch(store -> store.status() != StoreStatus.ENABLED)) {
+            throw BusinessException.badRequest("停用门店不能授权给账号");
         }
         return result;
     }

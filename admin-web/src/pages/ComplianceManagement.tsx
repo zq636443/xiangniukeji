@@ -19,7 +19,7 @@ type SignForm = { provider?: string; externalFlowId?: string; signUrl?: string }
 type ArchiveForm = { archivePdfUrl: string };
 
 const defaultTemplate = [
-  '享牛电车租赁合同',
+  '电牛哥电车租赁合同',
   '订单号：{{orderNo}}',
   '承租人：{{userName}}，证件号：{{idNo}}',
   '租期：{{leaseText}}，期数：{{totalPeriods}}',

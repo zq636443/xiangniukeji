@@ -17,11 +17,13 @@ import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.merchant.model.MerchantStore;
+import com.xniu.rental.merchant.model.StoreStatus;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.order.model.OrderOperationType;
 import com.xniu.rental.order.model.OrderStatus;
 import com.xniu.rental.order.model.RentalOrder;
 import com.xniu.rental.order.repository.OrderRepository;
+import com.xniu.rental.product.repository.ProductRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -35,6 +37,7 @@ public class AssetFulfillmentService {
     private final AssetRepository assetRepository;
     private final OrderRepository orderRepository;
     private final StoreRepository storeRepository;
+    private final ProductRepository productRepository;
     private final AuthorizationService authorizationService;
 
     public AssetFulfillmentService(
@@ -42,12 +45,14 @@ public class AssetFulfillmentService {
         AssetRepository assetRepository,
         OrderRepository orderRepository,
         StoreRepository storeRepository,
+        ProductRepository productRepository,
         AuthorizationService authorizationService
     ) {
         this.fulfillmentRepository = fulfillmentRepository;
         this.assetRepository = assetRepository;
         this.orderRepository = orderRepository;
         this.storeRepository = storeRepository;
+        this.productRepository = productRepository;
         this.authorizationService = authorizationService;
     }
 
@@ -107,7 +112,8 @@ public class AssetFulfillmentService {
             markAssetStatus(batteryAsset.id(), AssetStatus.RENTING, defaultRemark + "：绑定电池");
         }
         orderRepository.updateAssets(order.id(), frameAssetId, batteryAssetId);
-        var updatedOrder = orderRepository.updateStatus(order.id(), OrderStatus.RENTING, LocalDateTime.now(), expectedReturnAt(LocalDateTime.now(), order), null);
+        var now = LocalDateTime.now();
+        var updatedOrder = orderRepository.updateStatus(order.id(), OrderStatus.RENTING, now, expectedReturnAt(now, order), null);
         if (frameAsset != null) {
             closeActiveFrameUsage(order.id(), "PICKUP_REBIND");
             fulfillmentRepository.startUsage(order.id(), frameAsset.id(), frameAsset.assetType(), frameAsset.investorId(), order.storeId(), "PICKUP");
@@ -230,8 +236,17 @@ public class AssetFulfillmentService {
             returnStoreId = order.storeId();
         }
         var store = storeRepository.findById(returnStoreId).orElseThrow(() -> BusinessException.badRequest("归还门店不存在"));
+        if (store.status() != StoreStatus.ENABLED) {
+            throw BusinessException.badRequest("归还门店已停用");
+        }
         if (!store.merchantId().equals(order.merchantId())) {
             throw BusinessException.badRequest("暂不支持跨商户归还");
+        }
+        if (!store.id().equals(order.storeId())) {
+            var sku = productRepository.findSku(order.skuId()).orElseThrow(() -> BusinessException.badRequest("订单商品链接不存在"));
+            if (!Boolean.TRUE.equals(sku.supportCrossStoreReturn())) {
+                throw BusinessException.badRequest("当前商品链接不支持跨门店归还");
+            }
         }
         return store;
     }
@@ -300,10 +315,13 @@ public class AssetFulfillmentService {
     }
 
     private LocalDateTime expectedReturnAt(LocalDateTime startedAt, RentalOrder order) {
+        LocalDateTime expectedReturnAt;
         if ("MONTH".equals(order.leaseUnit())) {
-            return startedAt.plusMonths(order.leaseValue());
+            expectedReturnAt = startedAt.plusMonths(order.leaseValue());
+        } else {
+            expectedReturnAt = startedAt.plusDays(order.leaseValue());
         }
-        return startedAt.plusDays(order.leaseValue());
+        return expectedReturnAt.plusDays(orderRepository.summarizeLeaseBonuses(order.id()).totalDays());
     }
 
     private HandoverType parseHandoverTypeNullable(String value) {

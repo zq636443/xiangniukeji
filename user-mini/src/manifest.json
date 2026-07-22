@@ -1,11 +1,10 @@
 {
-  "name": "享牛租车用户版",
+  "name": "电牛哥租车用户版",
   "appid": "",
-  "description": "享牛电车租赁用户版支付宝小程序",
+  "description": "电牛哥电车租赁用户版支付宝小程序",
   "versionName": "0.1.0",
   "versionCode": "1",
   "mp-alipay": {
     "usingComponents": true
   }
 }
-

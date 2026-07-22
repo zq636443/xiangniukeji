@@ -3,15 +3,14 @@
     {
       "path": "pages/index/index",
       "style": {
-        "navigationBarTitleText": "享牛租车"
+        "navigationBarTitleText": "电牛哥租车"
       }
     }
   ],
   "globalStyle": {
     "navigationBarTextStyle": "black",
-    "navigationBarTitleText": "享牛租车",
+    "navigationBarTitleText": "电牛哥租车",
     "navigationBarBackgroundColor": "#ffffff",
     "backgroundColor": "#f5f7fb"
   }
 }
-

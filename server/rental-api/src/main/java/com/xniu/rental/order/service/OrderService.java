@@ -8,14 +8,22 @@ import com.xniu.rental.auth.repository.AccountRepository;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.BusinessException;
+import com.xniu.rental.merchant.model.MerchantStatus;
+import com.xniu.rental.merchant.model.StoreStatus;
+import com.xniu.rental.merchant.repository.MerchantRepository;
+import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.order.dto.OrderCancelRequest;
 import com.xniu.rental.order.dto.OrderCreateRequest;
 import com.xniu.rental.order.dto.OrderExceptionRequest;
 import com.xniu.rental.order.dto.OrderItemResponse;
+import com.xniu.rental.order.dto.OrderLeaseBonusRequest;
+import com.xniu.rental.order.dto.OrderLeaseBonusResponse;
 import com.xniu.rental.order.dto.OrderLogResponse;
 import com.xniu.rental.order.dto.OrderResponse;
 import com.xniu.rental.order.dto.OrderTransitionRequest;
 import com.xniu.rental.order.model.OrderItemType;
+import com.xniu.rental.order.model.OrderLeaseBonus;
+import com.xniu.rental.order.model.OrderLeaseBonusType;
 import com.xniu.rental.order.model.OrderOperationType;
 import com.xniu.rental.order.model.OrderStatus;
 import com.xniu.rental.order.model.RentalOrder;
@@ -23,6 +31,7 @@ import com.xniu.rental.order.model.RentalOrderItem;
 import com.xniu.rental.order.model.RentalOrderOperationLog;
 import com.xniu.rental.order.repository.OrderRepository;
 import com.xniu.rental.product.model.StoreSkuStatus;
+import com.xniu.rental.product.model.ProductStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
 import com.xniu.rental.settlement.service.SettlementService;
@@ -39,6 +48,8 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final AccountRepository accountRepository;
     private final ProductRepository productRepository;
+    private final MerchantRepository merchantRepository;
+    private final StoreRepository storeRepository;
     private final AssetRepository assetRepository;
     private final SettlementService settlementService;
     private final AuthorizationService authorizationService;
@@ -48,6 +59,8 @@ public class OrderService {
         OrderRepository orderRepository,
         AccountRepository accountRepository,
         ProductRepository productRepository,
+        MerchantRepository merchantRepository,
+        StoreRepository storeRepository,
         AssetRepository assetRepository,
         SettlementService settlementService,
         AuthorizationService authorizationService,
@@ -56,6 +69,8 @@ public class OrderService {
         this.orderRepository = orderRepository;
         this.accountRepository = accountRepository;
         this.productRepository = productRepository;
+        this.merchantRepository = merchantRepository;
+        this.storeRepository = storeRepository;
         this.assetRepository = assetRepository;
         this.settlementService = settlementService;
         this.authorizationService = authorizationService;
@@ -105,12 +120,9 @@ public class OrderService {
         if (storeId == null) {
             throw BusinessException.badRequest("请选择门店");
         }
+        var store = storeRepository.findById(storeId).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+        authorizationService.requireStoreAccess(store.merchantId(), store.id());
         var orders = orderRepository.list(parseStatusNullable(status), storeId, null, keyword);
-        if (orders.isEmpty()) {
-            return List.of();
-        }
-        var first = orders.get(0);
-        authorizationService.requireStoreAccess(first.merchantId(), first.storeId());
         return orders.stream().map(this::toResponse).toList();
     }
 
@@ -164,6 +176,24 @@ public class OrderService {
         if (storeSku.status() != StoreSkuStatus.ON_SHELF) {
             throw BusinessException.badRequest("门店商品未上架");
         }
+        var merchant = merchantRepository.findById(storeSku.merchantId())
+            .orElseThrow(() -> BusinessException.badRequest("商户不存在"));
+        if (merchant.status() != MerchantStatus.ENABLED) {
+            throw BusinessException.badRequest("商户已停用");
+        }
+        var store = storeRepository.findById(storeSku.storeId())
+            .orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+        if (store.status() != StoreStatus.ENABLED) {
+            throw BusinessException.badRequest("门店已停用");
+        }
+        if (!store.merchantId().equals(storeSku.merchantId())) {
+            throw BusinessException.badRequest("门店商品商户关系异常");
+        }
+        var sku = productRepository.findSku(storeSku.skuId())
+            .orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
+        if (sku.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("商品链接已停用");
+        }
         var frameAsset = validateOrderAsset(request.frameAssetId(), AssetType.VEHICLE_FRAME, storeSku.merchantId(), storeSku.storeId());
         if (frameAsset != null && frameAsset.assetType().isIntegratedVehicle() && request.batteryAssetId() != null) {
             throw BusinessException.badRequest("车电一体资产只需绑定车架号，无需再选择电池资产");
@@ -173,8 +203,17 @@ public class OrderService {
             .filter(item -> item.packageId().equals(request.packageId()))
             .findFirst()
             .orElseThrow(() -> BusinessException.badRequest("门店商品未配置该 SKU 价格"));
+        if (packagePrice.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("门店 SKU 已停用");
+        }
         var packageTemplate = productRepository.findPackage(request.packageId())
             .orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
+        if (packageTemplate.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("SKU 已停用");
+        }
+        if (!packageTemplate.skuId().equals(storeSku.skuId())) {
+            throw BusinessException.badRequest("SKU 不属于所选商品链接");
+        }
         var customer = resolveCustomer(userAccountId, request.customerName(), request.customerPhone());
         var orderedAt = resolveOrderedAt(request.orderedAt(), allowCustomOrderedAt);
         var payableAmount = packagePrice.rentalAmount().add(storeSku.signFeeAmount()).add(packagePrice.depositAmount());
@@ -238,11 +277,12 @@ public class OrderService {
     public OrderResponse transition(Long id, OrderTransitionRequest request) {
         authorizationService.requirePermission("order.operate");
         var order = ensureOrder(id);
+        authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         var target = parseStatus(request.targetStatus());
         stateMachine.assertCanTransit(order.orderStatus(), target);
         var now = LocalDateTime.now();
         var startedAt = target == OrderStatus.RENTING ? now : null;
-        var expectedReturnAt = target == OrderStatus.RENTING ? expectedReturnAt(now, order.leaseUnit(), order.leaseValue()) : null;
+        var expectedReturnAt = target == OrderStatus.RENTING ? initialExpectedReturnAt(now, order) : null;
         var returnedAt = target == OrderStatus.COMPLETED ? now : null;
         var updated = orderRepository.updateStatus(id, target, startedAt, expectedReturnAt, returnedAt);
         orderRepository.addLog(id, order.orderStatus(), target, OrderOperationType.TRANSITION, currentAccountId(), request.remark());
@@ -250,9 +290,58 @@ public class OrderService {
     }
 
     @Transactional
+    public OrderResponse grantLeaseBonus(Long id, OrderLeaseBonusRequest request) {
+        authorizationService.requirePermission("order.operate");
+        var order = orderRepository.findByIdForUpdate(id)
+            .orElseThrow(() -> BusinessException.badRequest("订单不存在"));
+        authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
+        assertCanGrantLeaseBonus(order);
+        if (request == null || request.bonusDays() == null || request.bonusDays() < 1 || request.bonusDays() > 999) {
+            throw BusinessException.badRequest("赠送天数必须在 1 到 999 天之间");
+        }
+        var bonusType = parseLeaseBonusType(request.bonusType());
+        var bonusSummary = orderRepository.summarizeLeaseBonuses(order.id());
+        var fromStatus = order.orderStatus();
+        var expectedReturnBefore = order.expectedReturnAt();
+        var expectedReturnAfter = expectedReturnBefore;
+        var targetStatus = order.orderStatus();
+        if (expectedReturnBefore != null || order.leaseStartedAt() != null) {
+            if (expectedReturnBefore == null) {
+                expectedReturnBefore = baseExpectedReturnAt(order.leaseStartedAt(), order)
+                    .plusDays(bonusSummary.totalDays());
+            }
+            expectedReturnAfter = expectedReturnBefore.plusDays(request.bonusDays());
+            if (order.orderStatus() == OrderStatus.PENDING_RETURN && expectedReturnAfter.isAfter(LocalDateTime.now())) {
+                targetStatus = OrderStatus.RENTING;
+            }
+            order = orderRepository.updateLeaseBonusDeadline(order.id(), expectedReturnAfter, targetStatus);
+        }
+        var remark = normalizedBonusRemark(request.remark(), bonusType);
+        orderRepository.addLeaseBonus(new OrderRepository.LeaseBonusCreateRow(
+            order.id(),
+            bonusType,
+            request.bonusDays(),
+            currentAccountId(),
+            remark,
+            expectedReturnBefore,
+            expectedReturnAfter
+        ));
+        orderRepository.addLog(
+            order.id(),
+            fromStatus,
+            targetStatus,
+            OrderOperationType.LEASE_BONUS,
+            currentAccountId(),
+            leaseBonusLogRemark(bonusType, request.bonusDays(), remark, expectedReturnAfter)
+        );
+        return toResponse(orderRepository.findById(order.id()).orElseThrow());
+    }
+
+    @Transactional
     public OrderResponse cancel(Long id, OrderCancelRequest request) {
         authorizationService.requirePermission("order.operate");
         var order = ensureOrder(id);
+        authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         stateMachine.assertCanCancel(order.orderStatus());
         var updated = orderRepository.cancel(id, request.reason());
         orderRepository.addLog(id, order.orderStatus(), OrderStatus.CANCELLED, OrderOperationType.CANCEL, currentAccountId(), request.reason());
@@ -263,6 +352,7 @@ public class OrderService {
     public OrderResponse markException(Long id, OrderExceptionRequest request) {
         authorizationService.requirePermission("order.operate");
         var order = ensureOrder(id);
+        authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         stateMachine.assertCanMarkException(order.orderStatus());
         var updated = orderRepository.markException(id, request.reason());
         orderRepository.addLog(id, order.orderStatus(), OrderStatus.EXCEPTION, OrderOperationType.MARK_EXCEPTION, currentAccountId(), request.reason());
@@ -273,15 +363,21 @@ public class OrderService {
         return orderRepository.findById(id).orElseThrow(() -> BusinessException.badRequest("订单不存在"));
     }
 
-    private LocalDateTime expectedReturnAt(LocalDateTime startedAt, String leaseUnit, Integer leaseValue) {
-        if ("MONTH".equals(leaseUnit)) {
-            return startedAt.plusMonths(leaseValue);
+    private LocalDateTime initialExpectedReturnAt(LocalDateTime startedAt, RentalOrder order) {
+        return baseExpectedReturnAt(startedAt, order)
+            .plusDays(orderRepository.summarizeLeaseBonuses(order.id()).totalDays());
+    }
+
+    private LocalDateTime baseExpectedReturnAt(LocalDateTime startedAt, RentalOrder order) {
+        if ("MONTH".equals(order.leaseUnit())) {
+            return startedAt.plusMonths(order.leaseValue());
         }
-        return startedAt.plusDays(leaseValue);
+        return startedAt.plusDays(order.leaseValue());
     }
 
     private OrderResponse toResponse(RentalOrder order) {
         var display = orderRepository.findDisplayInfo(order.id()).orElse(new OrderRepository.OrderDisplayRow(null, null, null, null, null, null, null));
+        var leaseBonusSummary = orderRepository.summarizeLeaseBonuses(order.id());
         return new OrderResponse(
             order.id(),
             order.orderNo(),
@@ -320,6 +416,9 @@ public class OrderService {
             order.renewalValue(),
             order.renewalAmount(),
             order.renewalCount(),
+            leaseBonusSummary.reviewDays(),
+            leaseBonusSummary.campaignDays(),
+            leaseBonusSummary.totalDays(),
             order.expectedPickupAt(),
             order.leaseStartedAt(),
             order.expectedReturnAt(),
@@ -329,7 +428,62 @@ public class OrderService {
             order.exceptionReason(),
             order.createdAt(),
             orderRepository.listItems(order.id()).stream().map(this::toItemResponse).toList(),
+            orderRepository.listLeaseBonuses(order.id()).stream().map(this::toLeaseBonusResponse).toList(),
             orderRepository.listLogs(order.id()).stream().map(this::toLogResponse).toList()
+        );
+    }
+
+    private void assertCanGrantLeaseBonus(RentalOrder order) {
+        if (order.orderStatus() == OrderStatus.COMPLETED
+            || order.orderStatus() == OrderStatus.CANCELLED
+            || order.orderStatus() == OrderStatus.EXCEPTION) {
+            throw BusinessException.badRequest("终态订单不能再赠送租期");
+        }
+        if (order.orderStatus() == OrderStatus.OVERDUE || order.orderStatus() == OrderStatus.PENDING_SUPPLEMENT) {
+            throw BusinessException.badRequest("订单已进入逾期或补缴流程，请先处理相关账单");
+        }
+    }
+
+    private OrderLeaseBonusType parseLeaseBonusType(String value) {
+        try {
+            return OrderLeaseBonusType.valueOf(value == null ? "" : value.trim().toUpperCase());
+        } catch (IllegalArgumentException exception) {
+            throw BusinessException.badRequest("赠送类型只支持好评赠送或活动赠送");
+        }
+    }
+
+    private String normalizedBonusRemark(String remark, OrderLeaseBonusType bonusType) {
+        var normalized = normalizeText(remark);
+        if (normalized != null) {
+            return normalized;
+        }
+        return bonusType == OrderLeaseBonusType.REVIEW ? "客户好评赠送" : "门店活动赠送";
+    }
+
+    private String leaseBonusLogRemark(
+        OrderLeaseBonusType bonusType,
+        Integer bonusDays,
+        String remark,
+        LocalDateTime expectedReturnAfter
+    ) {
+        var typeText = bonusType == OrderLeaseBonusType.REVIEW ? "好评赠送" : "活动赠送";
+        var deadlineText = expectedReturnAfter == null
+            ? "，将在起租时自动计入"
+            : "，预计归还顺延至 " + expectedReturnAfter;
+        return typeText + " " + bonusDays + " 天（" + remark + "）" + deadlineText;
+    }
+
+    private OrderLeaseBonusResponse toLeaseBonusResponse(OrderLeaseBonus item) {
+        return new OrderLeaseBonusResponse(
+            item.id(),
+            item.orderId(),
+            item.bonusType().name(),
+            item.bonusDays(),
+            item.operatorAccountId(),
+            item.remark(),
+            item.expectedReturnBefore(),
+            item.expectedReturnAfter(),
+            item.createdAt()
         );
     }
 

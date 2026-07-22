@@ -62,6 +62,49 @@ class AuthWorkspaceLoginIntegrationTests {
     }
 
     @Test
+    void storeManagerCanReadSettlementWhileOtherStoreRolesCannot() {
+        var storeRolesWithSettlementRead = jdbcTemplate.queryForList("""
+            SELECT r.role_code
+            FROM auth_role r
+            JOIN auth_role_permission rp ON rp.role_id = r.id
+            JOIN auth_permission p ON p.id = rp.permission_id
+            WHERE r.role_code IN (
+                'STORE_MANAGER',
+                'STORE_OPERATOR',
+                'STORE_STAFF',
+                'MAINTENANCE_STAFF',
+                'WAREHOUSE_STAFF'
+            )
+              AND p.permission_code = 'settlement.read'
+            ORDER BY r.role_code
+            """, String.class);
+        assertThat(storeRolesWithSettlementRead).containsExactly("STORE_MANAGER");
+
+        var password = "store-manager-workspace-test";
+        var accountId = jdbcTemplate.queryForObject(
+            "SELECT id FROM sys_account WHERE username = ?",
+            Long.class,
+            "store_demo"
+        );
+        jdbcTemplate.update(
+            "UPDATE sys_account SET account_type = 'STORE_MANAGER', password_hash = ? WHERE id = ?",
+            passwordHasher.encode(password),
+            accountId
+        );
+        jdbcTemplate.update("DELETE FROM auth_account_role WHERE account_id = ?", accountId);
+        jdbcTemplate.update("""
+            INSERT INTO auth_account_role (account_id, role_id)
+            SELECT ?, id FROM auth_role WHERE role_code = 'STORE_MANAGER'
+            """, accountId);
+
+        var login = authService.workspaceLogin(new PasswordLoginRequest("store_demo", password));
+
+        assertThat(login.account().accountType()).isEqualTo("STORE_MANAGER");
+        assertThat(login.account().roles()).contains("STORE_MANAGER");
+        assertThat(login.account().permissions()).contains("settlement.read");
+    }
+
+    @Test
     void unifiedWorkspaceEndpointAllowsAnonymousAdministratorLogin() throws Exception {
         mockMvc.perform(post("/api/auth/workspace/login")
                 .contentType(MediaType.APPLICATION_JSON)

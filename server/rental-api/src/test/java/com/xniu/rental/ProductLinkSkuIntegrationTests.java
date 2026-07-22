@@ -12,6 +12,7 @@ import com.xniu.rental.product.dto.PackageRequest;
 import com.xniu.rental.product.dto.SkuRequest;
 import com.xniu.rental.product.dto.StoreSkuPackageRequest;
 import com.xniu.rental.product.dto.StoreSkuRequest;
+import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.service.ProductService;
 import java.math.BigDecimal;
 import java.util.List;
@@ -150,6 +151,84 @@ class ProductLinkSkuIntegrationTests {
         )))
             .isInstanceOf(BusinessException.class)
             .hasMessageContaining("SKU 不能重复");
+    }
+
+    @Test
+    void productAndStorePublishLifecycleShouldKeepRelationsConsistent() {
+        var suffix = UUID.randomUUID().toString().substring(0, 8);
+        var category = productService.createCategory(new CategoryRequest("生命周期分类-" + suffix, 20));
+        var link = productService.createSku(new SkuRequest(
+            category.id(),
+            "生命周期链接-" + suffix,
+            "RENTAL",
+            null,
+            true,
+            false,
+            false
+        ));
+        var packageItem = productService.createPackage(new PackageRequest(
+            link.id(),
+            "生命周期 SKU-" + suffix,
+            new BigDecimal("299.00"),
+            "MONTH",
+            1,
+            1,
+            "PAYMENT_DAY",
+            null
+        ));
+        var publishRequest = new StoreSkuRequest(
+            1L,
+            1L,
+            link.id(),
+            "生命周期门店商品-" + suffix,
+            "RENTAL",
+            BigDecimal.ZERO,
+            "USER",
+            List.of(price(packageItem.id(), "299.00", "299.00"))
+        );
+        var published = productService.publishStoreSku(publishRequest);
+
+        assertThatThrownBy(() -> productService.publishStoreSku(publishRequest))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("已配置此商品链接");
+        assertThatThrownBy(() -> productService.updateSku(link.id(), new SkuRequest(
+            category.id(),
+            link.skuName(),
+            "SALE",
+            null,
+            true,
+            false,
+            false
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("不能变更链接类型");
+        assertThatThrownBy(() -> productService.deletePackage(packageItem.id()))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("门店上架配置");
+
+        productService.updateStoreSkuStatus(published.id(), StoreSkuStatus.OFF_SHELF);
+        var updated = productService.updateStoreSku(published.id(), new StoreSkuRequest(
+            1L,
+            1L,
+            link.id(),
+            "已编辑但保持下架-" + suffix,
+            "RENTAL",
+            new BigDecimal("12.00"),
+            "MERCHANT",
+            List.of(price(packageItem.id(), "299.00", "299.00"))
+        ));
+
+        assertThat(updated.status()).isEqualTo("OFF_SHELF");
+        assertThat(updated.displayName()).isEqualTo("已编辑但保持下架-" + suffix);
+        productService.deleteStoreSku(published.id());
+
+        productService.deletePackage(packageItem.id());
+        productService.deleteSku(link.id());
+        productService.deleteCategory(category.id());
+
+        assertThat(productService.listPackages(link.id())).isEmpty();
+        assertThat(productService.listSkus(category.id())).isEmpty();
+        assertThat(productService.listCategories()).noneMatch(item -> item.id().equals(category.id()));
     }
 
     private StoreSkuPackageRequest price(Long skuId, String price, String periodAmount) {

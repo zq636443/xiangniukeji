@@ -1,6 +1,8 @@
 package com.xniu.rental.order.repository;
 
 import com.xniu.rental.order.model.OrderItemType;
+import com.xniu.rental.order.model.OrderLeaseBonus;
+import com.xniu.rental.order.model.OrderLeaseBonusType;
 import com.xniu.rental.order.model.OrderOperationType;
 import com.xniu.rental.order.model.OrderStatus;
 import com.xniu.rental.order.model.RentalOrder;
@@ -25,6 +27,7 @@ public class OrderRepository {
     private final JdbcTemplate jdbcTemplate;
     private final RowMapper<RentalOrder> orderMapper = new OrderMapper();
     private final RowMapper<RentalOrderItem> itemMapper = new ItemMapper();
+    private final RowMapper<OrderLeaseBonus> leaseBonusMapper = new LeaseBonusMapper();
     private final RowMapper<RentalOrderOperationLog> logMapper = new LogMapper();
 
     public OrderRepository(JdbcTemplate jdbcTemplate) {
@@ -80,6 +83,11 @@ public class OrderRepository {
 
     public Optional<RentalOrder> findById(Long id) {
         var list = jdbcTemplate.query("SELECT * FROM rental_order WHERE id = ?", orderMapper, id);
+        return list.stream().findFirst();
+    }
+
+    public Optional<RentalOrder> findByIdForUpdate(Long id) {
+        var list = jdbcTemplate.query("SELECT * FROM rental_order WHERE id = ? FOR UPDATE", orderMapper, id);
         return list.stream().findFirst();
     }
 
@@ -191,6 +199,53 @@ public class OrderRepository {
         return jdbcTemplate.query("SELECT * FROM rental_order_operation_log WHERE order_id = ? ORDER BY id DESC", logMapper, orderId);
     }
 
+    public List<OrderLeaseBonus> listLeaseBonuses(Long orderId) {
+        return jdbcTemplate.query(
+            "SELECT * FROM rental_order_lease_bonus WHERE order_id = ? ORDER BY id DESC",
+            leaseBonusMapper,
+            orderId
+        );
+    }
+
+    public LeaseBonusSummary summarizeLeaseBonuses(Long orderId) {
+        return jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(CASE WHEN bonus_type = 'REVIEW' THEN bonus_days ELSE 0 END), 0) AS review_days,
+                   COALESCE(SUM(CASE WHEN bonus_type = 'CAMPAIGN' THEN bonus_days ELSE 0 END), 0) AS campaign_days,
+                   COALESCE(SUM(bonus_days), 0) AS total_days
+            FROM rental_order_lease_bonus
+            WHERE order_id = ?
+            """, (rs, rowNum) -> new LeaseBonusSummary(
+            rs.getInt("review_days"),
+            rs.getInt("campaign_days"),
+            rs.getInt("total_days")
+        ), orderId);
+    }
+
+    public OrderLeaseBonus addLeaseBonus(LeaseBonusCreateRow row) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            var statement = connection.prepareStatement("""
+                INSERT INTO rental_order_lease_bonus
+                (order_id, bonus_type, bonus_days, operator_account_id, remark,
+                 expected_return_before, expected_return_after)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, new String[] {"id"});
+            statement.setLong(1, row.orderId());
+            statement.setString(2, row.bonusType().name());
+            statement.setInt(3, row.bonusDays());
+            setNullableLong(statement, 4, row.operatorAccountId());
+            statement.setString(5, row.remark());
+            statement.setObject(6, row.expectedReturnBefore());
+            statement.setObject(7, row.expectedReturnAfter());
+            return statement;
+        }, keyHolder);
+        return jdbcTemplate.queryForObject(
+            "SELECT * FROM rental_order_lease_bonus WHERE id = ?",
+            leaseBonusMapper,
+            keyHolder.getKey().longValue()
+        );
+    }
+
     public RentalOrder updateStatus(Long id, OrderStatus targetStatus, LocalDateTime leaseStartedAt, LocalDateTime expectedReturnAt, LocalDateTime returnedAt) {
         jdbcTemplate.update("""
             UPDATE rental_order
@@ -205,6 +260,15 @@ public class OrderRepository {
 
     public RentalOrder updateSettlementSnapshot(Long id, Long settlementSnapshotId) {
         jdbcTemplate.update("UPDATE rental_order SET settlement_snapshot_id = ? WHERE id = ?", settlementSnapshotId, id);
+        return findById(id).orElseThrow();
+    }
+
+    public RentalOrder updateLeaseBonusDeadline(Long id, LocalDateTime expectedReturnAt, OrderStatus targetStatus) {
+        jdbcTemplate.update("""
+            UPDATE rental_order
+            SET expected_return_at = ?, order_status = ?
+            WHERE id = ?
+            """, expectedReturnAt, targetStatus.name(), id);
         return findById(id).orElseThrow();
     }
 
@@ -353,6 +417,24 @@ public class OrderRepository {
     ) {
     }
 
+    public record LeaseBonusCreateRow(
+        Long orderId,
+        OrderLeaseBonusType bonusType,
+        Integer bonusDays,
+        Long operatorAccountId,
+        String remark,
+        LocalDateTime expectedReturnBefore,
+        LocalDateTime expectedReturnAfter
+    ) {
+    }
+
+    public record LeaseBonusSummary(
+        Integer reviewDays,
+        Integer campaignDays,
+        Integer totalDays
+    ) {
+    }
+
     private static class OrderMapper implements RowMapper<RentalOrder> {
         @Override
         public RentalOrder mapRow(ResultSet rs, int rowNum) throws SQLException {
@@ -412,6 +494,23 @@ public class OrderRepository {
                 rs.getInt("quantity"),
                 rs.getBigDecimal("unit_amount"),
                 rs.getBigDecimal("total_amount")
+            );
+        }
+    }
+
+    private static class LeaseBonusMapper implements RowMapper<OrderLeaseBonus> {
+        @Override
+        public OrderLeaseBonus mapRow(ResultSet rs, int rowNum) throws SQLException {
+            return new OrderLeaseBonus(
+                rs.getLong("id"),
+                rs.getLong("order_id"),
+                OrderLeaseBonusType.valueOf(rs.getString("bonus_type")),
+                rs.getInt("bonus_days"),
+                getNullableLong(rs, "operator_account_id"),
+                rs.getString("remark"),
+                rs.getObject("expected_return_before", LocalDateTime.class),
+                rs.getObject("expected_return_after", LocalDateTime.class),
+                rs.getObject("created_at", LocalDateTime.class)
             );
         }
     }

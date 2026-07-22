@@ -14,6 +14,7 @@ import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.service.ProductService;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -48,6 +49,12 @@ public class AdminProductController {
         return ApiResponse.ok(productService.updateCategory(id, request));
     }
 
+    @DeleteMapping("/categories/{id}")
+    public ApiResponse<Void> deleteCategory(@PathVariable Long id) {
+        productService.deleteCategory(id);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/skus")
     public ApiResponse<List<SkuResponse>> listSkus(@RequestParam(required = false) Long categoryId) {
         return ApiResponse.ok(productService.listSkus(categoryId));
@@ -61,6 +68,12 @@ public class AdminProductController {
     @PutMapping("/skus/{id}")
     public ApiResponse<SkuResponse> updateSku(@PathVariable Long id, @Valid @RequestBody SkuRequest request) {
         return ApiResponse.ok(productService.updateSku(id, request));
+    }
+
+    @DeleteMapping("/skus/{id}")
+    public ApiResponse<Void> deleteSku(@PathVariable Long id) {
+        productService.deleteSku(id);
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/packages")
@@ -78,6 +91,12 @@ public class AdminProductController {
         return ApiResponse.ok(productService.updatePackage(id, request));
     }
 
+    @DeleteMapping("/packages/{id}")
+    public ApiResponse<Void> deletePackage(@PathVariable Long id) {
+        productService.deletePackage(id);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/store-skus")
     public ApiResponse<List<StoreSkuResponse>> listStoreSkus(
         @RequestParam(required = false) Long storeId,
@@ -92,6 +111,11 @@ public class AdminProductController {
         return ApiResponse.ok(productService.publishStoreSku(request));
     }
 
+    @PutMapping("/store-skus/{id}")
+    public ApiResponse<StoreSkuResponse> updateStoreSku(@PathVariable Long id, @Valid @RequestBody StoreSkuRequest request) {
+        return ApiResponse.ok(productService.updateStoreSku(id, request));
+    }
+
     @PostMapping("/store-skus/batch")
     public ApiResponse<List<StoreSkuResponse>> batchPublish(@Valid @RequestBody StoreSkuBatchPublishRequest request) {
         return ApiResponse.ok(productService.batchPublish(request));
@@ -100,5 +124,11 @@ public class AdminProductController {
     @PutMapping("/store-skus/{id}/status")
     public ApiResponse<StoreSkuResponse> updateStoreSkuStatus(@PathVariable Long id, @RequestParam StoreSkuStatus status) {
         return ApiResponse.ok(productService.updateStoreSkuStatus(id, status));
+    }
+
+    @DeleteMapping("/store-skus/{id}")
+    public ApiResponse<Void> deleteStoreSku(@PathVariable Long id) {
+        productService.deleteStoreSku(id);
+        return ApiResponse.ok(null);
     }
 }

@@ -111,11 +111,38 @@
           <view class="asset-sub">客户：{{ selectedOrder.customerName || '-' }} / {{ selectedOrder.customerPhone || '-' }}</view>
           <view class="asset-sub">车架：{{ assetText(selectedOrder.frameSerialNo, selectedOrder.frameAssetCode, selectedOrder.frameAssetId) }} / 电池：{{ assetText(selectedOrder.batterySerialNo, selectedOrder.batteryAssetCode, selectedOrder.batteryAssetId) }}</view>
           <view class="asset-sub">预计归还：{{ dateText(selectedOrder.expectedReturnAt) }}</view>
+          <view class="asset-sub">赠送租期：好评 {{ selectedOrder.reviewBonusDays }} 天 / 活动 {{ selectedOrder.campaignBonusDays }} 天 / 合计 {{ selectedOrder.totalBonusDays }} 天</view>
           <view class="asset-sub">租金 {{ money(selectedOrder.rentalAmount) }} / 签单费 {{ money(selectedOrder.signFeeAmount) }} / 押金 {{ money(selectedOrder.depositAmount) }}</view>
           <view class="asset-sub">{{ renewalText(selectedOrder) }}</view>
           <view v-if="selectedOrder.items.length > 0" class="tag-row">
             <text v-for="item in selectedOrder.items" :key="item.id" class="tag">{{ item.itemName }} {{ money(item.totalAmount) }}</text>
           </view>
+        </view>
+        <view class="section-subtitle">赠送租期</view>
+        <view v-if="selectedOrder.leaseBonuses.length === 0" class="empty">暂无赠送记录</view>
+        <view v-for="bonus in selectedOrder.leaseBonuses" :key="bonus.id" class="bill-row">
+          <view>
+            <view class="bill-title">{{ leaseBonusTypeText(bonus.bonusType) }} {{ bonus.bonusDays }} 天</view>
+            <view class="asset-sub">{{ bonus.remark || '-' }} / {{ dateText(bonus.createdAt) }}</view>
+          </view>
+          <view class="bill-amount">{{ dateText(bonus.expectedReturnAfter) }}</view>
+        </view>
+        <view v-if="canOperateOrder && canGrantSelectedOrderBonus" class="lease-bonus-form">
+          <view class="field compact">
+            <text>赠送类型</text>
+            <picker :range="leaseBonusTypeLabels" :value="leaseBonusForm.bonusTypeIndex" @change="onLeaseBonusTypeChange">
+              <view class="picker">{{ leaseBonusTypeLabels[leaseBonusForm.bonusTypeIndex] }}</view>
+            </picker>
+          </view>
+          <view class="field compact">
+            <text>赠送天数</text>
+            <input v-model="leaseBonusForm.bonusDays" type="number" placeholder="请输入赠送天数" />
+          </view>
+          <view class="field compact">
+            <text>备注</text>
+            <input v-model="leaseBonusForm.remark" placeholder="如：客户好评、暑期活动" />
+          </view>
+          <button class="primary" :loading="leaseBonusSubmitting" @tap="grantLeaseBonus">确认赠送</button>
         </view>
         <view class="section-subtitle">账单</view>
         <view v-if="orderBills.length === 0" class="empty">当前订单暂无账单</view>
@@ -396,8 +423,8 @@
           <text>新资产 ID</text>
           <input v-model="fulfillment.newAssetId" type="number" placeholder="请输入新资产 ID" />
         </view>
-        <button class="secondary" :loading="fulfillmentLoading" @tap="replaceAsset">更换资产</button>
-        <button class="secondary" :loading="fulfillmentLoading" @tap="returnAssets">归还并结束订单</button>
+        <button v-if="canReplaceSelectedOrder" class="secondary" :loading="fulfillmentLoading" @tap="replaceAsset">更换资产</button>
+        <button v-if="canReturnSelectedOrder" class="secondary" :loading="fulfillmentLoading" @tap="returnAssets">归还并结束订单</button>
         <view v-if="lastFulfillmentNo" class="asset-sub">最近凭证：{{ lastFulfillmentNo }}</view>
       </view>
       <button class="secondary" @tap="logout">退出登录</button>
@@ -465,6 +492,7 @@ const orderKeyword = ref('');
 const orderStatusIndex = ref(0);
 const orderCreateVisible = ref(false);
 const orderCreateSubmitting = ref(false);
+const leaseBonusSubmitting = ref(false);
 const voucherLoading = ref(false);
 const incomeLoading = ref(false);
 const inventoryLoading = ref(false);
@@ -490,6 +518,11 @@ const orderCreateForm = reactive({
   frameAssetIndex: 0,
   batteryAssetIndex: 0
 });
+const leaseBonusForm = reactive({
+  bonusTypeIndex: 0,
+  bonusDays: '2',
+  remark: ''
+});
 const maintenanceForm = reactive({
   assetId: '',
   orderId: '',
@@ -507,6 +540,8 @@ const maintenanceTypeValues = ['REPAIR', 'MAINTENANCE', 'REPLACE_PART', 'INSPECT
 const maintenanceTypeLabels = ['维修', '保养', '换件', '检测'];
 const responsibilityValues = ['ROUTINE_MAINTENANCE', 'CUSTOMER_DAMAGE', 'MERCHANT_RESPONSIBILITY', 'PLATFORM_SUBSIDY'] as const;
 const responsibilityLabels = ['日常资产维护', '客户损坏', '门店责任', '平台兜底'];
+const leaseBonusTypeValues = ['REVIEW', 'CAMPAIGN'] as const;
+const leaseBonusTypeLabels = ['好评赠送', '活动赠送'];
 const orderStatusValues = ['', 'PENDING_PAYMENT', 'PENDING_PICKUP', 'RENTING', 'PENDING_RETURN', 'PENDING_SUPPLEMENT', 'COMPLETED', 'CANCELLED', 'EXCEPTION'] as const;
 const orderStatusLabels = ['全部订单', '待支付', '待取车', '租赁中', '待归还', '待补缴', '已完成', '已取消', '异常'];
 const voucherStatusValues = ['', 'PREPARED', 'WAITING_SIGN_FEE', 'CONSUMED', 'FAILED', 'EXCEPTION'] as const;
@@ -516,6 +551,13 @@ const incomeStatusLabels = ['全部收益', '待结算', '已结算', '已冻结
 const lastFulfillmentNo = ref('');
 
 const canCreateOrder = computed(() => account.value?.permissions.includes('order.create') ?? false);
+const canOperateOrder = computed(() => account.value?.permissions.includes('order.operate') ?? false);
+const canGrantSelectedOrderBonus = computed(() => {
+  if (!selectedOrder.value) {
+    return false;
+  }
+  return !['OVERDUE', 'PENDING_SUPPLEMENT', 'COMPLETED', 'CANCELLED', 'EXCEPTION'].includes(selectedOrder.value.orderStatus);
+});
 const selectedOrderStoreSku = computed(() => storeSkus.value[orderCreateForm.storeSkuIndex]);
 const orderPackages = computed(() => (selectedOrderStoreSku.value?.packages ?? []).filter((item) => item.status === 'ENABLED'));
 const orderFrameAssets = computed(() => assets.value.filter((item) => item.assetType !== 'BATTERY' && item.status === 'IDLE'));
@@ -526,6 +568,8 @@ const orderFrameAssetLabels = computed(() => ['暂不绑定', ...orderFrameAsset
 const orderBatteryAssetLabels = computed(() => ['暂不绑定', ...orderBatteryAssets.value.map((item) => item.serialNo)]);
 const selectedOrderFrameAsset = computed(() => orderCreateForm.frameAssetIndex > 0 ? orderFrameAssets.value[orderCreateForm.frameAssetIndex - 1] : undefined);
 const orderUsesIntegratedVehicle = computed(() => selectedOrderFrameAsset.value?.assetType === 'INTEGRATED_VEHICLE');
+const canReplaceSelectedOrder = computed(() => Boolean(selectedOrder.value && ['RENTING', 'PENDING_RETURN', 'PENDING_SUPPLEMENT'].includes(selectedOrder.value.orderStatus)));
+const canReturnSelectedOrder = computed(() => Boolean(selectedOrder.value && ['RENTING', 'PENDING_RETURN', 'OVERDUE', 'PENDING_SUPPLEMENT'].includes(selectedOrder.value.orderStatus)));
 
 const scopeText = computed(() => {
   if (!account.value || account.value.storeScopes.length === 0) {
@@ -833,12 +877,50 @@ function assetText(serialNo?: string | null, assetCode?: string | null, assetId?
 
 async function selectOrder(order: RentalOrder, toast = true) {
   selectedOrder.value = order;
+  leaseBonusForm.bonusTypeIndex = 0;
+  leaseBonusForm.bonusDays = '2';
+  leaseBonusForm.remark = '';
   fulfillment.orderId = String(order.id);
   fulfillment.frameAssetId = order.frameAssetId ? String(order.frameAssetId) : '';
   fulfillment.batteryAssetId = order.batteryAssetId ? String(order.batteryAssetId) : '';
   await Promise.all([loadOrderBills(order.id), loadSettlement(order.id)]);
   if (toast) {
     uni.showToast({ title: '已切换订单', icon: 'none' });
+  }
+}
+
+function onLeaseBonusTypeChange(event: { detail: { value: number } }) {
+  leaseBonusForm.bonusTypeIndex = Number(event.detail.value);
+  leaseBonusForm.bonusDays = leaseBonusForm.bonusTypeIndex === 0 ? '2' : '15';
+}
+
+async function grantLeaseBonus() {
+  if (!selectedOrder.value) {
+    return;
+  }
+  const bonusDays = Number(leaseBonusForm.bonusDays);
+  if (!Number.isInteger(bonusDays) || bonusDays < 1 || bonusDays > 999) {
+    uni.showToast({ title: '赠送天数请输入 1 到 999 的整数', icon: 'none' });
+    return;
+  }
+  leaseBonusSubmitting.value = true;
+  try {
+    const updated = await request<RentalOrder>(`/api/merchant/orders/${selectedOrder.value.id}/lease-bonuses`, {
+      method: 'POST',
+      data: {
+        bonusType: leaseBonusTypeValues[leaseBonusForm.bonusTypeIndex],
+        bonusDays,
+        remark: leaseBonusForm.remark.trim() || undefined
+      }
+    });
+    selectedOrder.value = updated;
+    orders.value = orders.value.map((order) => order.id === updated.id ? updated : order);
+    leaseBonusForm.remark = '';
+    uni.showToast({ title: `已赠送 ${bonusDays} 天`, icon: 'success' });
+  } catch (error) {
+    uni.showToast({ title: error instanceof Error ? error.message : '赠送租期失败', icon: 'none' });
+  } finally {
+    leaseBonusSubmitting.value = false;
   }
 }
 
@@ -1315,6 +1397,10 @@ function renewalText(item: { autoRenewEnabled?: boolean; renewalUnit?: 'DAY' | '
   return `到期未还按 ${money(item.renewalAmount || 0)} / ${leaseText(item.renewalUnit || 'MONTH', item.renewalValue || 1)} 自动续租，已续 ${item.renewalCount || 0} 次`;
 }
 
+function leaseBonusTypeText(value: 'REVIEW' | 'CAMPAIGN') {
+  return value === 'REVIEW' ? '好评赠送' : '活动赠送';
+}
+
 function dateText(value?: string | null) {
   if (!value) {
     return '-';
@@ -1401,6 +1487,12 @@ function money(value: number | string | null | undefined) {
 
 .order-create-form {
   background: #f8fafc;
+}
+
+.lease-bonus-form {
+  margin-top: 16rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid #e6e9ef;
 }
 
 .filter-input {

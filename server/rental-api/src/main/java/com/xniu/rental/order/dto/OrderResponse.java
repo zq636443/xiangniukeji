@@ -42,6 +42,9 @@ public record OrderResponse(
     Integer renewalValue,
     BigDecimal renewalAmount,
     Integer renewalCount,
+    Integer reviewBonusDays,
+    Integer campaignBonusDays,
+    Integer totalBonusDays,
     LocalDateTime expectedPickupAt,
     LocalDateTime leaseStartedAt,
     LocalDateTime expectedReturnAt,
@@ -51,6 +54,7 @@ public record OrderResponse(
     String exceptionReason,
     LocalDateTime createdAt,
     List<OrderItemResponse> items,
+    List<OrderLeaseBonusResponse> leaseBonuses,
     List<OrderLogResponse> logs
 ) {
 }

@@ -2,6 +2,10 @@ package com.xniu.rental.product.service;
 
 import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.BusinessException;
+import com.xniu.rental.merchant.model.Merchant;
+import com.xniu.rental.merchant.model.MerchantStatus;
+import com.xniu.rental.merchant.model.MerchantStore;
+import com.xniu.rental.merchant.model.StoreStatus;
 import com.xniu.rental.merchant.repository.MerchantRepository;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.product.dto.CategoryRequest;
@@ -20,12 +24,14 @@ import com.xniu.rental.product.model.LeaseUnit;
 import com.xniu.rental.product.model.ProductCategory;
 import com.xniu.rental.product.model.ProductPackage;
 import com.xniu.rental.product.model.ProductSku;
+import com.xniu.rental.product.model.ProductStatus;
 import com.xniu.rental.product.model.SignFeePayer;
 import com.xniu.rental.product.model.SkuType;
 import com.xniu.rental.product.model.StoreSku;
 import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -71,6 +77,16 @@ public class ProductService {
         return toResponse(productRepository.updateCategory(id, request.categoryName(), request.sortOrder()));
     }
 
+    @Transactional
+    public void deleteCategory(Long id) {
+        authorizationService.requirePermission("product.write");
+        ensureCategory(id);
+        if (productRepository.countSkusByCategory(id) > 0) {
+            throw BusinessException.badRequest("分类仍包含商品链接，请先处理关联链接");
+        }
+        productRepository.deleteCategory(id);
+    }
+
     public List<SkuResponse> listSkus(Long categoryId) {
         authorizationService.requirePermission("product.read");
         return productRepository.listSkus(categoryId).stream().map(this::toResponse).toList();
@@ -96,18 +112,36 @@ public class ProductService {
     @Transactional
     public SkuResponse updateSku(Long id, SkuRequest request) {
         authorizationService.requirePermission("product.write");
-        ensureSku(id);
+        var existing = ensureSku(id);
         ensureCategory(request.categoryId());
+        var nextType = parseSkuType(request.skuType());
+        if (existing.skuType() != nextType && productRepository.countStoreSkusBySku(id) > 0) {
+            throw BusinessException.badRequest("商品链接已配置门店上架，不能变更链接类型");
+        }
         return toResponse(productRepository.updateSku(
             id,
             request.categoryId(),
             request.skuName(),
-            parseSkuType(request.skuType()),
+            nextType,
             request.description(),
             request.needFrameAsset(),
             request.needBatteryAsset(),
             request.supportCrossStoreReturn()
         ));
+    }
+
+    @Transactional
+    public void deleteSku(Long id) {
+        authorizationService.requirePermission("product.write");
+        ensureSku(id);
+        var blockers = new ArrayList<String>();
+        addBlocker(blockers, "SKU", productRepository.countPackagesBySku(id));
+        addBlocker(blockers, "门店商品", productRepository.countStoreSkusBySku(id));
+        addBlocker(blockers, "分润规则", productRepository.countSettlementRulesBySku(id));
+        if (!blockers.isEmpty()) {
+            throw BusinessException.badRequest("商品链接仍存在关联数据，暂不可删除：" + String.join("、", blockers));
+        }
+        productRepository.deleteSku(id);
     }
 
     public List<PackageResponse> listPackages(Long skuId) {
@@ -137,7 +171,10 @@ public class ProductService {
     public PackageResponse updatePackage(Long id, PackageRequest request) {
         authorizationService.requirePermission("product.write");
         validatePackage(request);
-        ensurePackage(id);
+        var existing = ensurePackage(id);
+        if (!existing.skuId().equals(request.skuId())) {
+            throw BusinessException.badRequest("SKU 所属商品链接不可变更");
+        }
         return toResponse(productRepository.updatePackage(
             id,
             request.packageName(),
@@ -150,6 +187,21 @@ public class ProductService {
         ));
     }
 
+    @Transactional
+    public void deletePackage(Long id) {
+        authorizationService.requirePermission("product.write");
+        ensurePackage(id);
+        var blockers = new ArrayList<String>();
+        addBlocker(blockers, "门店上架配置", productRepository.countStoreSkuPackagesByPackage(id));
+        addBlocker(blockers, "租赁订单", productRepository.countOrdersByPackage(id));
+        addBlocker(blockers, "补录订单", productRepository.countExternalOrdersByPackage(id));
+        addBlocker(blockers, "核销记录", productRepository.countVouchersByPackage(id));
+        if (!blockers.isEmpty()) {
+            throw BusinessException.badRequest("SKU 仍存在关联数据，暂不可删除：" + String.join("、", blockers));
+        }
+        productRepository.deletePackage(id);
+    }
+
     public List<StoreSkuResponse> listStoreSkus(Long storeId, Long skuId, String status) {
         authorizationService.requirePermission("product.read");
         return productRepository.listStoreSkus(storeId, skuId, parseStoreSkuStatus(status)).stream()
@@ -159,8 +211,8 @@ public class ProductService {
 
     public List<StoreSkuResponse> listMerchantStoreSkus(Long storeId) {
         authorizationService.requirePermission("order.read");
-        var store = storeRepository.findById(storeId)
-            .orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+        var store = ensureEnabledStore(storeId);
+        ensureEnabledMerchant(store.merchantId());
         authorizationService.requireStoreAccess(store.merchantId(), store.id());
         return productRepository.listStoreSkus(storeId, null, StoreSkuStatus.ON_SHELF).stream()
             .map(this::toResponse)
@@ -170,43 +222,64 @@ public class ProductService {
     @Transactional
     public StoreSkuResponse publishStoreSku(StoreSkuRequest request) {
         authorizationService.requirePermission("product.write");
-        validateStoreSkuRequest(request.storeId(), request.skuId(), request.packages());
-        var store = storeRepository.findById(request.storeId()).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
-        if (!store.merchantId().equals(request.merchantId())) {
-            throw BusinessException.badRequest("门店不属于所选商户");
+        validateStoreSkuRequest(request);
+        if (productRepository.findStoreSkuByStoreAndSku(request.storeId(), request.skuId()).isPresent()) {
+            throw BusinessException.badRequest("该门店已配置此商品链接，请在门店商品列表中编辑或重新上架");
         }
-        merchantRepository.findById(request.merchantId()).orElseThrow(() -> BusinessException.badRequest("商户不存在"));
-        var existing = productRepository.findStoreSkuByStoreAndSku(request.storeId(), request.skuId());
-        var storeSku = existing
-            .map(item -> productRepository.updateStoreSku(
-                item.id(),
-                parseSkuType(request.saleMode()),
-                request.displayName(),
-                normalizeMoney(request.signFeeAmount()),
-                parseSignFeePayer(request.signFeePayer())
-            ))
-            .orElseGet(() -> productRepository.createStoreSku(
-                nextCode("SSKU"),
-                request.merchantId(),
-                request.storeId(),
-                request.skuId(),
-                parseSkuType(request.saleMode()),
-                request.displayName(),
-                normalizeMoney(request.signFeeAmount()),
-                parseSignFeePayer(request.signFeePayer())
-            ));
+        var storeSku = productRepository.createStoreSku(
+            nextCode("SSKU"),
+            request.merchantId(),
+            request.storeId(),
+            request.skuId(),
+            parseSkuType(request.saleMode()),
+            request.displayName(),
+            normalizeMoney(request.signFeeAmount()),
+            parseSignFeePayer(request.signFeePayer())
+        );
         productRepository.replaceStoreSkuPackages(storeSku.id(), toRows(request.packages()));
         return toResponse(storeSku);
     }
 
     @Transactional
+    public StoreSkuResponse updateStoreSku(Long id, StoreSkuRequest request) {
+        authorizationService.requirePermission("product.write");
+        var existing = ensureStoreSku(id);
+        if (!existing.merchantId().equals(request.merchantId())
+            || !existing.storeId().equals(request.storeId())
+            || !existing.skuId().equals(request.skuId())) {
+            throw BusinessException.badRequest("门店商品的商户、门店和商品链接不可变更");
+        }
+        validateStoreSkuRequest(request);
+        var updated = productRepository.updateStoreSku(
+            id,
+            parseSkuType(request.saleMode()),
+            request.displayName(),
+            normalizeMoney(request.signFeeAmount()),
+            parseSignFeePayer(request.signFeePayer())
+        );
+        productRepository.replaceStoreSkuPackages(id, toRows(request.packages()));
+        return toResponse(updated);
+    }
+
+    @Transactional
     public List<StoreSkuResponse> batchPublish(StoreSkuBatchPublishRequest request) {
         authorizationService.requirePermission("product.write");
-        ensureSku(request.skuId());
+        var sku = ensureEnabledSku(request.skuId());
         validatePackagePrices(request.skuId(), request.packages());
-        return request.storeIds().stream().map(storeId -> {
-            var store = storeRepository.findById(storeId).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
-            var sku = ensureSku(request.skuId());
+        var storeIds = request.storeIds().stream().distinct().toList();
+        if (storeIds.size() != request.storeIds().size()) {
+            throw BusinessException.badRequest("批量上架门店不能重复");
+        }
+        var duplicatedStores = storeIds.stream()
+            .filter(storeId -> productRepository.findStoreSkuByStoreAndSku(storeId, request.skuId()).isPresent())
+            .map(storeId -> storeRepository.findById(storeId).map(MerchantStore::storeName).orElse("门店#" + storeId))
+            .toList();
+        if (!duplicatedStores.isEmpty()) {
+            throw BusinessException.badRequest("以下门店已配置此商品链接，请单独编辑或重新上架：" + String.join("、", duplicatedStores));
+        }
+        return storeIds.stream().map(storeId -> {
+            var store = ensureEnabledStore(storeId);
+            ensureEnabledMerchant(store.merchantId());
             var publishRequest = new StoreSkuRequest(
                 store.merchantId(),
                 store.id(),
@@ -224,8 +297,32 @@ public class ProductService {
     @Transactional
     public StoreSkuResponse updateStoreSkuStatus(Long id, StoreSkuStatus status) {
         authorizationService.requirePermission("product.write");
-        ensureStoreSku(id);
+        var storeSku = ensureStoreSku(id);
+        if (status == StoreSkuStatus.ON_SHELF) {
+            ensureStoreSkuCanBeOnShelf(storeSku);
+        }
         return toResponse(productRepository.updateStoreSkuStatus(id, status));
+    }
+
+    @Transactional
+    public void deleteStoreSku(Long id) {
+        authorizationService.requirePermission("product.write");
+        var storeSku = ensureStoreSku(id);
+        if (storeSku.status() != StoreSkuStatus.OFF_SHELF) {
+            throw BusinessException.badRequest("请先下架门店商品，再执行删除");
+        }
+        var blockers = new ArrayList<String>();
+        addBlocker(blockers, "租赁订单", productRepository.countOrdersByStoreSku(id));
+        addBlocker(blockers, "补录订单", productRepository.countExternalOrdersByStoreSku(id));
+        addBlocker(blockers, "核销记录", productRepository.countVouchersByStoreSku(id));
+        addBlocker(blockers, "分润快照", productRepository.countSettlementSnapshotsByStoreSku(id));
+        addBlocker(blockers, "分润规则", productRepository.countSettlementRulesByStoreSku(id));
+        addBlocker(blockers, "逾期记录", productRepository.countOverdueCasesByStoreSku(id));
+        if (!blockers.isEmpty()) {
+            throw BusinessException.badRequest("门店商品仍存在历史业务数据，暂不可删除：" + String.join("、", blockers));
+        }
+        productRepository.deleteStoreSkuPackages(id);
+        productRepository.deleteStoreSku(id);
     }
 
     public List<StoreSkuResponse> listUserStoreProducts(String storeCode) {
@@ -234,6 +331,10 @@ public class ProductService {
             .filter(item -> item.storeCode().equals(storeCode))
             .findFirst()
             .orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+        if (store.status() != StoreStatus.ENABLED) {
+            throw BusinessException.badRequest("门店已停用");
+        }
+        ensureEnabledMerchant(store.merchantId());
         return productRepository.listStoreSkus(store.id(), null, StoreSkuStatus.ON_SHELF).stream()
             .map(this::toResponse)
             .toList();
@@ -244,13 +345,21 @@ public class ProductService {
         if (storeSku.status() != StoreSkuStatus.ON_SHELF) {
             throw BusinessException.badRequest("商品未上架");
         }
+        ensureStoreSkuCanBeOnShelf(storeSku);
         return toResponse(storeSku);
     }
 
-    private void validateStoreSkuRequest(Long storeId, Long skuId, List<StoreSkuPackageRequest> packages) {
-        ensureSku(skuId);
-        storeRepository.findById(storeId).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
-        validatePackagePrices(skuId, packages);
+    private void validateStoreSkuRequest(StoreSkuRequest request) {
+        var merchant = ensureEnabledMerchant(request.merchantId());
+        var store = ensureEnabledStore(request.storeId());
+        if (!store.merchantId().equals(merchant.id())) {
+            throw BusinessException.badRequest("门店不属于所选商户");
+        }
+        var sku = ensureEnabledSku(request.skuId());
+        if (sku.skuType() != parseSkuType(request.saleMode())) {
+            throw BusinessException.badRequest("门店商品类型必须与商品链接类型一致");
+        }
+        validatePackagePrices(request.skuId(), request.packages());
     }
 
     private void validatePackagePrices(Long skuId, List<StoreSkuPackageRequest> packages) {
@@ -259,7 +368,7 @@ public class ProductService {
             if (!packageIds.add(item.packageId())) {
                 throw BusinessException.badRequest("同一个门店商品下 SKU 不能重复");
             }
-            var template = ensurePackage(item.packageId());
+            var template = ensureEnabledPackage(item.packageId());
             if (!template.skuId().equals(skuId)) {
                 throw BusinessException.badRequest("SKU 不属于所选商品链接");
             }
@@ -298,7 +407,7 @@ public class ProductService {
     private List<ProductRepository.PackagePriceRow> toRows(List<StoreSkuPackageRequest> packages) {
         return packages.stream()
             .map(item -> {
-                var template = ensurePackage(item.packageId());
+                var template = ensureEnabledPackage(item.packageId());
                 var autoRenewEnabled = !Boolean.FALSE.equals(item.autoRenewEnabled());
                 var renewalUnit = autoRenewEnabled
                     ? (item.renewalUnit() == null || item.renewalUnit().isBlank() ? template.leaseUnit() : parseLeaseUnit(item.renewalUnit()))
@@ -433,6 +542,66 @@ public class ProductService {
 
     private StoreSku ensureStoreSku(Long id) {
         return productRepository.findStoreSku(id).orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
+    }
+
+    private Merchant ensureEnabledMerchant(Long id) {
+        var merchant = merchantRepository.findById(id).orElseThrow(() -> BusinessException.badRequest("商户不存在"));
+        if (merchant.status() != MerchantStatus.ENABLED) {
+            throw BusinessException.badRequest("商户已停用");
+        }
+        return merchant;
+    }
+
+    private MerchantStore ensureEnabledStore(Long id) {
+        var store = storeRepository.findById(id).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+        if (store.status() != StoreStatus.ENABLED) {
+            throw BusinessException.badRequest("门店已停用");
+        }
+        return store;
+    }
+
+    private ProductSku ensureEnabledSku(Long id) {
+        var sku = ensureSku(id);
+        if (sku.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("商品链接已停用");
+        }
+        return sku;
+    }
+
+    private ProductPackage ensureEnabledPackage(Long id) {
+        var item = ensurePackage(id);
+        if (item.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("SKU 已停用");
+        }
+        return item;
+    }
+
+    private void ensureStoreSkuCanBeOnShelf(StoreSku storeSku) {
+        var store = ensureEnabledStore(storeSku.storeId());
+        if (!store.merchantId().equals(storeSku.merchantId())) {
+            throw BusinessException.badRequest("门店商品商户关系异常");
+        }
+        ensureEnabledMerchant(storeSku.merchantId());
+        var sku = ensureEnabledSku(storeSku.skuId());
+        if (sku.skuType() != storeSku.saleMode()) {
+            throw BusinessException.badRequest("门店商品类型与商品链接类型不一致");
+        }
+        var packagePrices = productRepository.listStoreSkuPackages(storeSku.id());
+        if (packagePrices.isEmpty()) {
+            throw BusinessException.badRequest("门店商品未配置 SKU");
+        }
+        for (var packagePrice : packagePrices) {
+            var template = ensureEnabledPackage(packagePrice.packageId());
+            if (!template.skuId().equals(storeSku.skuId())) {
+                throw BusinessException.badRequest("门店商品包含不属于当前链接的 SKU");
+            }
+        }
+    }
+
+    private void addBlocker(List<String> blockers, String label, int count) {
+        if (count > 0) {
+            blockers.add(label + " " + count + " 条");
+        }
     }
 
     private SkuType parseSkuType(String value) {

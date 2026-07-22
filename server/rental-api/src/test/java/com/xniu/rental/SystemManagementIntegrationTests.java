@@ -1,6 +1,7 @@
 package com.xniu.rental;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.xniu.rental.auth.dto.CurrentAccountResponse;
 import com.xniu.rental.auth.dto.SystemAccountCreateRequest;
@@ -13,6 +14,11 @@ import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.CurrentAccount;
 import com.xniu.rental.auth.service.PasswordHasher;
 import com.xniu.rental.auth.service.SystemManagementService;
+import com.xniu.rental.common.BusinessException;
+import com.xniu.rental.merchant.dto.MerchantRequest;
+import com.xniu.rental.merchant.dto.StoreRequest;
+import com.xniu.rental.merchant.model.StoreStatus;
+import com.xniu.rental.merchant.service.MerchantService;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +45,9 @@ class SystemManagementIntegrationTests {
     @Autowired
     private AuthQueryRepository authQueryRepository;
 
+    @Autowired
+    private MerchantService merchantService;
+
     @BeforeEach
     void setCurrentAccount() {
         AuthContext.set(new CurrentAccount(
@@ -54,7 +63,7 @@ class SystemManagementIntegrationTests {
                 null,
                 null,
                 List.of("PLATFORM_ADMIN"),
-                List.of("system.admin", "auth.account.read", "auth.account.write"),
+                List.of("system.admin", "auth.account.read", "auth.account.write", "merchant.read", "merchant.write", "store.read", "store.write"),
                 List.of()
             )
         ));
@@ -117,5 +126,74 @@ class SystemManagementIntegrationTests {
 
         assertThat(revoked.directPermissions()).isEmpty();
         assertThat(revoked.permissions()).doesNotContain("order.create");
+    }
+
+    @Test
+    void merchantAccountShouldResolveOnlyEnabledStoresFromSelectedMerchant() {
+        var merchant = merchantService.createMerchant(new MerchantRequest(
+            "账号关系测试商户",
+            "测试联系人",
+            "13800009991",
+            null,
+            false,
+            null,
+            null,
+            null,
+            null
+        ));
+        var store = merchantService.createStore(new StoreRequest(
+            merchant.id(),
+            "账号关系测试门店",
+            "深圳市南山区关联路 1 号",
+            "09:00-21:00",
+            null,
+            null
+        ));
+
+        var created = systemManagementService.createAccount(new SystemAccountCreateRequest(
+            "STORE_MANAGER",
+            "scope_case_01",
+            "门店店长甲",
+            "13800009992",
+            "Init@2026",
+            merchant.id(),
+            null,
+            List.of(store.id())
+        ));
+
+        assertThat(created.merchantId()).isEqualTo(merchant.id());
+        assertThat(created.storeId()).isEqualTo(store.id());
+        assertThat(created.storeScopes()).singleElement().satisfies(scope -> {
+            assertThat(scope.merchantId()).isEqualTo(merchant.id());
+            assertThat(scope.storeId()).isEqualTo(store.id());
+            assertThat(scope.scopeType()).isEqualTo("SINGLE_STORE");
+        });
+
+        assertThatThrownBy(() -> systemManagementService.createAccount(new SystemAccountCreateRequest(
+            "STORE_STAFF",
+            "scope_case_cross_merchant",
+            "跨商户员工",
+            "13800009993",
+            "Init@2026",
+            merchant.id(),
+            null,
+            List.of(1L)
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("门店不属于所选商户");
+
+        merchantService.updateStoreStatus(store.id(), StoreStatus.DISABLED);
+        assertThatThrownBy(() -> systemManagementService.createAccount(new SystemAccountCreateRequest(
+            "STORE_STAFF",
+            "scope_case_disabled_store",
+            "停用门店员工",
+            "13800009994",
+            "Init@2026",
+            merchant.id(),
+            null,
+            List.of(store.id())
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("停用门店");
     }
 }

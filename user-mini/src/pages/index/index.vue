@@ -2,7 +2,7 @@
   <view class="page">
     <view class="topbar">
       <view>
-        <view class="title">享牛租车</view>
+        <view class="title">电牛哥租车</view>
         <view class="subtitle">扫码门店、选择 SKU、完成支付与签约</view>
       </view>
       <button v-if="account" class="ghost-btn compact-btn" @tap="logout">退出</button>
@@ -126,6 +126,17 @@
           <text class="label">已付</text>
           <text>{{ money(currentOrder.paidAmount) }}</text>
         </view>
+        <view>
+          <text class="label">赠送租期</text>
+          <text>{{ currentOrder.totalBonusDays }} 天</text>
+        </view>
+        <view>
+          <text class="label">预计归还</text>
+          <text>{{ dateText(currentOrder.expectedReturnAt) }}</text>
+        </view>
+      </view>
+      <view v-if="currentOrder.totalBonusDays > 0" class="muted">
+        好评赠送 {{ currentOrder.reviewBonusDays }} 天 / 活动赠送 {{ currentOrder.campaignBonusDays }} 天
       </view>
       <view class="action-row">
         <button class="primary-btn flex-btn" :disabled="!firstPayableBill" :loading="payLoading" @tap="payFirstBill">
@@ -199,7 +210,7 @@
         <view>
           <view class="item-title">{{ order.orderNo }}</view>
           <view class="muted">{{ order.storeName || '门店' }} / {{ order.storeSkuName || '商品' }}</view>
-          <view class="muted">{{ leaseText(order.leaseUnit, order.leaseValue) }} / 车架 {{ order.frameSerialNo || order.frameAssetCode || '-' }}</view>
+          <view class="muted">{{ leaseText(order.leaseUnit, order.leaseValue) }}<template v-if="order.totalBonusDays > 0"> + 赠送 {{ order.totalBonusDays }} 天</template> / 车架 {{ order.frameSerialNo || order.frameAssetCode || '-' }}</view>
         </view>
         <view class="right-text">
           <view>{{ orderStatusText(order.orderStatus) }}</view>
@@ -874,7 +885,7 @@ function requiredAmount(value: string) {
   return amount;
 }
 
-function dateText(value: string) {
+function dateText(value?: string | null) {
   if (!value) {
     return '-';
   }

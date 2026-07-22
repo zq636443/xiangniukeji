@@ -65,6 +65,14 @@ public class ProductRepository {
         return findCategory(id).orElseThrow();
     }
 
+    public int countSkusByCategory(Long categoryId) {
+        return count("SELECT COUNT(1) FROM product_sku WHERE category_id = ?", categoryId);
+    }
+
+    public void deleteCategory(Long id) {
+        jdbcTemplate.update("DELETE FROM product_category WHERE id = ?", id);
+    }
+
     public List<ProductSku> listSkus(Long categoryId) {
         if (categoryId == null) {
             return jdbcTemplate.query("SELECT * FROM product_sku ORDER BY id DESC", skuMapper);
@@ -106,6 +114,22 @@ public class ProductRepository {
             WHERE id = ?
             """, categoryId, name, type.name(), description, Boolean.TRUE.equals(needFrame), Boolean.TRUE.equals(needBattery), Boolean.TRUE.equals(crossReturn), id);
         return findSku(id).orElseThrow();
+    }
+
+    public int countPackagesBySku(Long skuId) {
+        return count("SELECT COUNT(1) FROM product_package WHERE sku_id = ?", skuId);
+    }
+
+    public int countStoreSkusBySku(Long skuId) {
+        return count("SELECT COUNT(1) FROM store_sku WHERE sku_id = ?", skuId);
+    }
+
+    public int countSettlementRulesBySku(Long skuId) {
+        return count("SELECT COUNT(1) FROM settlement_profit_rule WHERE sku_id = ?", skuId);
+    }
+
+    public void deleteSku(Long id) {
+        jdbcTemplate.update("DELETE FROM product_sku WHERE id = ?", id);
     }
 
     public List<ProductPackage> listPackages(Long skuId) {
@@ -159,6 +183,26 @@ public class ProductRepository {
             """, name, priceAmount, unit.name(), leaseValue, totalPeriods, billDayMode.name(), billDay, id);
         jdbcTemplate.update("UPDATE store_sku_package SET rental_amount = ? WHERE package_id = ?", priceAmount, id);
         return findPackage(id).orElseThrow();
+    }
+
+    public int countStoreSkuPackagesByPackage(Long packageId) {
+        return count("SELECT COUNT(1) FROM store_sku_package WHERE package_id = ?", packageId);
+    }
+
+    public int countOrdersByPackage(Long packageId) {
+        return count("SELECT COUNT(1) FROM rental_order WHERE package_id = ?", packageId);
+    }
+
+    public int countExternalOrdersByPackage(Long packageId) {
+        return count("SELECT COUNT(1) FROM external_rental_order WHERE package_id = ?", packageId);
+    }
+
+    public int countVouchersByPackage(Long packageId) {
+        return count("SELECT COUNT(1) FROM voucher_verification WHERE package_id = ?", packageId);
+    }
+
+    public void deletePackage(Long id) {
+        jdbcTemplate.update("DELETE FROM product_package WHERE id = ?", id);
     }
 
     public List<StoreSku> listStoreSkus(Long storeId, Long skuId, StoreSkuStatus status) {
@@ -219,7 +263,7 @@ public class ProductRepository {
     public StoreSku updateStoreSku(Long id, SkuType saleMode, String displayName, BigDecimal signFee, SignFeePayer payer) {
         jdbcTemplate.update("""
             UPDATE store_sku
-            SET sale_mode = ?, display_name = ?, sign_fee_amount = ?, sign_fee_payer = ?, status = 'ON_SHELF'
+            SET sale_mode = ?, display_name = ?, sign_fee_amount = ?, sign_fee_payer = ?
             WHERE id = ?
             """, saleMode.name(), displayName, signFee, payer.name(), id);
         return findStoreSku(id).orElseThrow();
@@ -228,6 +272,46 @@ public class ProductRepository {
     public StoreSku updateStoreSkuStatus(Long id, StoreSkuStatus status) {
         jdbcTemplate.update("UPDATE store_sku SET status = ? WHERE id = ?", status.name(), id);
         return findStoreSku(id).orElseThrow();
+    }
+
+    public void offShelfStoreSkusByStore(Long storeId) {
+        jdbcTemplate.update("UPDATE store_sku SET status = 'OFF_SHELF' WHERE store_id = ?", storeId);
+    }
+
+    public void offShelfStoreSkusByMerchant(Long merchantId) {
+        jdbcTemplate.update("UPDATE store_sku SET status = 'OFF_SHELF' WHERE merchant_id = ?", merchantId);
+    }
+
+    public int countOrdersByStoreSku(Long storeSkuId) {
+        return count("SELECT COUNT(1) FROM rental_order WHERE store_sku_id = ?", storeSkuId);
+    }
+
+    public int countExternalOrdersByStoreSku(Long storeSkuId) {
+        return count("SELECT COUNT(1) FROM external_rental_order WHERE store_sku_id = ?", storeSkuId);
+    }
+
+    public int countVouchersByStoreSku(Long storeSkuId) {
+        return count("SELECT COUNT(1) FROM voucher_verification WHERE store_sku_id = ?", storeSkuId);
+    }
+
+    public int countSettlementSnapshotsByStoreSku(Long storeSkuId) {
+        return count("SELECT COUNT(1) FROM settlement_rule_snapshot WHERE store_sku_id = ?", storeSkuId);
+    }
+
+    public int countSettlementRulesByStoreSku(Long storeSkuId) {
+        return count("SELECT COUNT(1) FROM settlement_profit_rule WHERE store_sku_id = ?", storeSkuId);
+    }
+
+    public int countOverdueCasesByStoreSku(Long storeSkuId) {
+        return count("SELECT COUNT(1) FROM rental_overdue_case WHERE store_sku_id = ?", storeSkuId);
+    }
+
+    public void deleteStoreSkuPackages(Long storeSkuId) {
+        jdbcTemplate.update("DELETE FROM store_sku_package WHERE store_sku_id = ?", storeSkuId);
+    }
+
+    public void deleteStoreSku(Long id) {
+        jdbcTemplate.update("DELETE FROM store_sku WHERE id = ?", id);
     }
 
     public void replaceStoreSkuPackages(Long storeSkuId, List<PackagePriceRow> rows) {
@@ -363,5 +447,9 @@ public class ProductRepository {
     private static LeaseUnit nullableLeaseUnit(ResultSet rs, String column) throws SQLException {
         var value = rs.getString(column);
         return value == null ? null : LeaseUnit.valueOf(value);
+    }
+
+    private int count(String sql, Object... args) {
+        return jdbcTemplate.queryForObject(sql, Integer.class, args);
     }
 }

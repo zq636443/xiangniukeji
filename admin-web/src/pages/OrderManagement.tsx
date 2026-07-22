@@ -1,10 +1,10 @@
-import { ExportOutlined, PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
+import { CarOutlined, ExportOutlined, GiftOutlined, PlusOutlined, RollbackOutlined, SearchOutlined, SwapOutlined, UploadOutlined } from '@ant-design/icons';
 import { Button, DatePicker, Descriptions, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { OrderBatchImportModal, OrderImportTemplateButton } from '../components/OrderBatchImportModal';
 import { http } from '../services/request';
-import type { Asset, OrderStatus, RentalOrder, StoreSku } from '../types/api';
+import type { Asset, AssetStatus, OrderStatus, RentalOrder, Store, StoreSku } from '../types/api';
 import { downloadCsv } from '../utils/csv';
 
 const statusOptions: { label: string; value: OrderStatus }[] = [
@@ -23,6 +23,24 @@ const statusOptions: { label: string; value: OrderStatus }[] = [
   { label: '异常', value: 'EXCEPTION' }
 ];
 
+const assetResultStatusOptions: { label: string; value: AssetStatus }[] = [
+  { label: '空闲可用', value: 'IDLE' },
+  { label: '待检修', value: 'PENDING_REPAIR' },
+  { label: '异常', value: 'EXCEPTION' },
+  { label: '已报废', value: 'SCRAPPED' }
+];
+
+const normalTransitionMap: Partial<Record<OrderStatus, OrderStatus[]>> = {
+  PENDING_PAYMENT: ['PENDING_REAL_NAME'],
+  PENDING_REAL_NAME: ['PENDING_AGREEMENT'],
+  PENDING_AGREEMENT: ['PENDING_DEPOSIT_AUTH'],
+  PENDING_DEPOSIT_AUTH: ['PENDING_VERIFY'],
+  PENDING_VERIFY: ['PENDING_PICKUP'],
+  RENTING: ['PENDING_RETURN', 'OVERDUE'],
+  PENDING_RETURN: ['OVERDUE'],
+  OVERDUE: ['PENDING_SUPPLEMENT']
+};
+
 type CreateForm = {
   userAccountId?: number;
   customerName: string;
@@ -32,7 +50,6 @@ type CreateForm = {
   frameAssetId?: number;
   batteryAssetId?: number;
   orderedAt: Dayjs;
-  expectedPickupAt?: Dayjs;
 };
 
 type TransitionForm = {
@@ -42,6 +59,32 @@ type TransitionForm = {
 
 type ReasonForm = {
   reason: string;
+};
+
+type LeaseBonusForm = {
+  bonusType: 'REVIEW' | 'CAMPAIGN';
+  bonusDays: number;
+  remark?: string;
+};
+
+type PickupForm = {
+  frameAssetId?: number;
+  batteryAssetId?: number;
+  remark?: string;
+};
+
+type ReplaceForm = {
+  assetType: 'VEHICLE_FRAME' | 'BATTERY';
+  newAssetId: number;
+  oldAssetResultStatus: AssetStatus;
+  remark?: string;
+};
+
+type ReturnForm = {
+  returnStoreId?: number;
+  frameResultStatus?: AssetStatus;
+  batteryResultStatus?: AssetStatus;
+  remark?: string;
 };
 
 type OrderFilterForm = {
@@ -54,34 +97,51 @@ type OrderFilterForm = {
 export function OrderManagement() {
   const [orders, setOrders] = useState<RentalOrder[]>([]);
   const [storeSkus, setStoreSkus] = useState<StoreSku[]>([]);
+  const [stores, setStores] = useState<Store[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<RentalOrder | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [transitionOpen, setTransitionOpen] = useState(false);
+  const [leaseBonusOpen, setLeaseBonusOpen] = useState(false);
+  const [pickupOpen, setPickupOpen] = useState(false);
+  const [pickupMode, setPickupMode] = useState<'PICKUP' | 'SHIP'>('PICKUP');
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [exceptionOpen, setExceptionOpen] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
   const [createForm] = Form.useForm<CreateForm>();
   const [transitionForm] = Form.useForm<TransitionForm>();
+  const [leaseBonusForm] = Form.useForm<LeaseBonusForm>();
+  const [pickupForm] = Form.useForm<PickupForm>();
+  const [replaceForm] = Form.useForm<ReplaceForm>();
+  const [returnForm] = Form.useForm<ReturnForm>();
   const [cancelForm] = Form.useForm<ReasonForm>();
   const [exceptionForm] = Form.useForm<ReasonForm>();
   const [filterForm] = Form.useForm<OrderFilterForm>();
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
   const selectedFrameAssetId = Form.useWatch('frameAssetId', createForm);
+  const selectedPickupFrameAssetId = Form.useWatch('frameAssetId', pickupForm);
+  const replaceAssetType = Form.useWatch('assetType', replaceForm);
 
   useEffect(() => {
     void loadAll({});
   }, []);
 
-  const storeSkuOptions = useMemo(() => storeSkus.map((item) => ({
+  const storeSkuOptions = useMemo(() => storeSkus
+    .filter((item) => item.status === 'ON_SHELF')
+    .map((item) => ({
     label: `${item.displayName} / ${item.storeName}`,
     value: item.id
   })), [storeSkus]);
 
-  const storeOptions = useMemo(() => Array.from(new Map(storeSkus.map((item) => [item.storeId, {
-    label: item.storeName || `门店 #${item.storeId}`,
-    value: item.storeId
-  }])).values()), [storeSkus]);
+  const activeStoreSkus = useMemo(() => storeSkus.filter((item) => item.status === 'ON_SHELF'), [storeSkus]);
+
+  const storeOptions = useMemo(() => stores.map((item) => ({
+    label: `${item.storeName} / ${item.storeCode}`,
+    value: item.id
+  })), [stores]);
 
   const selectedStoreSku = useMemo(
     () => storeSkus.find((item) => item.id === selectedStoreSkuId),
@@ -98,14 +158,14 @@ export function OrderManagement() {
   const frameAssetOptions = useMemo(() => assets.filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE')
     && item.status === 'IDLE'
     && item.currentStoreId === selectedStoreSku?.storeId).map((item) => ({
-    label: `${item.serialNo} / ${item.assetType === 'INTEGRATED_VEHICLE' ? '车电一体' : '车架'}`,
+    label: `${item.serialNo} / ${item.assetCode} / ${item.assetType === 'INTEGRATED_VEHICLE' ? '车电一体' : '车架'}`,
     value: item.id
   })), [assets, selectedStoreSku]);
 
   const batteryAssetOptions = useMemo(() => assets.filter((item) => item.assetType === 'BATTERY'
     && item.status === 'IDLE'
     && item.currentStoreId === selectedStoreSku?.storeId).map((item) => ({
-    label: item.serialNo,
+    label: `${item.serialNo} / ${item.assetCode}`,
     value: item.id
   })), [assets, selectedStoreSku]);
 
@@ -114,21 +174,65 @@ export function OrderManagement() {
     [assets, selectedFrameAssetId]
   );
 
+  const pickupFrameAssetOptions = useMemo(() => assets
+    .filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE')
+      && item.status === 'IDLE'
+      && item.currentStoreId === selectedOrder?.storeId)
+    .map((item) => ({ label: `${item.serialNo} / ${item.assetType === 'INTEGRATED_VEHICLE' ? '车电一体' : '车架'}`, value: item.id })), [assets, selectedOrder]);
+
+  const pickupBatteryAssetOptions = useMemo(() => assets
+    .filter((item) => item.assetType === 'BATTERY' && item.status === 'IDLE' && item.currentStoreId === selectedOrder?.storeId)
+    .map((item) => ({ label: item.serialNo, value: item.id })), [assets, selectedOrder]);
+
+  const pickupIntegratedVehicleSelected = useMemo(
+    () => assets.some((item) => item.id === selectedPickupFrameAssetId && item.assetType === 'INTEGRATED_VEHICLE'),
+    [assets, selectedPickupFrameAssetId]
+  );
+
+  const replaceAssetOptions = useMemo(() => assets
+    .filter((item) => {
+      const typeMatches = replaceAssetType === 'VEHICLE_FRAME'
+        ? item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE'
+        : item.assetType === 'BATTERY';
+      return typeMatches && item.status === 'IDLE' && item.currentStoreId === selectedOrder?.storeId;
+    })
+    .map((item) => ({ label: `${item.serialNo} / ${item.assetType === 'INTEGRATED_VEHICLE' ? '车电一体' : item.assetType === 'BATTERY' ? '电池' : '车架'}`, value: item.id })),
+  [assets, replaceAssetType, selectedOrder]);
+
+  const selectedOrderStoreSku = useMemo(
+    () => storeSkus.find((item) => item.id === selectedOrder?.storeSkuId),
+    [selectedOrder, storeSkus]
+  );
+
+  const returnStoreOptions = useMemo(() => stores
+    .filter((store) => store.merchantId === selectedOrder?.merchantId
+      && store.status === 'ENABLED'
+      && (store.id === selectedOrder?.storeId || selectedOrderStoreSku?.supportCrossStoreReturn === true))
+    .map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id })), [selectedOrder, selectedOrderStoreSku, stores]);
+
   useEffect(() => {
     if (integratedVehicleSelected) {
       createForm.setFieldValue('batteryAssetId', undefined);
     }
   }, [createForm, integratedVehicleSelected]);
 
+  useEffect(() => {
+    if (pickupIntegratedVehicleSelected) {
+      pickupForm.setFieldValue('batteryAssetId', undefined);
+    }
+  }, [pickupForm, pickupIntegratedVehicleSelected]);
+
   async function loadAll(filters: OrderFilterForm = filterForm.getFieldsValue()) {
-    const [orderData, storeSkuData, assetData] = await Promise.all([
+    const [orderData, storeSkuData, assetData, storeData] = await Promise.all([
       http.get<unknown, RentalOrder[]>('/api/admin/orders', { params: filters }),
       http.get<unknown, StoreSku[]>('/api/admin/products/store-skus'),
-      http.get<unknown, Asset[]>('/api/admin/assets')
+      http.get<unknown, Asset[]>('/api/admin/assets'),
+      http.get<unknown, Store[]>('/api/admin/stores')
     ]);
     setOrders(orderData);
     setStoreSkus(storeSkuData);
     setAssets(assetData);
+    setStores(storeData);
   }
 
   async function resetFilters() {
@@ -156,6 +260,9 @@ export function OrderManagement() {
       '已付金额',
       '租期',
       '自动续租',
+      '好评赠送天数',
+      '活动赠送天数',
+      '赠送合计天数',
       '下单时间',
       '预计取车',
       '开始租赁',
@@ -181,6 +288,9 @@ export function OrderManagement() {
       order.paidAmount,
       leaseText(order),
       renewalText(order),
+      order.reviewBonusDays,
+      order.campaignBonusDays,
+      order.totalBonusDays,
       order.orderedAt,
       order.expectedPickupAt,
       order.leaseStartedAt,
@@ -191,7 +301,7 @@ export function OrderManagement() {
   }
 
   function openCreateOrder() {
-    const firstStoreSku = storeSkus[0];
+    const firstStoreSku = storeSkus.find((item) => item.status === 'ON_SHELF');
     const firstPackage = firstStoreSku?.packages.find((item) => item.status === 'ENABLED');
     createForm.resetFields();
     createForm.setFieldsValue({
@@ -205,8 +315,7 @@ export function OrderManagement() {
   async function createOrder(values: CreateForm) {
     await http.post('/api/admin/orders', {
       ...values,
-      orderedAt: values.orderedAt.format('YYYY-MM-DDTHH:mm:ss'),
-      expectedPickupAt: values.expectedPickupAt?.format('YYYY-MM-DDTHH:mm:ss')
+      orderedAt: values.orderedAt.format('YYYY-MM-DDTHH:mm:ss')
     });
     setCreateOpen(false);
     createForm.resetFields();
@@ -217,6 +326,10 @@ export function OrderManagement() {
   function openTransition(order: RentalOrder) {
     setSelectedOrder(order);
     transitionForm.resetFields();
+    const nextStatus = transitionOptionsFor(order.orderStatus)[0]?.value;
+    if (nextStatus) {
+      transitionForm.setFieldsValue({ targetStatus: nextStatus });
+    }
     setTransitionOpen(true);
   }
 
@@ -225,6 +338,22 @@ export function OrderManagement() {
     await http.post(`/api/admin/orders/${selectedOrder.id}/transition`, values);
     setTransitionOpen(false);
     message.success('订单状态已流转');
+    await loadAll();
+  }
+
+  function openLeaseBonus(order: RentalOrder) {
+    setSelectedOrder(order);
+    leaseBonusForm.resetFields();
+    leaseBonusForm.setFieldsValue({ bonusType: 'REVIEW', bonusDays: 2 });
+    setLeaseBonusOpen(true);
+  }
+
+  async function submitLeaseBonus(values: LeaseBonusForm) {
+    if (!selectedOrder) return;
+    await http.post(`/api/admin/orders/${selectedOrder.id}/lease-bonuses`, values);
+    setLeaseBonusOpen(false);
+    leaseBonusForm.resetFields();
+    message.success(`已赠送 ${values.bonusDays} 天租期`);
     await loadAll();
   }
 
@@ -244,13 +373,91 @@ export function OrderManagement() {
     await loadAll();
   }
 
+  function openPickup(order: RentalOrder, mode: 'PICKUP' | 'SHIP') {
+    setSelectedOrder(order);
+    setPickupMode(mode);
+    pickupForm.resetFields();
+    pickupForm.setFieldsValue({
+      frameAssetId: order.frameAssetId ?? undefined,
+      batteryAssetId: order.batteryAssetId ?? undefined,
+      remark: mode === 'SHIP' ? '总部免付款发货' : '总部取车交接'
+    });
+    setPickupOpen(true);
+  }
+
+  async function submitPickup(values: PickupForm) {
+    if (!selectedOrder) return;
+    if (!values.frameAssetId && !values.batteryAssetId) {
+      message.error('请至少选择车架、车电一体或电池资产');
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const endpoint = pickupMode === 'SHIP' ? 'ship' : 'pickup-assets';
+      await http.post(`/api/admin/orders/${selectedOrder.id}/${endpoint}`, values);
+      message.success(pickupMode === 'SHIP' ? '订单已免付款发货并开始租赁' : '取车交接已完成');
+      setPickupOpen(false);
+      pickupForm.resetFields();
+      await loadAll();
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  function openReplace(order: RentalOrder) {
+    setSelectedOrder(order);
+    replaceForm.resetFields();
+    replaceForm.setFieldsValue({ assetType: 'VEHICLE_FRAME', oldAssetResultStatus: 'IDLE', remark: '总部更换资产' });
+    setReplaceOpen(true);
+  }
+
+  async function submitReplace(values: ReplaceForm) {
+    if (!selectedOrder) return;
+    setActionLoading(true);
+    try {
+      await http.post(`/api/admin/orders/${selectedOrder.id}/replace-asset`, values);
+      message.success('订单资产已更换');
+      setReplaceOpen(false);
+      replaceForm.resetFields();
+      await loadAll();
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  function openReturn(order: RentalOrder) {
+    setSelectedOrder(order);
+    returnForm.resetFields();
+    returnForm.setFieldsValue({
+      returnStoreId: order.storeId,
+      frameResultStatus: 'IDLE',
+      batteryResultStatus: 'IDLE',
+      remark: '总部归还资产并结束订单'
+    });
+    setReturnOpen(true);
+  }
+
+  async function submitReturn(values: ReturnForm) {
+    if (!selectedOrder) return;
+    setActionLoading(true);
+    try {
+      await http.post(`/api/admin/orders/${selectedOrder.id}/return-assets`, values);
+      message.success('资产已归还，订单已完成');
+      setReturnOpen(false);
+      returnForm.resetFields();
+      await loadAll();
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   return (
     <Space direction="vertical" size={16} className="page-stack">
       <Space align="center" className="toolbar" wrap>
-        <Typography.Title level={3}>订单账单</Typography.Title>
-        <OrderImportTemplateButton storeSkus={storeSkus} assets={assets} />
+        <Typography.Title level={3}>订单管理</Typography.Title>
+        <OrderImportTemplateButton storeSkus={activeStoreSkus} assets={assets} />
         <Button icon={<UploadOutlined />} onClick={() => setBatchImportOpen(true)}>批量导入</Button>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateOrder}>新建订单</Button>
+        <Button type="primary" icon={<PlusOutlined />} disabled={!activeStoreSkus.length} onClick={openCreateOrder}>新建订单</Button>
       </Space>
 
       <div className="section">
@@ -279,11 +486,11 @@ export function OrderManagement() {
           size="small"
           dataSource={orders}
           pagination={false}
-          scroll={{ x: 1980 }}
+          scroll={{ x: 2200 }}
           expandable={{
             expandedRowRender: (record) => (
               <Space direction="vertical" className="page-stack">
-                <Descriptions size="small" column={4} bordered>
+                <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3, xl: 4 }} bordered>
                   <Descriptions.Item label="客户姓名">{record.customerName || '-'}</Descriptions.Item>
                   <Descriptions.Item label="联系电话">{record.customerPhone || '-'}</Descriptions.Item>
                   <Descriptions.Item label="用户账号">{record.userAccountId || '-'}</Descriptions.Item>
@@ -294,6 +501,9 @@ export function OrderManagement() {
                   <Descriptions.Item label="电池资产">{assetText(record.batterySerialNo, record.batteryAssetCode, record.batteryAssetId)}</Descriptions.Item>
                   <Descriptions.Item label="租期">{leaseText(record)}</Descriptions.Item>
                   <Descriptions.Item label="自动续租">{renewalText(record)}</Descriptions.Item>
+                  <Descriptions.Item label="好评赠送">{record.reviewBonusDays} 天</Descriptions.Item>
+                  <Descriptions.Item label="活动赠送">{record.campaignBonusDays} 天</Descriptions.Item>
+                  <Descriptions.Item label="赠送合计">{record.totalBonusDays} 天</Descriptions.Item>
                   <Descriptions.Item label="下单时间">{dateText(record.orderedAt)}</Descriptions.Item>
                   <Descriptions.Item label="系统录入时间">{dateText(record.createdAt)}</Descriptions.Item>
                   <Descriptions.Item label="预计取车">{dateText(record.expectedPickupAt)}</Descriptions.Item>
@@ -316,6 +526,22 @@ export function OrderManagement() {
                     { title: '数量', dataIndex: 'quantity' },
                     { title: '单价', dataIndex: 'unitAmount' },
                     { title: '小计', dataIndex: 'totalAmount' }
+                  ]}
+                />
+                <Table
+                  rowKey="id"
+                  size="small"
+                  dataSource={record.leaseBonuses}
+                  pagination={false}
+                  locale={{ emptyText: '暂无赠送租期记录' }}
+                  columns={[
+                    { title: '赠送类型', dataIndex: 'bonusType', render: leaseBonusTypeText },
+                    { title: '天数', dataIndex: 'bonusDays', render: (value: number) => `${value} 天` },
+                    { title: '备注', dataIndex: 'remark', render: (value?: string | null) => value || '-' },
+                    { title: '顺延前', dataIndex: 'expectedReturnBefore', render: dateText },
+                    { title: '顺延后', dataIndex: 'expectedReturnAfter', render: dateText },
+                    { title: '操作人', dataIndex: 'operatorAccountId', render: (value?: number | null) => value || '-' },
+                    { title: '时间', dataIndex: 'createdAt', render: dateText }
                   ]}
                 />
                 <Table
@@ -347,17 +573,39 @@ export function OrderManagement() {
             { title: '电池号', width: 160, render: (_, record) => assetText(record.batterySerialNo, record.batteryAssetCode, record.batteryAssetId) },
             { title: '应付', dataIndex: 'payableAmount', width: 100, render: moneyText },
             { title: '已付', dataIndex: 'paidAmount', width: 100, render: moneyText },
+            { title: '赠送租期', dataIndex: 'totalBonusDays', width: 100, render: (value: number) => `${value} 天` },
             { title: '预计归还', dataIndex: 'expectedReturnAt', width: 170, render: dateText },
             { title: '下单时间', dataIndex: 'orderedAt', width: 170, render: dateText },
             {
               title: '操作',
-              width: 190,
+              width: 320,
               fixed: 'right',
               render: (_, record) => (
-                <Space>
-                  <Button size="small" onClick={() => openTransition(record)}>流转</Button>
-                  <Button size="small" onClick={() => { setSelectedOrder(record); setCancelOpen(true); }}>取消</Button>
-                  <Button size="small" danger onClick={() => { setSelectedOrder(record); setExceptionOpen(true); }}>异常</Button>
+                <Space wrap>
+                  {transitionOptionsFor(record.orderStatus).length ? (
+                    <Button size="small" onClick={() => openTransition(record)}>流转</Button>
+                  ) : null}
+                  {record.orderStatus === 'PENDING_PAYMENT' ? (
+                    <Button size="small" icon={<CarOutlined />} onClick={() => openPickup(record, 'SHIP')}>免付款发货</Button>
+                  ) : null}
+                  {record.orderStatus === 'PENDING_PICKUP' ? (
+                    <Button size="small" icon={<CarOutlined />} onClick={() => openPickup(record, 'PICKUP')}>取车交接</Button>
+                  ) : null}
+                  {canReplaceAsset(record) ? (
+                    <Button size="small" icon={<SwapOutlined />} onClick={() => openReplace(record)}>更换资产</Button>
+                  ) : null}
+                  {canReturnAssets(record) ? (
+                    <Button size="small" danger icon={<RollbackOutlined />} onClick={() => openReturn(record)}>归还结束</Button>
+                  ) : null}
+                  {canGrantLeaseBonus(record) ? (
+                    <Button size="small" icon={<GiftOutlined />} onClick={() => openLeaseBonus(record)}>赠送租期</Button>
+                  ) : null}
+                  {canCancelOrder(record) ? (
+                    <Button size="small" onClick={() => { setSelectedOrder(record); cancelForm.resetFields(); setCancelOpen(true); }}>取消</Button>
+                  ) : null}
+                  {canMarkException(record) ? (
+                    <Button size="small" danger onClick={() => { setSelectedOrder(record); exceptionForm.resetFields(); setExceptionOpen(true); }}>异常</Button>
+                  ) : null}
                 </Space>
               )
             }
@@ -385,12 +633,22 @@ export function OrderManagement() {
             />
           </Form.Item>
           <Form.Item name="packageId" label="SKU" rules={[{ required: true, message: '请选择 SKU' }]}><Select options={packageOptions} /></Form.Item>
-          <Form.Item name="frameAssetId" label="车架 / 车电一体资产"><Select allowClear options={frameAssetOptions} /></Form.Item>
-          <Form.Item name="batteryAssetId" label="电池资产">
+          <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
             <Select
+              showSearch
               allowClear
+              optionFilterProp="label"
+              placeholder="输入车架号、资产编号或类型搜索"
+              options={frameAssetOptions}
+            />
+          </Form.Item>
+          <Form.Item name="batteryAssetId" label="电池资产（选填）">
+            <Select
+              showSearch
+              allowClear
+              optionFilterProp="label"
               disabled={integratedVehicleSelected}
-              placeholder={integratedVehicleSelected ? '车电一体无需独立电池' : undefined}
+              placeholder={integratedVehicleSelected ? '车电一体无需独立电池' : '输入电池号或资产编号搜索，可不选'}
               options={batteryAssetOptions}
             />
           </Form.Item>
@@ -402,9 +660,6 @@ export function OrderManagement() {
               style={{ width: '100%' }}
             />
           </Form.Item>
-          <Form.Item name="expectedPickupAt" label="预计取车时间">
-            <DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
-          </Form.Item>
         </Form>
       </Modal>
 
@@ -415,9 +670,117 @@ export function OrderManagement() {
         onImported={loadAll}
       />
 
+      <Modal
+        title="赠送租期"
+        open={leaseBonusOpen}
+        onCancel={() => setLeaseBonusOpen(false)}
+        onOk={() => leaseBonusForm.submit()}
+        destroyOnHidden
+      >
+        <Form form={leaseBonusForm} layout="vertical" onFinish={submitLeaseBonus}>
+          <Form.Item name="bonusType" label="赠送类型" rules={[{ required: true, message: '请选择赠送类型' }]}>
+            <Select
+              options={[
+                { label: '好评赠送', value: 'REVIEW' },
+                { label: '活动赠送', value: 'CAMPAIGN' }
+              ]}
+              onChange={(value: LeaseBonusForm['bonusType']) => {
+                leaseBonusForm.setFieldValue('bonusDays', value === 'REVIEW' ? 2 : 15);
+              }}
+            />
+          </Form.Item>
+          <Form.Item name="bonusDays" label="赠送天数" rules={[{ required: true, message: '请输入赠送天数' }]}>
+            <InputNumber min={1} max={999} precision={0} addonAfter="天" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <Input maxLength={255} placeholder="如：客户完成平台好评、暑期活动赠送" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={pickupMode === 'SHIP' ? '免付款发货' : '取车交接'}
+        open={pickupOpen}
+        onCancel={() => { setPickupOpen(false); pickupForm.resetFields(); }}
+        onOk={() => pickupForm.submit()}
+        confirmLoading={actionLoading}
+        destroyOnHidden
+      >
+        <Form form={pickupForm} layout="vertical" onFinish={submitPickup}>
+          <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
+            <Select allowClear options={pickupFrameAssetOptions} />
+          </Form.Item>
+          <Form.Item name="batteryAssetId" label="电池资产">
+            <Select
+              allowClear
+              disabled={pickupIntegratedVehicleSelected}
+              placeholder={pickupIntegratedVehicleSelected ? '车电一体无需独立电池' : undefined}
+              options={pickupBatteryAssetOptions}
+            />
+          </Form.Item>
+          <Form.Item name="remark" label="备注"><Input maxLength={255} /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="更换资产"
+        open={replaceOpen}
+        onCancel={() => { setReplaceOpen(false); replaceForm.resetFields(); }}
+        onOk={() => replaceForm.submit()}
+        confirmLoading={actionLoading}
+        destroyOnHidden
+      >
+        <Form form={replaceForm} layout="vertical" onFinish={submitReplace}>
+          <Form.Item name="assetType" label="资产类型" rules={[{ required: true, message: '请选择资产类型' }]}>
+            <Select
+              options={[
+                { label: '车架（含车电一体）', value: 'VEHICLE_FRAME' },
+                { label: '电池', value: 'BATTERY' }
+              ]}
+              onChange={() => replaceForm.setFieldValue('newAssetId', undefined)}
+            />
+          </Form.Item>
+          <Form.Item name="newAssetId" label="新资产" rules={[{ required: true, message: '请选择新资产' }]}>
+            <Select options={replaceAssetOptions} />
+          </Form.Item>
+          <Form.Item name="oldAssetResultStatus" label="原资产状态" rules={[{ required: true, message: '请选择原资产状态' }]}>
+            <Select options={assetResultStatusOptions} />
+          </Form.Item>
+          <Form.Item name="remark" label="备注"><Input maxLength={255} /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="归还资产并结束订单"
+        open={returnOpen}
+        onCancel={() => { setReturnOpen(false); returnForm.resetFields(); }}
+        onOk={() => returnForm.submit()}
+        confirmLoading={actionLoading}
+        destroyOnHidden
+      >
+        <Form form={returnForm} layout="vertical" onFinish={submitReturn}>
+          <Form.Item name="returnStoreId" label="归还门店" rules={[{ required: true, message: '请选择归还门店' }]}>
+            <Select options={returnStoreOptions} />
+          </Form.Item>
+          {selectedOrder?.frameAssetId ? (
+            <Form.Item name="frameResultStatus" label="车架归还状态" rules={[{ required: true, message: '请选择车架状态' }]}>
+              <Select options={assetResultStatusOptions} />
+            </Form.Item>
+          ) : null}
+          {selectedOrder?.batteryAssetId ? (
+            <Form.Item name="batteryResultStatus" label="电池归还状态" rules={[{ required: true, message: '请选择电池状态' }]}>
+              <Select options={assetResultStatusOptions} />
+            </Form.Item>
+          ) : null}
+          <Form.Item name="remark" label="备注"><Input maxLength={255} /></Form.Item>
+        </Form>
+      </Modal>
+
       <Modal title="订单状态流转" open={transitionOpen} onCancel={() => setTransitionOpen(false)} onOk={() => transitionForm.submit()} destroyOnHidden>
         <Form form={transitionForm} layout="vertical" onFinish={submitTransition}>
-          <Form.Item name="targetStatus" label="目标状态" rules={[{ required: true, message: '请选择目标状态' }]}><Select options={statusOptions} /></Form.Item>
+          <Form.Item name="targetStatus" label="目标状态" rules={[{ required: true, message: '请选择目标状态' }]}>
+            <Select options={selectedOrder ? transitionOptionsFor(selectedOrder.orderStatus) : []} />
+          </Form.Item>
           <Form.Item name="remark" label="备注"><Input /></Form.Item>
         </Form>
       </Modal>
@@ -462,4 +825,33 @@ function renewalText(order: RentalOrder) {
   if (!order.autoRenewEnabled) return '未开启';
   const unit = order.renewalUnit === 'DAY' ? '天' : '个月';
   return `${order.renewalValue || 1}${unit} / ${moneyText(order.renewalAmount)} / 已续 ${order.renewalCount} 次`;
+}
+
+function canGrantLeaseBonus(order: RentalOrder) {
+  return !['OVERDUE', 'PENDING_SUPPLEMENT', 'COMPLETED', 'CANCELLED', 'EXCEPTION'].includes(order.orderStatus);
+}
+
+function transitionOptionsFor(status: OrderStatus) {
+  const allowed = normalTransitionMap[status] ?? [];
+  return statusOptions.filter((item) => allowed.includes(item.value));
+}
+
+function canCancelOrder(order: RentalOrder) {
+  return ['PENDING_PAYMENT', 'PENDING_REAL_NAME', 'PENDING_AGREEMENT', 'PENDING_DEPOSIT_AUTH', 'PENDING_VERIFY', 'PENDING_PICKUP'].includes(order.orderStatus);
+}
+
+function canMarkException(order: RentalOrder) {
+  return !['COMPLETED', 'CANCELLED', 'EXCEPTION'].includes(order.orderStatus);
+}
+
+function canReplaceAsset(order: RentalOrder) {
+  return ['RENTING', 'PENDING_RETURN', 'PENDING_SUPPLEMENT'].includes(order.orderStatus);
+}
+
+function canReturnAssets(order: RentalOrder) {
+  return ['RENTING', 'PENDING_RETURN', 'OVERDUE', 'PENDING_SUPPLEMENT'].includes(order.orderStatus);
+}
+
+function leaseBonusTypeText(value: 'REVIEW' | 'CAMPAIGN') {
+  return value === 'REVIEW' ? '好评赠送' : '活动赠送';
 }

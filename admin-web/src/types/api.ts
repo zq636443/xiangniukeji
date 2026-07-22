@@ -716,6 +716,20 @@ export type OrderLog = {
   createdAt: string;
 };
 
+export type OrderLeaseBonusType = 'REVIEW' | 'CAMPAIGN';
+
+export type OrderLeaseBonus = {
+  id: number;
+  orderId: number;
+  bonusType: OrderLeaseBonusType;
+  bonusDays: number;
+  operatorAccountId?: number | null;
+  remark?: string | null;
+  expectedReturnBefore?: string | null;
+  expectedReturnAfter?: string | null;
+  createdAt: string;
+};
+
 export type RentalOrder = {
   id: number;
   orderNo: string;
@@ -754,6 +768,9 @@ export type RentalOrder = {
   renewalValue?: number | null;
   renewalAmount?: number | null;
   renewalCount: number;
+  reviewBonusDays: number;
+  campaignBonusDays: number;
+  totalBonusDays: number;
   expectedPickupAt?: string | null;
   leaseStartedAt?: string | null;
   expectedReturnAt?: string | null;
@@ -763,6 +780,7 @@ export type RentalOrder = {
   exceptionReason?: string | null;
   createdAt: string;
   items: OrderItem[];
+  leaseBonuses: OrderLeaseBonus[];
   logs: OrderLog[];
 };
 

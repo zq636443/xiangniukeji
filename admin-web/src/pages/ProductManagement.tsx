@@ -1,4 +1,5 @@
-import { Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { DeleteOutlined, EditOutlined, PlusOutlined, PoweroffOutlined } from '@ant-design/icons';
+import { Button, Checkbox, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
 import type { FormInstance } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
@@ -45,6 +46,7 @@ type StoreSkuForm = {
   packages: PackagePriceForm[];
 };
 type BatchForm = {
+  merchantId: number;
   skuId: number;
   storeIds: number[];
   displayName?: string;
@@ -70,6 +72,9 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
   const [packageOpen, setPackageOpen] = useState(false);
   const [storeSkuOpen, setStoreSkuOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<ProductCategory | null>(null);
+  const [editingSku, setEditingSku] = useState<ProductSku | null>(null);
+  const [editingPackage, setEditingPackage] = useState<ProductPackage | null>(null);
   const [editingStoreSku, setEditingStoreSku] = useState<StoreSku | null>(null);
   const [categoryForm] = Form.useForm<CategoryForm>();
   const [skuForm] = Form.useForm<SkuForm>();
@@ -84,27 +89,42 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
     void loadAll();
   }, []);
 
-  const categoryOptions = useMemo(() => categories.map((item) => ({ label: item.categoryName, value: item.id })), [categories]);
-  const skuOptions = useMemo(() => skus.map((item) => ({ label: item.skuName, value: item.id })), [skus]);
-  const merchantOptions = useMemo(() => merchants.map((item) => ({ label: item.merchantName, value: item.id })), [merchants]);
-  const storeOptions = useMemo(() => stores.map((item) => ({ label: `${item.storeName} / ${item.storeCode}`, value: item.id })), [stores]);
+  const categoryOptions = useMemo(() => categories
+    .filter((item) => item.status === 'ENABLED')
+    .map((item) => ({ label: item.categoryName, value: item.id })), [categories]);
+  const skuOptions = useMemo(() => skus
+    .filter((item) => item.status === 'ENABLED')
+    .map((item) => ({ label: `${item.skuName} / ${item.skuCode}`, value: item.id })), [skus]);
+  const merchantOptions = useMemo(() => merchants
+    .filter((item) => item.status === 'ENABLED')
+    .map((item) => ({ label: item.merchantName, value: item.id })), [merchants]);
   const selectedStoreSkuMerchantId = Form.useWatch('merchantId', storeSkuForm);
   const selectedStoreSkuSkuId = Form.useWatch('skuId', storeSkuForm);
+  const selectedBatchMerchantId = Form.useWatch('merchantId', batchForm);
   const selectedBatchSkuId = Form.useWatch('skuId', batchForm);
+  const selectedBillDayMode = Form.useWatch('billDayMode', packageForm);
 
   const filteredStoreOptions = useMemo(
-    () => storeOptions.filter((item) => !selectedStoreSkuMerchantId || stores.find((store) => store.id === item.value)?.merchantId === selectedStoreSkuMerchantId),
-    [selectedStoreSkuMerchantId, storeOptions, stores]
+    () => stores
+      .filter((store) => store.merchantId === selectedStoreSkuMerchantId && store.status === 'ENABLED')
+      .map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id })),
+    [selectedStoreSkuMerchantId, stores]
+  );
+  const batchStoreOptions = useMemo(
+    () => stores
+      .filter((store) => store.merchantId === selectedBatchMerchantId && store.status === 'ENABLED')
+      .map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id })),
+    [selectedBatchMerchantId, stores]
   );
   const storeSkuPackageOptions = useMemo(
     () => packages
-      .filter((item) => !selectedStoreSkuSkuId || item.skuId === selectedStoreSkuSkuId)
+      .filter((item) => item.status === 'ENABLED' && (!selectedStoreSkuSkuId || item.skuId === selectedStoreSkuSkuId))
       .map((item) => ({ label: `${item.packageName} / ¥${item.priceAmount} / ${item.leaseValue}${item.leaseUnit === 'DAY' ? '天' : '个月'}`, value: item.id })),
     [packages, selectedStoreSkuSkuId]
   );
   const batchPackageOptions = useMemo(
     () => packages
-      .filter((item) => !selectedBatchSkuId || item.skuId === selectedBatchSkuId)
+      .filter((item) => item.status === 'ENABLED' && (!selectedBatchSkuId || item.skuId === selectedBatchSkuId))
       .map((item) => ({ label: `${item.packageName} / ¥${item.priceAmount} / ${item.leaseValue}${item.leaseUnit === 'DAY' ? '天' : '个月'}`, value: item.id })),
     [packages, selectedBatchSkuId]
   );
@@ -126,33 +146,125 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
     setStores(storeData);
   }
 
-  async function createCategory(values: CategoryForm) {
-    await http.post('/api/admin/products/categories', values);
+  async function submitCategory(values: CategoryForm) {
+    if (editingCategory) {
+      await http.put(`/api/admin/products/categories/${editingCategory.id}`, values);
+      message.success('分类已更新');
+    } else {
+      await http.post('/api/admin/products/categories', values);
+      message.success('分类已创建');
+    }
     setCategoryOpen(false);
+    setEditingCategory(null);
     categoryForm.resetFields();
-    message.success('分类已创建');
     await loadAll();
   }
 
-  async function createSku(values: SkuForm) {
-    await http.post('/api/admin/products/skus', values);
+  async function submitSku(values: SkuForm) {
+    if (editingSku) {
+      await http.put(`/api/admin/products/skus/${editingSku.id}`, values);
+      message.success('商品链接已更新');
+    } else {
+      await http.post('/api/admin/products/skus', values);
+      message.success('商品链接已创建');
+    }
     setSkuOpen(false);
+    setEditingSku(null);
     skuForm.resetFields();
-    message.success('商品链接已创建');
     await loadAll();
   }
 
-  async function createPackage(values: PackageForm) {
-    await http.post('/api/admin/products/packages', values);
+  async function submitPackage(values: PackageForm) {
+    if (editingPackage) {
+      await http.put(`/api/admin/products/packages/${editingPackage.id}`, values);
+      message.success('SKU 已更新，门店商品价格已同步');
+    } else {
+      await http.post('/api/admin/products/packages', values);
+      message.success('SKU 已创建');
+    }
     setPackageOpen(false);
+    setEditingPackage(null);
     packageForm.resetFields();
-    message.success('SKU 已创建');
+    await loadAll();
+  }
+
+  function openCreateCategory() {
+    setEditingCategory(null);
+    categoryForm.resetFields();
+    categoryForm.setFieldsValue({ sortOrder: 0 });
+    setCategoryOpen(true);
+  }
+
+  function openEditCategory(record: ProductCategory) {
+    setEditingCategory(record);
+    categoryForm.setFieldsValue({ categoryName: record.categoryName, sortOrder: record.sortOrder });
+    setCategoryOpen(true);
+  }
+
+  function openCreateSku() {
+    setEditingSku(null);
+    skuForm.resetFields();
+    skuForm.setFieldsValue({ skuType: 'RENTAL', needFrameAsset: true, needBatteryAsset: true, supportCrossStoreReturn: false });
+    setSkuOpen(true);
+  }
+
+  function openEditSku(record: ProductSku) {
+    setEditingSku(record);
+    skuForm.setFieldsValue({
+      categoryId: record.categoryId,
+      skuName: record.skuName,
+      skuType: record.skuType,
+      description: record.description ?? undefined,
+      needFrameAsset: record.needFrameAsset,
+      needBatteryAsset: record.needBatteryAsset,
+      supportCrossStoreReturn: record.supportCrossStoreReturn
+    });
+    setSkuOpen(true);
+  }
+
+  function openCreatePackage() {
+    setEditingPackage(null);
+    packageForm.resetFields();
+    packageForm.setFieldsValue({ priceAmount: 0, leaseUnit: 'MONTH', leaseValue: 1, totalPeriods: 1, billDayMode: 'PAYMENT_DAY' });
+    setPackageOpen(true);
+  }
+
+  function openEditPackage(record: ProductPackage) {
+    setEditingPackage(record);
+    packageForm.setFieldsValue({
+      skuId: record.skuId,
+      packageName: record.packageName,
+      priceAmount: record.priceAmount,
+      leaseUnit: record.leaseUnit,
+      leaseValue: record.leaseValue,
+      totalPeriods: record.totalPeriods,
+      billDayMode: record.billDayMode,
+      billDay: record.billDay ?? undefined
+    });
+    setPackageOpen(true);
+  }
+
+  async function deleteCategory(record: ProductCategory) {
+    await http.delete(`/api/admin/products/categories/${record.id}`);
+    message.success('分类已删除');
+    await loadAll();
+  }
+
+  async function deleteSku(record: ProductSku) {
+    await http.delete(`/api/admin/products/skus/${record.id}`);
+    message.success('商品链接已删除');
+    await loadAll();
+  }
+
+  async function deletePackage(record: ProductPackage) {
+    await http.delete(`/api/admin/products/packages/${record.id}`);
+    message.success('SKU 已删除');
     await loadAll();
   }
 
   async function publishStoreSku(values: StoreSkuForm) {
     const store = stores.find((item) => item.id === values.storeId);
-    await http.post('/api/admin/products/store-skus', {
+    const payload = {
       merchantId: values.merchantId || store?.merchantId,
       storeId: values.storeId,
       skuId: values.skuId,
@@ -161,7 +273,12 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       signFeeAmount: values.signFeeAmount,
       signFeePayer: values.signFeePayer,
       packages: values.packages
-    });
+    };
+    if (editingStoreSku) {
+      await http.put(`/api/admin/products/store-skus/${editingStoreSku.id}`, payload);
+    } else {
+      await http.post('/api/admin/products/store-skus', payload);
+    }
     setStoreSkuOpen(false);
     setEditingStoreSku(null);
     storeSkuForm.resetFields();
@@ -204,7 +321,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       storeId: record.storeId,
       skuId: record.skuId,
       displayName: record.displayName,
-      saleMode: record.saleMode,
+      saleMode: skus.find((item) => item.id === record.skuId)?.skuType ?? record.saleMode,
       signFeeAmount: record.signFeeAmount,
       signFeePayer: record.signFeePayer,
       packages: record.packages.map((item) => ({
@@ -227,26 +344,61 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
     await loadAll();
   }
 
+  async function deleteStoreSku(record: StoreSku) {
+    await http.delete(`/api/admin/products/store-skus/${record.id}`);
+    message.success('门店商品已删除');
+    await loadAll();
+  }
+
   return (
     <Space direction="vertical" size={16} className="page-stack">
       <Space align="center" className="toolbar">
         <Typography.Title level={3}>{mode === 'skus' ? '链接管理' : mode === 'packages' ? 'SKU 管理' : mode === 'storeSkus' ? '门店商品' : '商品管理'}</Typography.Title>
-        {showSkus && <Button type={mode === 'skus' ? 'primary' : 'default'} onClick={() => setCategoryOpen(true)}>新建分类</Button>}
-        {showSkus && <Button type={mode === 'skus' ? 'primary' : 'default'} onClick={() => {
-          skuForm.setFieldsValue({ skuType: 'RENTAL', needFrameAsset: true, needBatteryAsset: true, supportCrossStoreReturn: false });
-          setSkuOpen(true);
-        }}>新建链接</Button>}
-        {showPackages && <Button type={mode === 'packages' ? 'primary' : 'default'} onClick={() => {
-          packageForm.setFieldsValue({ priceAmount: 0, leaseUnit: 'MONTH', leaseValue: 1, totalPeriods: 1, billDayMode: 'PAYMENT_DAY' });
-          setPackageOpen(true);
-        }}>新增 SKU</Button>}
-        {showStoreSkus && <Button type={mode === 'storeSkus' ? 'primary' : 'default'} onClick={openCreateStoreSku}>门店上架</Button>}
+        {showSkus && <Button icon={<PlusOutlined />} onClick={openCreateCategory}>新建分类</Button>}
+        {showSkus && <Button type={mode === 'skus' ? 'primary' : 'default'} icon={<PlusOutlined />} onClick={openCreateSku}>新建链接</Button>}
+        {showPackages && <Button type={mode === 'packages' ? 'primary' : 'default'} icon={<PlusOutlined />} onClick={openCreatePackage}>新增 SKU</Button>}
+        {showStoreSkus && <Button type={mode === 'storeSkus' ? 'primary' : 'default'} icon={<PlusOutlined />} onClick={openCreateStoreSku}>门店上架</Button>}
         {showStoreSkus && <Button onClick={() => {
           batchForm.resetFields();
           batchForm.setFieldsValue({ saleMode: 'RENTAL', signFeePayer: 'USER', signFeeAmount: 0, packages: [defaultPackagePrice()] });
           setBatchOpen(true);
-        }}>批量上架</Button>}
+        }} icon={<PlusOutlined />}>批量上架</Button>}
       </Space>
+
+      {showSkus && <div className="section">
+        <Typography.Title level={5}>商品分类</Typography.Title>
+        <Table
+          rowKey="id"
+          size="small"
+          dataSource={categories}
+          pagination={false}
+          columns={[
+            { title: '分类编码', dataIndex: 'categoryCode' },
+            { title: '分类名称', dataIndex: 'categoryName' },
+            { title: '排序', dataIndex: 'sortOrder', width: 100 },
+            { title: '链接数量', render: (_, record) => skus.filter((item) => item.categoryId === record.id).length, width: 100 },
+            {
+              title: '操作',
+              width: 160,
+              render: (_, record) => (
+                <Space>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openEditCategory(record)}>编辑</Button>
+                  <Popconfirm
+                    title="确认删除分类？"
+                    description="存在商品链接的分类不可删除。"
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => deleteCategory(record)}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                  </Popconfirm>
+                </Space>
+              )
+            }
+          ]}
+        />
+      </div>}
 
       {showSkus && <div className="section">
         <Typography.Title level={5}>商品链接</Typography.Title>
@@ -270,7 +422,26 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
               }
             },
             { title: '资产要求', render: (_, record) => `${record.needFrameAsset ? '车架' : ''}${record.needBatteryAsset ? ' 电池' : ''}`.trim() || '无' },
-            { title: '跨店归还', dataIndex: 'supportCrossStoreReturn', render: (value: boolean) => value ? '支持' : '不支持' }
+            { title: '跨店归还', dataIndex: 'supportCrossStoreReturn', render: (value: boolean) => value ? '支持' : '不支持' },
+            {
+              title: '操作',
+              width: 170,
+              render: (_, record) => (
+                <Space>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openEditSku(record)}>编辑</Button>
+                  <Popconfirm
+                    title="确认删除商品链接？"
+                    description="包含 SKU、门店商品或分润规则的链接不可删除。"
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => deleteSku(record)}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                  </Popconfirm>
+                </Space>
+              )
+            }
           ]}
         />
       </div>}
@@ -289,7 +460,26 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
             { title: 'SKU 价格', dataIndex: 'priceAmount', render: (value: number) => `¥${Number(value || 0).toFixed(2)}` },
             { title: '租期', render: (_, record) => `${record.leaseValue}${record.leaseUnit === 'DAY' ? '天' : '个月'}` },
             { title: '总期数', dataIndex: 'totalPeriods' },
-            { title: '账单日', render: (_, record) => record.billDayMode === 'PAYMENT_DAY' ? '付款日' : `每月 ${record.billDay} 日` }
+            { title: '账单日', render: (_, record) => record.billDayMode === 'PAYMENT_DAY' ? '付款日' : `每月 ${record.billDay} 日` },
+            {
+              title: '操作',
+              width: 170,
+              render: (_, record) => (
+                <Space>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openEditPackage(record)}>编辑</Button>
+                  <Popconfirm
+                    title="确认删除 SKU？"
+                    description="已上架或已产生订单、核销记录的 SKU 不可删除。"
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => deletePackage(record)}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                  </Popconfirm>
+                </Space>
+              )
+            }
           ]}
         />
       </div>}
@@ -303,6 +493,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
           pagination={false}
           scroll={{ x: 1100 }}
           columns={[
+            { title: '商户', dataIndex: 'merchantName' },
             { title: '门店', dataIndex: 'storeName' },
             { title: '商品名', dataIndex: 'displayName' },
             { title: '商品链接', dataIndex: 'skuName' },
@@ -329,8 +520,24 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
               fixed: 'right',
               render: (_, record) => (
                 <Space>
-                  <Button size="small" onClick={() => openEditStoreSku(record)}>编辑</Button>
-                  <Button size="small" onClick={() => toggleStoreSku(record)}>{record.status === 'ON_SHELF' ? '下架' : '上架'}</Button>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openEditStoreSku(record)}>编辑</Button>
+                  <Button size="small" icon={<PoweroffOutlined />} onClick={() => toggleStoreSku(record)}>{record.status === 'ON_SHELF' ? '下架' : '上架'}</Button>
+                  {record.status === 'ON_SHELF' ? (
+                    <Tooltip title="请先下架后再删除">
+                      <Button size="small" danger icon={<DeleteOutlined />} disabled>删除</Button>
+                    </Tooltip>
+                  ) : (
+                    <Popconfirm
+                      title="确认删除门店商品？"
+                      description="已有订单、核销、分润或逾期记录的门店商品不可删除。"
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => deleteStoreSku(record)}
+                    >
+                      <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                    </Popconfirm>
+                  )}
                 </Space>
               )
             }
@@ -338,15 +545,27 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
         />
       </div>}
 
-      <Modal title="新建分类" open={categoryOpen} onCancel={() => setCategoryOpen(false)} onOk={() => categoryForm.submit()} destroyOnHidden>
-        <Form form={categoryForm} layout="vertical" onFinish={createCategory}>
+      <Modal
+        title={editingCategory ? '编辑分类' : '新建分类'}
+        open={categoryOpen}
+        onCancel={() => { setCategoryOpen(false); setEditingCategory(null); categoryForm.resetFields(); }}
+        onOk={() => categoryForm.submit()}
+        destroyOnHidden
+      >
+        <Form form={categoryForm} layout="vertical" onFinish={submitCategory}>
           <Form.Item name="categoryName" label="分类名称" rules={[{ required: true, message: '请输入分类名称' }]}><Input /></Form.Item>
           <Form.Item name="sortOrder" label="排序"><InputNumber style={{ width: '100%' }} /></Form.Item>
         </Form>
       </Modal>
 
-      <Modal title="新建商品链接" open={skuOpen} onCancel={() => setSkuOpen(false)} onOk={() => skuForm.submit()} destroyOnHidden>
-        <Form form={skuForm} layout="vertical" onFinish={createSku}>
+      <Modal
+        title={editingSku ? '编辑商品链接' : '新建商品链接'}
+        open={skuOpen}
+        onCancel={() => { setSkuOpen(false); setEditingSku(null); skuForm.resetFields(); }}
+        onOk={() => skuForm.submit()}
+        destroyOnHidden
+      >
+        <Form form={skuForm} layout="vertical" onFinish={submitSku}>
           <Form.Item name="categoryId" label="分类" rules={[{ required: true, message: '请选择分类' }]}><Select options={categoryOptions} /></Form.Item>
           <Form.Item name="skuName" label="链接名称" rules={[{ required: true, message: '请输入链接名称' }]}><Input /></Form.Item>
           <Form.Item name="skuType" label="链接类型" rules={[{ required: true, message: '请选择链接类型' }]}><Select options={[{ label: '租赁', value: 'RENTAL' }, { label: '售卖', value: 'SALE' }]} /></Form.Item>
@@ -357,16 +576,44 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
         </Form>
       </Modal>
 
-      <Modal title="新增 SKU" open={packageOpen} onCancel={() => setPackageOpen(false)} onOk={() => packageForm.submit()} destroyOnHidden>
-        <Form form={packageForm} layout="vertical" onFinish={createPackage}>
-          <Form.Item name="skuId" label="所属链接" rules={[{ required: true, message: '请选择商品链接' }]}><Select options={skuOptions} /></Form.Item>
+      <Modal
+        title={editingPackage ? '编辑 SKU' : '新增 SKU'}
+        open={packageOpen}
+        onCancel={() => { setPackageOpen(false); setEditingPackage(null); packageForm.resetFields(); }}
+        onOk={() => packageForm.submit()}
+        destroyOnHidden
+      >
+        <Form form={packageForm} layout="vertical" onFinish={submitPackage}>
+          <Form.Item name="skuId" label="所属链接" rules={[{ required: true, message: '请选择商品链接' }]}><Select options={skuOptions} disabled={Boolean(editingPackage)} /></Form.Item>
           <Form.Item name="packageName" label="SKU 名称" rules={[{ required: true, message: '请输入 SKU 名称' }]}><Input /></Form.Item>
           <Form.Item name="priceAmount" label="SKU 价格" rules={[{ required: true, message: '请输入 SKU 价格' }]}><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="leaseUnit" label="租期单位" rules={[{ required: true, message: '请选择租期单位' }]}><Select options={[{ label: '天', value: 'DAY' }, { label: '月', value: 'MONTH' }]} /></Form.Item>
           <Form.Item name="leaseValue" label="租期值" rules={[{ required: true, message: '请输入租期值' }]}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="totalPeriods" label="总期数" rules={[{ required: true, message: '请输入总期数' }]}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
-          <Form.Item name="billDayMode" label="账单日规则" rules={[{ required: true, message: '请选择账单日规则' }]}><Select options={[{ label: '付款日', value: 'PAYMENT_DAY' }, { label: '固定日期', value: 'FIXED_DAY' }]} /></Form.Item>
-          <Form.Item name="billDay" label="固定账单日"><InputNumber min={1} max={28} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="billDayMode" label="账单日规则" rules={[{ required: true, message: '请选择账单日规则' }]}>
+            <Select
+              options={[{ label: '付款日', value: 'PAYMENT_DAY' }, { label: '固定日期', value: 'FIXED_DAY' }]}
+              onChange={(value) => {
+                if (value === 'PAYMENT_DAY') {
+                  packageForm.setFieldValue('billDay', undefined);
+                }
+              }}
+            />
+          </Form.Item>
+          <Form.Item
+            name="billDay"
+            label="固定账单日"
+            dependencies={['billDayMode']}
+            rules={[({ getFieldValue }) => ({
+              validator(_, value) {
+                return getFieldValue('billDayMode') !== 'FIXED_DAY' || value
+                  ? Promise.resolve()
+                  : Promise.reject(new Error('请输入固定账单日'));
+              }
+            })]}
+          >
+            <InputNumber min={1} max={28} disabled={selectedBillDayMode !== 'FIXED_DAY'} style={{ width: '100%' }} />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -400,7 +647,12 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
             <Select
               options={skuOptions}
               disabled={Boolean(editingStoreSku)}
-              onChange={() => storeSkuForm.setFieldValue('packages', [defaultPackagePrice()])}
+              onChange={(skuId) => {
+                const sku = skus.find((item) => item.id === skuId);
+                storeSkuForm.setFieldValue('saleMode', sku?.skuType);
+                storeSkuForm.setFieldValue('displayName', sku?.skuName);
+                storeSkuForm.setFieldValue('packages', [defaultPackagePrice()]);
+              }}
             />
           </Form.Item>
           <Form.Item name="displayName" label="门店商品名" rules={[{ required: true, message: '请输入门店商品名' }]}><Input /></Form.Item>
@@ -420,9 +672,22 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
         width={760}
       >
         <Form form={batchForm} layout="vertical" onFinish={batchPublish}>
-          <Form.Item name="storeIds" label="门店" rules={[{ required: true, message: '请选择门店' }]}><Select mode="multiple" options={storeOptions} /></Form.Item>
+          <Form.Item name="merchantId" label="商户" rules={[{ required: true, message: '请选择商户' }]}>
+            <Select
+              options={merchantOptions}
+              onChange={() => batchForm.setFieldValue('storeIds', undefined)}
+            />
+          </Form.Item>
+          <Form.Item name="storeIds" label="门店" rules={[{ required: true, message: '请选择门店' }]}>
+            <Select mode="multiple" options={batchStoreOptions} placeholder={selectedBatchMerchantId ? '选择同一商户下需要上架的门店' : '请先选择商户'} />
+          </Form.Item>
           <Form.Item name="skuId" label="商品链接" rules={[{ required: true, message: '请选择商品链接' }]}>
-            <Select options={skuOptions} onChange={() => batchForm.setFieldValue('packages', [defaultPackagePrice()])} />
+            <Select options={skuOptions} onChange={(skuId) => {
+              const sku = skus.find((item) => item.id === skuId);
+              batchForm.setFieldValue('saleMode', sku?.skuType);
+              batchForm.setFieldValue('displayName', sku?.skuName);
+              batchForm.setFieldValue('packages', [defaultPackagePrice()]);
+            }} />
           </Form.Item>
           <Form.Item name="displayName" label="门店商品名"><Input placeholder="不填则使用链接名称" /></Form.Item>
           {storeSkuFields(batchPackageOptions, packages, batchForm)}
@@ -439,7 +704,7 @@ function storeSkuFields(
 ) {
   return (
     <>
-      <Form.Item name="saleMode" label="售卖模式" rules={[{ required: true, message: '请选择售卖模式' }]}><Select options={[{ label: '租赁', value: 'RENTAL' }, { label: '售卖', value: 'SALE' }]} /></Form.Item>
+      <Form.Item name="saleMode" label="商品类型（由链接决定）" rules={[{ required: true, message: '请选择商品链接' }]}><Select disabled options={[{ label: '租赁', value: 'RENTAL' }, { label: '售卖', value: 'SALE' }]} /></Form.Item>
       <Form.Item name="signFeeAmount" label="签单费" rules={[{ required: true, message: '请输入签单费' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
       <Form.Item name="signFeePayer" label="签单费承担方" rules={[{ required: true, message: '请选择承担方' }]}><Select options={[{ label: '用户', value: 'USER' }, { label: '商户', value: 'MERCHANT' }]} /></Form.Item>
       <Form.List name="packages">

@@ -57,21 +57,22 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
   const [storeForm] = Form.useForm<StoreForm>();
   const [employeeForm] = Form.useForm<EmployeeForm>();
   const selectedMerchant = merchants.find((merchant) => merchant.id === selectedMerchantId);
+  const employeeMerchantId = Form.useWatch('merchantId', employeeForm);
+  const employeeRoleCode = Form.useWatch('roleCode', employeeForm);
   const showMerchants = mode === 'all' || mode === 'merchants';
   const showStores = mode === 'all' || mode === 'stores';
   const showEmployees = mode === 'all' || mode === 'employees';
 
   useEffect(() => {
     void loadMerchants();
+    void loadStores();
   }, []);
 
   useEffect(() => {
     if (!selectedMerchantId) {
-      setStores([]);
       setEmployees([]);
       return;
     }
-    void loadStores(selectedMerchantId);
     void loadEmployees(selectedMerchantId);
   }, [selectedMerchantId]);
 
@@ -101,10 +102,24 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
     });
   }, [selectedQrStore]);
 
-  const storeOptions = useMemo(() => stores.map((store) => ({
-    label: store.storeName,
-    value: store.id
-  })), [stores]);
+  const allMerchantOptions = useMemo(() => merchants
+    .map((merchant) => ({ label: merchant.merchantName, value: merchant.id })), [merchants]);
+
+  const merchantOptions = useMemo(() => merchants
+    .filter((merchant) => merchant.status === 'ENABLED')
+    .map((merchant) => ({ label: merchant.merchantName, value: merchant.id })), [merchants]);
+
+  const selectedMerchantStores = useMemo(
+    () => stores.filter((store) => store.merchantId === selectedMerchantId),
+    [selectedMerchantId, stores]
+  );
+
+  const employeeStoreOptions = useMemo(() => stores
+    .filter((store) => store.merchantId === employeeMerchantId && store.status === 'ENABLED')
+    .map((store) => ({
+      label: `${store.storeName} / ${store.storeCode}`,
+      value: store.id
+    })), [employeeMerchantId, stores]);
 
   async function loadMerchants() {
     setLoading(true);
@@ -119,8 +134,8 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
     }
   }
 
-  async function loadStores(merchantId: number) {
-    const data = await http.get<unknown, Store[]>('/api/admin/stores', { params: { merchantId } });
+  async function loadStores() {
+    const data = await http.get<unknown, Store[]>('/api/admin/stores');
     setStores(data);
   }
 
@@ -199,7 +214,8 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
       await http.put(`/api/admin/merchants/${editingMerchant.id}`, values);
       message.success('商户已更新');
     } else {
-      await http.post('/api/admin/merchants', values);
+      const created = await http.post<unknown, Merchant>('/api/admin/merchants', values);
+      setSelectedMerchantId(created.id);
       message.success('商户已创建');
     }
     setMerchantOpen(false);
@@ -219,7 +235,8 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
     setStoreOpen(false);
     setEditingStore(null);
     storeForm.resetFields();
-    await loadStores(values.merchantId);
+    setSelectedMerchantId(values.merchantId);
+    await loadStores();
   }
 
   async function createEmployee(values: EmployeeForm) {
@@ -227,6 +244,7 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
     setEmployeeOpen(false);
     employeeForm.resetFields();
     message.success('员工账号已创建');
+    setSelectedMerchantId(values.merchantId);
     await loadEmployees(values.merchantId);
   }
 
@@ -234,12 +252,13 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
     const status = record.status === 'ENABLED' ? 'DISABLED' : 'ENABLED';
     await http.put(`/api/admin/merchants/${record.id}/status`, null, { params: { status } });
     await loadMerchants();
+    await loadStores();
   }
 
   async function toggleStoreStatus(record: Store) {
     const status = record.status === 'ENABLED' ? 'DISABLED' : 'ENABLED';
     await http.put(`/api/admin/stores/${record.id}/status`, null, { params: { status } });
-    await loadStores(record.merchantId);
+    await loadStores();
   }
 
   async function deleteStore(record: Store) {
@@ -254,7 +273,7 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
       storeForm.resetFields();
     }
     message.success('门店已删除');
-    await loadStores(record.merchantId);
+    await loadStores();
   }
 
   async function toggleEmployeeStatus(record: Employee) {
@@ -272,22 +291,27 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
             value={selectedMerchantId}
             onChange={setSelectedMerchantId}
             style={{ width: 220 }}
-            options={merchants.map((merchant) => ({ label: merchant.merchantName, value: merchant.id }))}
+            options={allMerchantOptions}
           />
         )}
         {showMerchants && <Button type="primary" onClick={openCreateMerchant}>新建商户</Button>}
-        {showStores && <Button type={mode === 'stores' ? 'primary' : 'default'} onClick={openCreateStore} disabled={!selectedMerchantId}>
+        {showStores && <Button
+          type={mode === 'stores' ? 'primary' : 'default'}
+          onClick={openCreateStore}
+          disabled={!selectedMerchantId || selectedMerchant?.status !== 'ENABLED'}
+        >
           新建门店
         </Button>}
         {showEmployees && <Button
           type={mode === 'employees' ? 'primary' : 'default'}
           onClick={() => {
+            employeeForm.resetFields();
             employeeForm.setFieldsValue({ merchantId: selectedMerchantId, roleCode: 'STORE_STAFF', password: 'Xniu@2026' });
             setEmployeeOpen(true);
           }}
-          disabled={!selectedMerchantId}
+          disabled={!selectedMerchantId || selectedMerchant?.status !== 'ENABLED'}
         >
-          新增员工
+          新增账号
         </Button>}
       </Space>
 
@@ -328,7 +352,7 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
         <Table
           rowKey="id"
           size="small"
-          dataSource={stores}
+          dataSource={selectedMerchantStores}
           pagination={false}
           scroll={{ x: 1100 }}
           columns={[
@@ -454,7 +478,7 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
       <Modal title={editingStore ? '编辑门店' : '新建门店'} open={storeOpen} onCancel={() => setStoreOpen(false)} onOk={() => storeForm.submit()} destroyOnHidden>
         <Form form={storeForm} layout="vertical" onFinish={submitStore}>
           <Form.Item name="merchantId" label="所属商户" rules={[{ required: true, message: '请选择商户' }]}>
-            <Select options={merchants.map((merchant) => ({ label: merchant.merchantName, value: merchant.id }))} />
+            <Select options={editingStore ? allMerchantOptions : merchantOptions} disabled={Boolean(editingStore)} />
           </Form.Item>
           <Form.Item name="storeName" label="门店名称" rules={[{ required: true, message: '请输入门店名称' }]}><Input /></Form.Item>
           <Form.Item name="address" label="地址" rules={[{ required: true, message: '请输入地址' }]}><Input /></Form.Item>
@@ -466,10 +490,19 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
         </Form>
       </Modal>
 
-      <Modal title="新增员工" open={employeeOpen} onCancel={() => setEmployeeOpen(false)} onOk={() => employeeForm.submit()} destroyOnHidden>
-        <Form form={employeeForm} layout="vertical" onFinish={createEmployee}>
+      <Modal title="新增商户账号" open={employeeOpen} onCancel={() => setEmployeeOpen(false)} onOk={() => employeeForm.submit()} destroyOnHidden>
+        <Form
+          form={employeeForm}
+          layout="vertical"
+          onFinish={createEmployee}
+          onValuesChange={(changedValues) => {
+            if ('merchantId' in changedValues || 'roleCode' in changedValues) {
+              employeeForm.setFieldValue('storeIds', undefined);
+            }
+          }}
+        >
           <Form.Item name="merchantId" label="所属商户" rules={[{ required: true, message: '请选择商户' }]}>
-            <Select options={merchants.map((merchant) => ({ label: merchant.merchantName, value: merchant.id }))} />
+            <Select options={merchantOptions} />
           </Form.Item>
           <Form.Item name="username" label="登录账号" rules={[{ required: true, message: '请输入登录账号' }]}><Input /></Form.Item>
           <Form.Item name="displayName" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}><Input /></Form.Item>
@@ -487,9 +520,15 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
               ]}
             />
           </Form.Item>
-          <Form.Item name="storeIds" label="授权门店">
-            <Select mode="multiple" options={storeOptions} placeholder="商户老板不选表示授权全部门店" />
-          </Form.Item>
+          {employeeRoleCode === 'MERCHANT_OWNER' ? (
+            <Form.Item label="授权门店">
+              <Typography.Text type="secondary">商户老板自动拥有该商户当前及以后新增的全部门店。</Typography.Text>
+            </Form.Item>
+          ) : (
+            <Form.Item name="storeIds" label="授权门店" rules={[{ required: true, message: '请至少选择一个门店' }]}>
+              <Select mode="multiple" options={employeeStoreOptions} placeholder={employeeMerchantId ? '选择该账号可访问的门店' : '请先选择所属商户'} />
+            </Form.Item>
+          )}
         </Form>
       </Modal>
 

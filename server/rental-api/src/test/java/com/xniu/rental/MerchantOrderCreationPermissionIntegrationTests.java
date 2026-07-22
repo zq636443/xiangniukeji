@@ -9,6 +9,7 @@ import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.CurrentAccount;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.order.controller.MerchantOrderController;
+import com.xniu.rental.order.dto.OrderCancelRequest;
 import com.xniu.rental.order.dto.OrderCreateRequest;
 import com.xniu.rental.order.service.OrderService;
 import java.util.List;
@@ -104,6 +105,30 @@ class MerchantOrderCreationPermissionIntegrationTests {
             .hasMessageContaining("客户姓名");
     }
 
+    @Test
+    void disabledStoreCannotCreateNewOrderEvenIfProductWasPreviouslyOnShelf() {
+        jdbcTemplate.update("UPDATE merchant_store SET status = 'DISABLED' WHERE id = 1");
+        setMerchantAccount(List.of("order.read", "order.create"), allMerchantStores());
+
+        assertThatThrownBy(() -> merchantOrderController.createOrder(orderRequest()))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("门店已停用");
+    }
+
+    @Test
+    void merchantOrderOperationsRequireMatchingStoreScope() {
+        setAdminAccount();
+        var order = orderService.createOrder(orderRequest());
+        setMerchantAccount(
+            List.of("order.read", "order.operate"),
+            List.of(new StoreScopeResponse(1L, 99L, "SINGLE_STORE"))
+        );
+
+        assertThatThrownBy(() -> orderService.cancel(order.id(), new OrderCancelRequest("越权取消测试")))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("没有该门店权限");
+    }
+
     private OrderCreateRequest orderRequest() {
         return new OrderCreateRequest(null, "门店测试客户", "13800001111", 1L, 1L, null, null, null);
     }
@@ -128,6 +153,26 @@ class MerchantOrderCreationPermissionIntegrationTests {
                 List.of("MERCHANT_OWNER"),
                 permissions,
                 storeScopes
+            )
+        ));
+    }
+
+    private void setAdminAccount() {
+        AuthContext.set(new CurrentAccount(
+            "admin-order-test-token",
+            new CurrentAccountResponse(
+                1L,
+                "PLATFORM_ADMIN",
+                "admin",
+                "18800000001",
+                null,
+                "Platform Admin",
+                null,
+                null,
+                null,
+                List.of("PLATFORM_ADMIN"),
+                List.of("system.admin", "order.read", "order.operate"),
+                List.of()
             )
         ));
     }

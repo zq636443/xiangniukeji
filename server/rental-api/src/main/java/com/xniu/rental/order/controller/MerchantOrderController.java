@@ -7,6 +7,7 @@ import com.xniu.rental.merchant.service.MerchantService;
 import com.xniu.rental.order.dto.OrderBatchImportRequest;
 import com.xniu.rental.order.dto.OrderBatchImportResponse;
 import com.xniu.rental.order.dto.OrderCreateRequest;
+import com.xniu.rental.order.dto.OrderLeaseBonusRequest;
 import com.xniu.rental.order.dto.OrderResponse;
 import com.xniu.rental.order.service.OrderBatchImportService;
 import com.xniu.rental.order.service.OrderCreationService;
@@ -77,6 +78,14 @@ public class MerchantOrderController {
     @GetMapping("/{id}")
     public ApiResponse<OrderResponse> getOrder(@PathVariable Long id) {
         return ApiResponse.ok(orderService.getMerchantOrder(id));
+    }
+
+    @PostMapping("/{id}/lease-bonuses")
+    public ApiResponse<OrderResponse> grantLeaseBonus(
+        @PathVariable Long id,
+        @Valid @RequestBody OrderLeaseBonusRequest request
+    ) {
+        return ApiResponse.ok(orderService.grantLeaseBonus(id, request));
     }
 
     @GetMapping("/{id}/bills")
