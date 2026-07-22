@@ -219,7 +219,25 @@ export type Investor = {
   status: 'ENABLED' | 'DISABLED';
 };
 
-export type AssetType = 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE';
+export type AssetType = 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE' | 'GENERAL';
+
+export type AssetTypeDefinition = {
+  id: number;
+  typeCode: string;
+  typeName: string;
+  assetClass: AssetType;
+  serialLabel: string;
+  systemDefined: boolean;
+  sortOrder: number;
+  status: 'ENABLED' | 'DISABLED';
+  assetCount: number;
+};
+
+export type AssetInvestorOption = {
+  id: number;
+  investorCode: string;
+  investorName: string;
+};
 
 export type AssetStatus =
   | 'IDLE'
@@ -234,6 +252,10 @@ export type Asset = {
   id: number;
   assetCode: string;
   assetType: AssetType;
+  assetTypeId: number;
+  assetTypeCode: string;
+  assetTypeName: string;
+  serialLabel: string;
   serialNo: string;
   investorId: number;
   investorName?: string | null;

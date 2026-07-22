@@ -110,7 +110,11 @@ export type AssetStatus =
 export type Asset = {
   id: number;
   assetCode: string;
-  assetType: 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE';
+  assetType: 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE' | 'GENERAL';
+  assetTypeId: number;
+  assetTypeCode: string;
+  assetTypeName: string;
+  serialLabel: string;
   serialNo: string;
   investorId: number;
   investorName?: string | null;
@@ -187,7 +191,7 @@ export type AssetMaintenance = {
   maintenanceNo: string;
   assetId: number;
   assetCode: string;
-  assetType: 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE';
+  assetType: 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE' | 'GENERAL';
   serialNo: string;
   orderId?: number | null;
   storeId?: number | null;
@@ -246,7 +250,7 @@ export type AssetChange = {
   id: number;
   changeNo: string;
   orderId: number;
-  assetType: 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE';
+  assetType: 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE' | 'GENERAL';
   oldAssetId?: number | null;
   newAssetId: number;
   oldAssetResultStatus: AssetStatus;

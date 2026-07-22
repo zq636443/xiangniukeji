@@ -83,11 +83,12 @@ class ExternalRentalOrderIntegrationTests {
 
         jdbcTemplate.update("""
             INSERT INTO asset_item
-            (asset_code, asset_type, serial_no, investor_id, current_merchant_id, current_store_id, status,
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
              purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE)
+            VALUES (?, ?, (SELECT id FROM asset_type_definition WHERE type_code = ?), ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE)
             """,
             "A-frame-ext-test",
+            "VEHICLE_FRAME",
             "VEHICLE_FRAME",
             "FRAME-EXT-TEST",
             1L,
@@ -102,11 +103,12 @@ class ExternalRentalOrderIntegrationTests {
 
         jdbcTemplate.update("""
             INSERT INTO asset_item
-            (asset_code, asset_type, serial_no, investor_id, current_merchant_id, current_store_id, status,
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
              purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE)
+            VALUES (?, ?, (SELECT id FROM asset_type_definition WHERE type_code = ?), ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE)
             """,
             "A-battery-ext-test",
+            "BATTERY",
             "BATTERY",
             "BATTERY-EXT-TEST",
             1L,
@@ -166,11 +168,12 @@ class ExternalRentalOrderIntegrationTests {
     void batchImportShouldAppearInAssetDetailRentalHistory() {
         jdbcTemplate.update("""
             INSERT INTO asset_item
-            (asset_code, asset_type, serial_no, investor_id, current_merchant_id, current_store_id, status,
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
              purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE)
+            VALUES (?, ?, (SELECT id FROM asset_type_definition WHERE type_code = ?), ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE)
             """,
             "A-frame-ext-batch",
+            "VEHICLE_FRAME",
             "VEHICLE_FRAME",
             "FRAME-EXT-BATCH",
             1L,
@@ -185,11 +188,12 @@ class ExternalRentalOrderIntegrationTests {
 
         jdbcTemplate.update("""
             INSERT INTO asset_item
-            (asset_code, asset_type, serial_no, investor_id, current_merchant_id, current_store_id, status,
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
              purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE)
+            VALUES (?, ?, (SELECT id FROM asset_type_definition WHERE type_code = ?), ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE)
             """,
             "A-battery-ext-batch",
+            "BATTERY",
             "BATTERY",
             "BATTERY-EXT-BATCH",
             1L,
@@ -239,9 +243,11 @@ class ExternalRentalOrderIntegrationTests {
     void integratedVehicleShouldSatisfyFrameAndBatteryRequirementsWithOneAsset() {
         jdbcTemplate.update("""
             INSERT INTO asset_item
-            (asset_code, asset_type, serial_no, investor_id, current_merchant_id, current_store_id, status,
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
              purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
-            VALUES ('A-integrated-ext-test', 'INTEGRATED_VEHICLE', 'FRAME-INTEGRATED-EXT', 1, 1, 1, 'IDLE',
+            VALUES ('A-integrated-ext-test', 'INTEGRATED_VEHICLE',
+                    (SELECT id FROM asset_type_definition WHERE type_code = 'INTEGRATED_VEHICLE'),
+                    'FRAME-INTEGRATED-EXT', 1, 1, 1, 'IDLE',
                     4200.00, 0.00, NULL, CURRENT_DATE)
             """);
         var integratedAssetId = jdbcTemplate.queryForObject(

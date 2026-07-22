@@ -1,15 +1,16 @@
-import { DownloadOutlined, ExportOutlined, PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
-import { Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { DownloadOutlined, EditOutlined, ExportOutlined, PlusOutlined, SearchOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
+import { Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { AssetBatchImportModal, downloadAssetImportTemplate } from '../components/AssetBatchImportModal';
 import { http } from '../services/request';
-import type { Asset, AssetDetail, AssetLog, AssetMaintenance, AssetRentalRecord, AssetStatus, AssetType, CurrentAccount, Investor, Merchant, SparePart, Store } from '../types/api';
+import type { Asset, AssetDetail, AssetLog, AssetMaintenance, AssetRentalRecord, AssetStatus, AssetType, AssetTypeDefinition, CurrentAccount, Investor, Merchant, SparePart, Store } from '../types/api';
 import { downloadCsv } from '../utils/csv';
 
-const assetTypeOptions: { label: string; value: AssetType }[] = [
+const assetClassOptions: { label: string; value: AssetType }[] = [
   { label: '车架', value: 'VEHICLE_FRAME' },
   { label: '电池', value: 'BATTERY' },
-  { label: '车电一体', value: 'INTEGRATED_VEHICLE' }
+  { label: '车电一体', value: 'INTEGRATED_VEHICLE' },
+  { label: '普通资产', value: 'GENERAL' }
 ];
 
 const assetStatusOptions: { label: string; value: AssetStatus }[] = [
@@ -35,7 +36,7 @@ type InvestorForm = {
 };
 
 type AssetForm = {
-  assetType: AssetType;
+  assetTypeId: number;
   serialNo: string;
   investorId: number;
   currentMerchantId?: number;
@@ -43,6 +44,14 @@ type AssetForm = {
   purchaseAmount: number;
   residualValue?: number;
   purchasedAt?: string;
+};
+
+type AssetTypeForm = {
+  typeName: string;
+  assetClass: AssetType;
+  serialLabel: string;
+  sortOrder?: number;
+  enabled: boolean;
 };
 
 type TransferForm = {
@@ -63,7 +72,7 @@ type InvestorChangeForm = {
 
 type AssetFilterForm = {
   keyword?: string;
-  assetType?: AssetType;
+  assetTypeId?: number;
   status?: AssetStatus;
   investorId?: number;
   merchantId?: number;
@@ -95,13 +104,18 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [assetTypes, setAssetTypes] = useState<AssetTypeDefinition[]>([]);
   const [spareParts, setSpareParts] = useState<SparePart[]>([]);
   const [logs, setLogs] = useState<AssetLog[]>([]);
   const [assetDetail, setAssetDetail] = useState<AssetDetail | null>(null);
   const [editingInvestor, setEditingInvestor] = useState<Investor | null>(null);
+  const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
+  const [editingAssetType, setEditingAssetType] = useState<AssetTypeDefinition | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [investorOpen, setInvestorOpen] = useState(false);
   const [assetOpen, setAssetOpen] = useState(false);
+  const [assetTypeManagerOpen, setAssetTypeManagerOpen] = useState(false);
+  const [assetTypeEditOpen, setAssetTypeEditOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -112,6 +126,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   const [loading, setLoading] = useState(false);
   const [investorForm] = Form.useForm<InvestorForm>();
   const [assetForm] = Form.useForm<AssetForm>();
+  const [assetTypeForm] = Form.useForm<AssetTypeForm>();
   const [transferForm] = Form.useForm<TransferForm>();
   const [statusForm] = Form.useForm<StatusForm>();
   const [investorChangeForm] = Form.useForm<InvestorChangeForm>();
@@ -120,6 +135,10 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   const showInvestors = account.accountType !== 'INVESTOR' && mode !== 'assets';
   const showAssets = mode !== 'investors';
   const canImportAssets = account.permissions.includes('asset.import') || account.permissions.includes('system.admin');
+  const canManageAssets = account.permissions.includes('asset.manage') || account.permissions.includes('system.admin');
+  const canOperateAssets = account.permissions.includes('asset.operate') || account.permissions.includes('system.admin');
+  const canManageAssetTypes = account.permissions.includes('system.admin');
+  const selectedAssetTypeId = Form.useWatch('assetTypeId', assetForm);
 
   useEffect(() => {
     void loadAll({});
@@ -129,6 +148,25 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
     label: investor.investorName,
     value: investor.id
   })), [investors]);
+
+  const assetTypeOptions = useMemo(() => assetTypes.map((type) => ({
+    label: `${type.typeName}${type.status === 'DISABLED' ? '（已停用）' : ''}`,
+    value: type.id
+  })), [assetTypes]);
+
+  const assetEntryTypeOptions = useMemo(() => assetTypes
+    .filter((type) => {
+      if (editingAsset) {
+        return type.assetClass === editingAsset.assetType && (type.status === 'ENABLED' || type.id === editingAsset.assetTypeId);
+      }
+      return type.status === 'ENABLED';
+    })
+    .map((type) => ({ label: type.typeName, value: type.id })), [assetTypes, editingAsset]);
+
+  const selectedAssetType = useMemo(
+    () => assetTypes.find((type) => type.id === selectedAssetTypeId),
+    [assetTypes, selectedAssetTypeId]
+  );
 
   const merchantOptions = useMemo(() => merchants.map((merchant) => ({
     label: merchant.merchantName,
@@ -149,22 +187,28 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
     setLoading(true);
     try {
       if (account.accountType === 'INVESTOR') {
-        const assetData = await http.get<unknown, Asset[]>('/api/investor/assets');
+        const [assetData, typeData] = await Promise.all([
+          http.get<unknown, Asset[]>('/api/investor/assets'),
+          http.get<unknown, AssetTypeDefinition[]>('/api/admin/asset-types')
+        ]);
         setAssets(filterAssetRows(assetData, filters));
+        setAssetTypes(typeData);
         return;
       }
-      const [investorData, merchantData, storeData, assetData, partData] = await Promise.all([
+      const [investorData, merchantData, storeData, assetData, partData, typeData] = await Promise.all([
         account.permissions.includes('investor.read') || account.permissions.includes('system.admin') ? http.get<unknown, Investor[]>('/api/admin/investors') : Promise.resolve([]),
         account.permissions.includes('merchant.read') || account.permissions.includes('system.admin') ? http.get<unknown, Merchant[]>('/api/admin/merchants') : Promise.resolve([]),
         account.permissions.includes('store.read') || account.permissions.includes('system.admin') ? http.get<unknown, Store[]>('/api/admin/stores') : Promise.resolve([]),
         http.get<unknown, Asset[]>('/api/admin/assets', { params: filters }),
-        account.permissions.includes('inventory.read') || account.permissions.includes('system.admin') ? http.get<unknown, SparePart[]>('/api/admin/spare-parts') : Promise.resolve([])
+        account.permissions.includes('inventory.read') || account.permissions.includes('system.admin') ? http.get<unknown, SparePart[]>('/api/admin/spare-parts') : Promise.resolve([]),
+        http.get<unknown, AssetTypeDefinition[]>('/api/admin/asset-types')
       ]);
       setInvestors(investorData);
       setMerchants(merchantData);
       setStores(storeData);
       setAssets(assetData);
       setSpareParts(partData);
+      setAssetTypes(typeData);
     } finally {
       setLoading(false);
     }
@@ -191,7 +235,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
     ], assets.map((asset, index) => [
       index + 1,
       asset.assetCode,
-      typeLabel(asset.assetType),
+      asset.assetTypeName || typeLabel(asset.assetType),
       asset.serialNo,
       asset.investorName,
       asset.merchantName,
@@ -217,12 +261,52 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   }
 
   function openCreateAsset() {
+    setEditingAsset(null);
     assetForm.resetFields();
     assetForm.setFieldsValue({
-      assetType: 'VEHICLE_FRAME',
+      assetTypeId: assetTypes.find((type) => type.status === 'ENABLED')?.id,
       purchaseAmount: 0
     });
     setAssetOpen(true);
+  }
+
+  function openEditAsset(record: Asset) {
+    setEditingAsset(record);
+    assetForm.setFieldsValue({
+      assetTypeId: record.assetTypeId,
+      serialNo: record.serialNo,
+      investorId: record.investorId,
+      currentMerchantId: record.currentMerchantId ?? undefined,
+      currentStoreId: record.currentStoreId ?? undefined,
+      purchaseAmount: record.purchaseAmount,
+      residualValue: record.residualValue ?? undefined,
+      purchasedAt: record.purchasedAt ?? undefined
+    });
+    setAssetOpen(true);
+  }
+
+  function openCreateAssetType() {
+    setEditingAssetType(null);
+    assetTypeForm.resetFields();
+    assetTypeForm.setFieldsValue({
+      assetClass: 'GENERAL',
+      serialLabel: '资产编号',
+      sortOrder: 100,
+      enabled: true
+    });
+    setAssetTypeEditOpen(true);
+  }
+
+  function openEditAssetType(record: AssetTypeDefinition) {
+    setEditingAssetType(record);
+    assetTypeForm.setFieldsValue({
+      typeName: record.typeName,
+      assetClass: record.assetClass,
+      serialLabel: record.serialLabel,
+      sortOrder: record.sortOrder,
+      enabled: record.status === 'ENABLED'
+    });
+    setAssetTypeEditOpen(true);
   }
 
   function openTransfer(record: Asset) {
@@ -297,9 +381,49 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   }
 
   async function submitAsset(values: AssetForm) {
-    await http.post('/api/admin/assets', values);
+    const details = {
+      assetTypeId: values.assetTypeId,
+      serialNo: values.serialNo,
+      investorId: values.investorId,
+      purchaseAmount: values.purchaseAmount,
+      residualValue: values.residualValue,
+      purchasedAt: values.purchasedAt
+    };
+    if (editingAsset) {
+      await http.put(`/api/admin/assets/${editingAsset.id}`, details);
+      message.success('资产资料已更新');
+    } else {
+      await http.post('/api/admin/assets', {
+        ...details,
+        currentMerchantId: values.currentMerchantId,
+        currentStoreId: values.currentStoreId
+      });
+      message.success('资产已入库');
+    }
     setAssetOpen(false);
-    message.success('资产已入库');
+    setEditingAsset(null);
+    assetForm.resetFields();
+    await loadAll();
+  }
+
+  async function submitAssetType(values: AssetTypeForm) {
+    const payload = {
+      typeName: values.typeName,
+      assetClass: values.assetClass,
+      serialLabel: values.serialLabel,
+      sortOrder: values.sortOrder,
+      status: values.enabled ? 'ENABLED' : 'DISABLED'
+    };
+    if (editingAssetType) {
+      await http.put(`/api/admin/asset-types/${editingAssetType.id}`, payload);
+      message.success('资产类型已更新');
+    } else {
+      await http.post('/api/admin/asset-types', payload);
+      message.success('资产类型已新增');
+    }
+    setAssetTypeEditOpen(false);
+    setEditingAssetType(null);
+    assetTypeForm.resetFields();
     await loadAll();
   }
 
@@ -349,7 +473,8 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           <>
             <Button icon={<DownloadOutlined />} onClick={() => downloadAssetImportTemplate()}>下载模板</Button>
             {canImportAssets ? <Button icon={<UploadOutlined />} onClick={() => setBatchImportOpen(true)}>批量录入</Button> : null}
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAsset}>资产入库</Button>
+            {canManageAssetTypes ? <Button icon={<SettingOutlined />} onClick={() => setAssetTypeManagerOpen(true)}>类型管理</Button> : null}
+            {canManageAssets ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAsset}>资产入库</Button> : null}
           </>
         ) : null}
       </Space>
@@ -389,7 +514,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
             <Form.Item name="keyword">
               <Input allowClear prefix={<SearchOutlined />} placeholder="资产编码或车架/电池号" style={{ width: 230 }} />
             </Form.Item>
-            <Form.Item name="assetType">
+            <Form.Item name="assetTypeId">
               <Select allowClear placeholder="资产类型" options={assetTypeOptions} style={{ width: 150 }} />
             </Form.Item>
             <Form.Item name="status">
@@ -422,8 +547,8 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           columns={[
             { title: '序号', width: 70, render: (_value, _record, index) => index + 1 },
             { title: '资产编码', dataIndex: 'assetCode' },
-            { title: '类型', dataIndex: 'assetType', render: typeLabel },
-            { title: '车架号 / 电池号', dataIndex: 'serialNo' },
+            { title: '类型', render: (_, record) => record.assetTypeName || typeLabel(record.assetType) },
+            { title: '资产编号', dataIndex: 'serialNo' },
             { title: '出资方', dataIndex: 'investorName' },
             { title: '所在门店', dataIndex: 'storeName', render: (value) => value || '-' },
             { title: '状态', dataIndex: 'status', render: statusTag },
@@ -432,12 +557,25 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
               title: '操作',
               fixed: 'right',
               render: (_, record) => account.accountType === 'INVESTOR' ? '-' : (
-                <Space>
-                  <Button size="small" onClick={() => openTransfer(record)}>调拨</Button>
-                  <Button size="small" onClick={() => openStatus(record)}>状态</Button>
-                  <Button size="small" onClick={() => openInvestorChange(record)}>出资方</Button>
+                <Space wrap>
+                  {canManageAssets ? (
+                    <Button
+                      size="small"
+                      icon={<EditOutlined />}
+                      disabled={record.status === 'RENTING'}
+                      title={record.status === 'RENTING' ? '租赁中的资产暂不能编辑' : undefined}
+                      onClick={() => openEditAsset(record)}
+                    >
+                      编辑
+                    </Button>
+                  ) : null}
+                  {canOperateAssets ? <Button size="small" onClick={() => openTransfer(record)}>调拨</Button> : null}
+                  {canOperateAssets ? <Button size="small" onClick={() => openStatus(record)}>状态</Button> : null}
+                  {canOperateAssets ? <Button size="small" onClick={() => openInvestorChange(record)}>出资方</Button> : null}
                   <Button size="small" onClick={() => openDetail(record)}>详情</Button>
-                  <Button size="small" onClick={() => openMaintenance(record)}>维修</Button>
+                  {account.permissions.includes('maintenance.operate') || account.permissions.includes('system.admin') ? (
+                    <Button size="small" onClick={() => openMaintenance(record)}>维修</Button>
+                  ) : null}
                   <Button size="small" onClick={() => openLogs(record)}>日志</Button>
                 </Space>
               )
@@ -506,29 +644,114 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
         </Form>
       </Modal>
 
-      <Modal title="资产入库" open={assetOpen} onCancel={() => setAssetOpen(false)} onOk={() => assetForm.submit()} forceRender>
+      <Modal
+        title={editingAsset ? '编辑资产' : '资产入库'}
+        open={assetOpen}
+        onCancel={() => {
+          assetForm.resetFields();
+          setEditingAsset(null);
+          setAssetOpen(false);
+        }}
+        onOk={() => assetForm.submit()}
+        forceRender
+      >
         <Form form={assetForm} layout="vertical" onFinish={submitAsset}>
-          <Form.Item name="assetType" label="资产类型" rules={[{ required: true, message: '请选择资产类型' }]}><Select options={assetTypeOptions} /></Form.Item>
-          <Form.Item noStyle shouldUpdate={(previous, current) => previous.assetType !== current.assetType}>
-            {({ getFieldValue }) => {
-              const assetType = getFieldValue('assetType') as AssetType | undefined;
-              return (
-                <Form.Item
-                  name="serialNo"
-                  label={assetType === 'BATTERY' ? '电池号' : '车架号'}
-                  rules={[{ required: true, message: assetType === 'BATTERY' ? '请输入电池号' : '请输入车架号' }]}
-                >
-                  <Input placeholder={assetType === 'INTEGRATED_VEHICLE' ? '车电一体仅录入车架号' : undefined} />
-                </Form.Item>
-              );
-            }}
+          <Form.Item name="assetTypeId" label="资产类型" rules={[{ required: true, message: '请选择资产类型' }]}>
+            <Select showSearch optionFilterProp="label" options={assetEntryTypeOptions} />
           </Form.Item>
-          <Form.Item name="investorId" label="出资方" rules={[{ required: true, message: '请选择出资方' }]}><Select options={investorOptions} /></Form.Item>
-          <Form.Item name="currentMerchantId" label="商户"><Select allowClear options={merchantOptions} /></Form.Item>
-          <Form.Item name="currentStoreId" label="门店"><Select allowClear options={storeOptions} /></Form.Item>
+          <Form.Item
+            name="serialNo"
+            label={selectedAssetType?.serialLabel || '资产编号'}
+            rules={[{ required: true, message: `请输入${selectedAssetType?.serialLabel || '资产编号'}` }]}
+          >
+            <Input placeholder={selectedAssetType?.assetClass === 'INTEGRATED_VEHICLE' ? '车电一体仅录入车架号' : undefined} />
+          </Form.Item>
+          <Form.Item name="investorId" label="出资方" rules={[{ required: true, message: '请选择出资方' }]}>
+            <Select showSearch optionFilterProp="label" options={investorOptions} />
+          </Form.Item>
+          {!editingAsset ? (
+            <>
+              <Form.Item name="currentMerchantId" label="商户"><Select allowClear showSearch optionFilterProp="label" options={merchantOptions} /></Form.Item>
+              <Form.Item name="currentStoreId" label="门店"><Select allowClear showSearch optionFilterProp="label" options={storeOptions} /></Form.Item>
+            </>
+          ) : null}
           <Form.Item name="purchaseAmount" label="采购金额" rules={[{ required: true, message: '请输入采购金额' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="residualValue" label="报废残值"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="purchasedAt" label="采购日期"><Input placeholder="2026-06-25" /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="资产类型管理"
+        open={assetTypeManagerOpen}
+        onCancel={() => setAssetTypeManagerOpen(false)}
+        footer={null}
+        width={900}
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAssetType}>新增类型</Button>
+          </Space>
+          <Table
+            rowKey="id"
+            size="small"
+            dataSource={assetTypes}
+            pagination={false}
+            columns={[
+              {
+                title: '类型名称',
+                dataIndex: 'typeName',
+                render: (value, record) => (
+                  <Space>
+                    <span>{value}</span>
+                    {record.systemDefined ? <Tag>系统</Tag> : null}
+                  </Space>
+                )
+              },
+              { title: '类型编码', dataIndex: 'typeCode' },
+              { title: '业务归类', dataIndex: 'assetClass', render: typeLabel },
+              { title: '编号字段', dataIndex: 'serialLabel' },
+              { title: '资产数', dataIndex: 'assetCount' },
+              { title: '状态', dataIndex: 'status', render: enabledTag },
+              {
+                title: '操作',
+                render: (_, record) => <Button size="small" icon={<EditOutlined />} onClick={() => openEditAssetType(record)}>编辑</Button>
+              }
+            ]}
+          />
+        </Space>
+      </Modal>
+
+      <Modal
+        title={editingAssetType ? '编辑资产类型' : '新增资产类型'}
+        open={assetTypeEditOpen}
+        onCancel={() => {
+          assetTypeForm.resetFields();
+          setEditingAssetType(null);
+          setAssetTypeEditOpen(false);
+        }}
+        onOk={() => assetTypeForm.submit()}
+        forceRender
+      >
+        <Form form={assetTypeForm} layout="vertical" onFinish={submitAssetType}>
+          <Form.Item name="typeName" label="类型名称" rules={[{ required: true, message: '请输入类型名称' }]}>
+            <Input maxLength={96} />
+          </Form.Item>
+          <Form.Item name="assetClass" label="业务归类" rules={[{ required: true, message: '请选择业务归类' }]}>
+            <Select
+              options={assetClassOptions}
+              disabled={Boolean(editingAssetType?.systemDefined || editingAssetType?.assetCount)}
+            />
+          </Form.Item>
+          <Form.Item name="serialLabel" label="编号字段名称" rules={[{ required: true, message: '请输入编号字段名称' }]}>
+            <Input maxLength={64} />
+          </Form.Item>
+          <Form.Item name="sortOrder" label="排序">
+            <InputNumber min={0} max={9999} precision={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="enabled" label="启用状态" valuePropName="checked">
+            <Switch disabled={Boolean(editingAssetType?.systemDefined)} />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -582,7 +805,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           <section className="section">
             <Typography.Title level={5}>基础信息</Typography.Title>
             <Space wrap>
-              <Tag>{typeLabel(assetDetail.asset.assetType)}</Tag>
+              <Tag>{assetDetail.asset.assetTypeName || typeLabel(assetDetail.asset.assetType)}</Tag>
               {statusTag(assetDetail.asset.status)}
               <Typography.Text>编号：{assetDetail.asset.serialNo}</Typography.Text>
               <Typography.Text>出资方：{assetDetail.asset.investorName || '-'}</Typography.Text>
@@ -739,19 +962,21 @@ function assetStatusText(status: AssetStatus) {
 }
 
 function typeLabel(type: AssetType) {
-  return assetTypeOptions.find((item) => item.value === type)?.label ?? type;
+  return assetClassOptions.find((item) => item.value === type)?.label ?? type;
 }
 
 function filterAssetRows(rows: Asset[], filters: AssetFilterForm) {
   const keyword = filters.keyword?.trim().toLowerCase();
   return rows.filter((asset) => {
-    if (filters.assetType && asset.assetType !== filters.assetType) return false;
+    if (filters.assetTypeId && asset.assetTypeId !== filters.assetTypeId) return false;
     if (filters.status && asset.status !== filters.status) return false;
     if (filters.investorId && asset.investorId !== filters.investorId) return false;
     if (filters.merchantId && asset.currentMerchantId !== filters.merchantId) return false;
     if (filters.storeId && asset.currentStoreId !== filters.storeId) return false;
     if (!keyword) return true;
-    return asset.assetCode.toLowerCase().includes(keyword) || asset.serialNo.toLowerCase().includes(keyword);
+    return asset.assetCode.toLowerCase().includes(keyword)
+      || asset.serialNo.toLowerCase().includes(keyword)
+      || asset.assetTypeName?.toLowerCase().includes(keyword);
   });
 }
 

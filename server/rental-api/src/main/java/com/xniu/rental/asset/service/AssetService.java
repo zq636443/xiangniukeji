@@ -5,20 +5,25 @@ import com.xniu.rental.asset.dto.AssetBatchImportResponse;
 import com.xniu.rental.asset.dto.AssetBatchImportRowRequest;
 import com.xniu.rental.asset.dto.AssetBatchImportRowResultResponse;
 import com.xniu.rental.asset.dto.AssetInvestorChangeRequest;
+import com.xniu.rental.asset.dto.AssetInvestorOptionResponse;
 import com.xniu.rental.asset.dto.AssetLogResponse;
 import com.xniu.rental.asset.dto.AssetRequest;
 import com.xniu.rental.asset.dto.AssetResponse;
 import com.xniu.rental.asset.dto.AssetStatusRequest;
 import com.xniu.rental.asset.dto.AssetTransferRequest;
+import com.xniu.rental.asset.dto.AssetUpdateRequest;
 import com.xniu.rental.asset.model.AssetItem;
 import com.xniu.rental.asset.model.AssetStatus;
 import com.xniu.rental.asset.model.AssetType;
+import com.xniu.rental.asset.model.AssetTypeDefinition;
 import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.BusinessException;
+import com.xniu.rental.investor.model.InvestorStatus;
 import com.xniu.rental.investor.repository.InvestorRepository;
 import com.xniu.rental.merchant.model.MerchantStore;
+import com.xniu.rental.merchant.model.StoreStatus;
 import com.xniu.rental.merchant.repository.MerchantRepository;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import java.math.BigDecimal;
@@ -38,6 +43,7 @@ public class AssetService {
     private static final Pattern IMPORT_DATE_PATTERN = Pattern.compile("^(\\d{4})[-/](\\d{1,2})[-/](\\d{1,2})");
 
     private final AssetRepository assetRepository;
+    private final AssetTypeService assetTypeService;
     private final InvestorRepository investorRepository;
     private final MerchantRepository merchantRepository;
     private final StoreRepository storeRepository;
@@ -46,6 +52,7 @@ public class AssetService {
 
     public AssetService(
         AssetRepository assetRepository,
+        AssetTypeService assetTypeService,
         InvestorRepository investorRepository,
         MerchantRepository merchantRepository,
         StoreRepository storeRepository,
@@ -53,6 +60,7 @@ public class AssetService {
         TransactionTemplate transactionTemplate
     ) {
         this.assetRepository = assetRepository;
+        this.assetTypeService = assetTypeService;
         this.investorRepository = investorRepository;
         this.merchantRepository = merchantRepository;
         this.storeRepository = storeRepository;
@@ -61,6 +69,18 @@ public class AssetService {
     }
 
     public List<AssetResponse> listAssets(Long investorId, Long merchantId, Long storeId, String assetType, String status, String keyword) {
+        return listAssets(investorId, merchantId, storeId, null, assetType, status, keyword);
+    }
+
+    public List<AssetResponse> listAssets(
+        Long investorId,
+        Long merchantId,
+        Long storeId,
+        Long assetTypeId,
+        String assetType,
+        String status,
+        String keyword
+    ) {
         authorizationService.requirePermission("asset.read");
         var current = AuthContext.get();
         if (current != null && current.account().investorId() != null) {
@@ -78,6 +98,7 @@ public class AssetService {
             investorId,
             merchantId,
             storeId,
+            assetTypeId,
             parseAssetType(assetType),
             parseAssetStatus(status),
             keyword
@@ -86,13 +107,16 @@ public class AssetService {
 
     @Transactional
     public AssetResponse createAsset(AssetRequest request) {
-        authorizationService.requirePermission("asset.operate");
+        authorizationService.requirePermission("asset.manage");
+        authorizationService.requirePlatformAccount();
         ensureInvestorExists(request.investorId());
         if (request.currentStoreId() != null) {
             ensureStoreBelongsToMerchant(request.currentMerchantId(), request.currentStoreId());
         }
+        var typeDefinition = assetTypeService.resolveForEntry(request.assetTypeId(), request.assetType());
+        ensureSerialAvailable(request.serialNo(), typeDefinition.assetClass(), null, typeDefinition.serialLabel());
         return persistAsset(
-            parseAssetType(request.assetType()),
+            typeDefinition,
             request.serialNo(),
             request.investorId(),
             request.currentMerchantId(),
@@ -103,6 +127,43 @@ public class AssetService {
         );
     }
 
+    @Transactional
+    public AssetResponse createMerchantAsset(Long storeId, AssetRequest request) {
+        authorizationService.requirePermission("asset.manage");
+        var store = requireActiveAccessibleStore(storeId);
+        ensureInvestorExists(request.investorId());
+        var typeDefinition = assetTypeService.resolveForEntry(request.assetTypeId(), request.assetType());
+        ensureSerialAvailable(request.serialNo(), typeDefinition.assetClass(), null, typeDefinition.serialLabel());
+        return persistAsset(
+            typeDefinition,
+            request.serialNo(),
+            request.investorId(),
+            store.merchantId(),
+            store.id(),
+            request.purchaseAmount(),
+            request.residualValue(),
+            request.purchasedAt() == null ? LocalDate.now() : request.purchasedAt()
+        );
+    }
+
+    @Transactional
+    public AssetResponse updateAsset(Long assetId, AssetUpdateRequest request) {
+        authorizationService.requirePermission("asset.manage");
+        authorizationService.requirePlatformAccount();
+        return updateAssetInternal(ensureAssetExists(assetId), request);
+    }
+
+    @Transactional
+    public AssetResponse updateMerchantAsset(Long storeId, Long assetId, AssetUpdateRequest request) {
+        authorizationService.requirePermission("asset.manage");
+        var store = requireActiveAccessibleStore(storeId);
+        var asset = ensureAssetExists(assetId);
+        if (!store.merchantId().equals(asset.currentMerchantId()) || !store.id().equals(asset.currentStoreId())) {
+            throw BusinessException.forbidden("只能编辑当前门店的资产");
+        }
+        return updateAssetInternal(asset, request);
+    }
+
     public AssetBatchImportResponse batchImportAssets(AssetBatchImportRequest request) {
         authorizationService.requirePermission("asset.import");
         authorizationService.requirePlatformAccount();
@@ -111,8 +172,7 @@ public class AssetService {
 
     public AssetBatchImportResponse batchImportMerchantAssets(Long storeId, AssetBatchImportRequest request) {
         authorizationService.requirePermission("asset.import");
-        var store = storeRepository.findById(storeId).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
-        authorizationService.requireStoreAccess(store.merchantId(), store.id());
+        var store = requireActiveAccessibleStore(storeId);
         return importAssets(request, store);
     }
 
@@ -120,7 +180,9 @@ public class AssetService {
     public AssetResponse transferAsset(Long assetId, AssetTransferRequest request) {
         authorizationService.requirePermission("asset.operate");
         var asset = ensureAssetExists(assetId);
+        ensureAssetStoreAccess(asset);
         ensureStoreBelongsToMerchant(request.merchantId(), request.storeId());
+        authorizationService.requireStoreAccess(request.merchantId(), request.storeId());
         if (asset.status() == AssetStatus.RENTING) {
             throw BusinessException.badRequest("租赁中的资产不能调拨门店");
         }
@@ -140,6 +202,7 @@ public class AssetService {
     public AssetResponse updateAssetStatus(Long assetId, AssetStatusRequest request) {
         authorizationService.requirePermission("asset.operate");
         var asset = ensureAssetExists(assetId);
+        ensureAssetStoreAccess(asset);
         var nextStatus = parseAssetStatus(request.status());
         if (asset.status() == AssetStatus.SCRAPPED || asset.status() == AssetStatus.SOLD) {
             throw BusinessException.badRequest("已报废或已售出的资产不能继续变更状态");
@@ -159,6 +222,7 @@ public class AssetService {
     public AssetResponse changeInvestor(Long assetId, AssetInvestorChangeRequest request) {
         authorizationService.requirePermission("asset.operate");
         var asset = ensureAssetExists(assetId);
+        ensureAssetStoreAccess(asset);
         ensureInvestorExists(request.investorId());
         if (asset.status() == AssetStatus.RENTING) {
             throw BusinessException.badRequest("租赁中的资产不能变更出资方");
@@ -176,16 +240,26 @@ public class AssetService {
         if (current != null && current.account().investorId() != null && !current.account().investorId().equals(asset.investorId())) {
             throw BusinessException.forbidden("没有该资产权限");
         }
+        if (current != null && current.account().investorId() == null && !current.hasPermission("system.admin")) {
+            ensureAssetStoreAccess(asset);
+        }
         return assetRepository.listLogs(assetId).stream()
             .map(row -> new AssetLogResponse(row.id(), row.assetId(), row.logType(), row.fromValue(), row.toValue(), row.remark(), row.createdAt()))
             .toList();
     }
 
     public List<AssetResponse> listMerchantStoreAssets(Long storeId) {
-        var store = storeRepository.findById(storeId).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
-        authorizationService.requireStoreAccess(store.merchantId(), store.id());
+        var store = requireAccessibleStore(storeId);
         return assetRepository.list(null, store.merchantId(), store.id(), null, null, null).stream()
             .map(this::toResponse)
+            .toList();
+    }
+
+    public List<AssetInvestorOptionResponse> listMerchantInvestorOptions() {
+        authorizationService.requirePermission("asset.manage");
+        return investorRepository.list(null).stream()
+            .filter(investor -> investor.status() == InvestorStatus.ENABLED)
+            .map(investor -> new AssetInvestorOptionResponse(investor.id(), investor.investorCode(), investor.investorName()))
             .toList();
     }
 
@@ -244,17 +318,18 @@ public class AssetService {
     }
 
     private AssetResponse importAsset(AssetBatchImportRowRequest row, MerchantStore lockedStore) {
-        var assetType = parseAssetType(requiredText(row.assetType(), "资产类型"));
-        var serialNo = requiredText(row.serialNo(), assetType == AssetType.BATTERY ? "电池号" : "车架号");
-        if (assetRepository.findBySerialNoAndType(serialNo, assetType).isPresent()) {
-            throw BusinessException.badRequest(assetType == AssetType.BATTERY ? "该电池号已存在" : "该车架号已存在");
+        var typeDefinition = assetTypeService.resolveImportType(requiredText(row.assetType(), "资产类型"));
+        if (!typeDefinition.enabled()) {
+            throw BusinessException.badRequest("资产类型已停用");
         }
+        var serialNo = requiredText(row.serialNo(), typeDefinition.serialLabel());
+        ensureSerialAvailable(serialNo, typeDefinition.assetClass(), null, typeDefinition.serialLabel());
         var investorCode = requiredText(row.investorCode(), "出资方编码");
         var investor = investorRepository.findByCode(investorCode)
             .orElseThrow(() -> BusinessException.badRequest("出资方编码不存在"));
         var store = resolveImportStore(row.storeCode(), lockedStore);
         return persistAsset(
-            assetType,
+            typeDefinition,
             serialNo,
             investor.id(),
             store == null ? null : store.merchantId(),
@@ -276,12 +351,16 @@ public class AssetService {
         if (normalizedStoreCode == null) {
             return null;
         }
-        return storeRepository.findByCode(normalizedStoreCode)
+        var store = storeRepository.findByCode(normalizedStoreCode)
             .orElseThrow(() -> BusinessException.badRequest("门店编码不存在"));
+        if (store.status() != StoreStatus.ENABLED) {
+            throw BusinessException.badRequest("门店已停用");
+        }
+        return store;
     }
 
     private AssetResponse persistAsset(
-        AssetType assetType,
+        AssetTypeDefinition typeDefinition,
         String serialNo,
         Long investorId,
         Long merchantId,
@@ -290,9 +369,16 @@ public class AssetService {
         BigDecimal residualValue,
         LocalDate purchasedAt
     ) {
+        if (purchaseAmount == null || purchaseAmount.signum() < 0) {
+            throw BusinessException.badRequest("采购金额不能小于0");
+        }
+        if (residualValue != null && residualValue.signum() < 0) {
+            throw BusinessException.badRequest("报废残值不能小于0");
+        }
         var asset = assetRepository.create(
-            nextCode(assetType),
-            assetType,
+            nextCode(typeDefinition.assetClass()),
+            typeDefinition.assetClass(),
+            typeDefinition.id(),
             serialNo.trim(),
             investorId,
             merchantId,
@@ -308,8 +394,86 @@ public class AssetService {
         return toResponse(asset);
     }
 
+    private AssetResponse updateAssetInternal(AssetItem asset, AssetUpdateRequest request) {
+        if (asset.status() == AssetStatus.RENTING) {
+            throw BusinessException.badRequest("租赁中的资产不能编辑基础资料");
+        }
+        ensureInvestorExists(request.investorId());
+        var typeDefinition = assetTypeService.requireType(request.assetTypeId());
+        if (typeDefinition.assetClass() != asset.assetType()) {
+            throw BusinessException.badRequest("资产的业务归类不能修改，可选择同一归类下的其他类型");
+        }
+        if (!typeDefinition.enabled() && !typeDefinition.id().equals(asset.assetTypeId())) {
+            throw BusinessException.badRequest("所选资产类型已停用");
+        }
+        var serialNo = requiredText(request.serialNo(), typeDefinition.serialLabel());
+        ensureSerialAvailable(serialNo, typeDefinition.assetClass(), asset.id(), typeDefinition.serialLabel());
+        if (request.purchaseAmount() == null || request.purchaseAmount().signum() < 0) {
+            throw BusinessException.badRequest("采购金额不能小于0");
+        }
+        if (request.residualValue() != null && request.residualValue().signum() < 0) {
+            throw BusinessException.badRequest("报废残值不能小于0");
+        }
+        var investorChanged = !request.investorId().equals(asset.investorId());
+        if (investorChanged) {
+            assetRepository.closeActiveOwnership(asset.id());
+        }
+        var updated = assetRepository.updateDetails(
+            asset.id(),
+            typeDefinition.assetClass(),
+            typeDefinition.id(),
+            serialNo,
+            request.investorId(),
+            request.purchaseAmount(),
+            request.residualValue(),
+            request.purchasedAt() == null ? asset.purchasedAt() : request.purchasedAt()
+        );
+        if (investorChanged) {
+            assetRepository.insertOwnership(asset.id(), request.investorId(), "编辑资产资料变更出资方");
+        }
+        assetRepository.insertStatusLog(asset.id(), asset.status(), asset.status(), currentAccountId(), "编辑资产基础资料");
+        return toResponse(updated);
+    }
+
+    private MerchantStore requireAccessibleStore(Long storeId) {
+        var store = storeRepository.findById(storeId).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+        authorizationService.requireStoreAccess(store.merchantId(), store.id());
+        return store;
+    }
+
+    private MerchantStore requireActiveAccessibleStore(Long storeId) {
+        var store = requireAccessibleStore(storeId);
+        if (store.status() != StoreStatus.ENABLED) {
+            throw BusinessException.badRequest("门店已停用");
+        }
+        return store;
+    }
+
+    private void ensureAssetStoreAccess(AssetItem asset) {
+        var current = AuthContext.get();
+        if (current != null && current.hasPermission("system.admin")) {
+            return;
+        }
+        if (asset.currentMerchantId() == null || asset.currentStoreId() == null) {
+            throw BusinessException.forbidden("资产未分配门店，当前账号不能操作");
+        }
+        authorizationService.requireStoreAccess(asset.currentMerchantId(), asset.currentStoreId());
+    }
+
+    private void ensureSerialAvailable(String value, AssetType assetType, Long currentAssetId, String fieldLabel) {
+        var serialNo = requiredText(value, fieldLabel);
+        assetRepository.findBySerialNoAndType(serialNo, assetType).ifPresent(existing -> {
+            if (currentAssetId == null || !currentAssetId.equals(existing.id())) {
+                throw BusinessException.badRequest(fieldLabel + "已存在");
+            }
+        });
+    }
+
     private void ensureInvestorExists(Long investorId) {
-        investorRepository.findById(investorId).orElseThrow(() -> BusinessException.badRequest("出资方不存在"));
+        var investor = investorRepository.findById(investorId).orElseThrow(() -> BusinessException.badRequest("出资方不存在"));
+        if (investor.status() != InvestorStatus.ENABLED) {
+            throw BusinessException.badRequest("出资方已停用");
+        }
     }
 
     private void ensureStoreBelongsToMerchant(Long merchantId, Long storeId) {
@@ -321,6 +485,9 @@ public class AssetService {
         if (!store.merchantId().equals(merchantId)) {
             throw BusinessException.badRequest("门店不属于所选商户");
         }
+        if (store.status() != StoreStatus.ENABLED) {
+            throw BusinessException.badRequest("门店已停用");
+        }
     }
 
     private AssetResponse toResponse(AssetItem asset) {
@@ -331,6 +498,10 @@ public class AssetService {
             asset.id(),
             asset.assetCode(),
             asset.assetType().name(),
+            asset.assetTypeId(),
+            asset.assetTypeCode(),
+            asset.assetTypeName(),
+            asset.serialLabel(),
             asset.serialNo(),
             asset.investorId(),
             investorName,
@@ -368,7 +539,7 @@ public class AssetService {
         try {
             return normalized == null || normalized.isBlank() ? null : AssetType.valueOf(normalized);
         } catch (IllegalArgumentException exception) {
-            throw BusinessException.badRequest("资产类型仅支持车架、电池或车电一体");
+            throw BusinessException.badRequest("不支持的资产业务归类");
         }
     }
 
@@ -385,6 +556,7 @@ public class AssetService {
             case VEHICLE_FRAME -> "FRM";
             case BATTERY -> "BAT";
             case INTEGRATED_VEHICLE -> "INT";
+            case GENERAL -> "AST";
         };
         return "A-" + prefix + "-" + UUID.randomUUID().toString().substring(0, 8);
     }

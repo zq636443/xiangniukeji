@@ -20,6 +20,15 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class AssetRepository {
 
+    private static final String ASSET_SELECT = """
+        SELECT a.*,
+               t.type_code AS definition_type_code,
+               t.type_name AS definition_type_name,
+               t.serial_label AS definition_serial_label
+        FROM asset_item a
+        JOIN asset_type_definition t ON t.id = a.asset_type_id
+        """;
+
     private final JdbcTemplate jdbcTemplate;
     private final RowMapper<AssetItem> mapper = new AssetMapper();
 
@@ -28,46 +37,63 @@ public class AssetRepository {
     }
 
     public List<AssetItem> list(Long investorId, Long merchantId, Long storeId, AssetType assetType, AssetStatus status, String keyword) {
-        var sql = new StringBuilder("SELECT * FROM asset_item WHERE 1 = 1");
+        return list(investorId, merchantId, storeId, null, assetType, status, keyword);
+    }
+
+    public List<AssetItem> list(
+        Long investorId,
+        Long merchantId,
+        Long storeId,
+        Long assetTypeId,
+        AssetType assetType,
+        AssetStatus status,
+        String keyword
+    ) {
+        var sql = new StringBuilder(ASSET_SELECT + " WHERE 1 = 1");
         var params = new ArrayList<Object>();
         if (investorId != null) {
-            sql.append(" AND investor_id = ?");
+            sql.append(" AND a.investor_id = ?");
             params.add(investorId);
         }
         if (merchantId != null) {
-            sql.append(" AND current_merchant_id = ?");
+            sql.append(" AND a.current_merchant_id = ?");
             params.add(merchantId);
         }
         if (storeId != null) {
-            sql.append(" AND current_store_id = ?");
+            sql.append(" AND a.current_store_id = ?");
             params.add(storeId);
         }
+        if (assetTypeId != null) {
+            sql.append(" AND a.asset_type_id = ?");
+            params.add(assetTypeId);
+        }
         if (assetType != null) {
-            sql.append(" AND asset_type = ?");
+            sql.append(" AND a.asset_type = ?");
             params.add(assetType.name());
         }
         if (status != null) {
-            sql.append(" AND status = ?");
+            sql.append(" AND a.status = ?");
             params.add(status.name());
         }
         if (keyword != null && !keyword.isBlank()) {
-            sql.append(" AND (asset_code LIKE ? OR serial_no LIKE ?)");
+            sql.append(" AND (a.asset_code LIKE ? OR a.serial_no LIKE ? OR t.type_name LIKE ?)");
             var like = "%" + keyword.trim() + "%";
             params.add(like);
             params.add(like);
+            params.add(like);
         }
-        sql.append(" ORDER BY id DESC");
+        sql.append(" ORDER BY a.id DESC");
         return jdbcTemplate.query(sql.toString(), mapper, params.toArray());
     }
 
     public Optional<AssetItem> findById(Long id) {
-        var assets = jdbcTemplate.query("SELECT * FROM asset_item WHERE id = ?", mapper, id);
+        var assets = jdbcTemplate.query(ASSET_SELECT + " WHERE a.id = ?", mapper, id);
         return assets.stream().findFirst();
     }
 
     public Optional<AssetItem> findBySerialNoAndType(String serialNo, AssetType assetType) {
         var assets = jdbcTemplate.query(
-            "SELECT * FROM asset_item WHERE serial_no = ? AND asset_type = ?",
+            ASSET_SELECT + " WHERE a.serial_no = ? AND a.asset_type = ?",
             mapper,
             serialNo,
             assetType.name()
@@ -78,6 +104,7 @@ public class AssetRepository {
     public AssetItem create(
         String assetCode,
         AssetType assetType,
+        Long assetTypeId,
         String serialNo,
         Long investorId,
         Long merchantId,
@@ -91,27 +118,47 @@ public class AssetRepository {
         jdbcTemplate.update(connection -> {
             var statement = connection.prepareStatement("""
                 INSERT INTO asset_item
-                (asset_code, asset_type, serial_no, investor_id, current_merchant_id, current_store_id,
+                (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id,
                  purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, assetCode);
             statement.setString(2, assetType.name());
-            statement.setString(3, serialNo);
-            statement.setLong(4, investorId);
-            setNullableLong(statement, 5, merchantId);
-            setNullableLong(statement, 6, storeId);
-            statement.setBigDecimal(7, purchaseAmount);
-            statement.setBigDecimal(8, maintenanceFeeAmount);
-            setNullableBigDecimal(statement, 9, residualValue);
+            statement.setLong(3, assetTypeId);
+            statement.setString(4, serialNo);
+            statement.setLong(5, investorId);
+            setNullableLong(statement, 6, merchantId);
+            setNullableLong(statement, 7, storeId);
+            statement.setBigDecimal(8, purchaseAmount);
+            statement.setBigDecimal(9, maintenanceFeeAmount);
+            setNullableBigDecimal(statement, 10, residualValue);
             if (purchasedAt == null) {
-                statement.setObject(10, null);
+                statement.setObject(11, null);
             } else {
-                statement.setObject(10, purchasedAt);
+                statement.setObject(11, purchasedAt);
             }
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
+    }
+
+    public AssetItem updateDetails(
+        Long id,
+        AssetType assetType,
+        Long assetTypeId,
+        String serialNo,
+        Long investorId,
+        BigDecimal purchaseAmount,
+        BigDecimal residualValue,
+        LocalDate purchasedAt
+    ) {
+        jdbcTemplate.update("""
+            UPDATE asset_item
+            SET asset_type = ?, asset_type_id = ?, serial_no = ?, investor_id = ?,
+                purchase_amount = ?, residual_value = ?, purchased_at = ?
+            WHERE id = ?
+            """, assetType.name(), assetTypeId, serialNo, investorId, purchaseAmount, residualValue, purchasedAt, id);
+        return findById(id).orElseThrow();
     }
 
     public AssetItem updateStatus(Long id, AssetStatus status, LocalDateTime now) {
@@ -223,6 +270,10 @@ public class AssetRepository {
                 rs.getLong("id"),
                 rs.getString("asset_code"),
                 AssetType.valueOf(rs.getString("asset_type")),
+                rs.getLong("asset_type_id"),
+                rs.getString("definition_type_code"),
+                rs.getString("definition_type_name"),
+                rs.getString("definition_serial_label"),
                 rs.getString("serial_no"),
                 rs.getLong("investor_id"),
                 getNullableLong(rs, "current_merchant_id"),

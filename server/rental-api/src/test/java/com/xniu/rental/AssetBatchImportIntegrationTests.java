@@ -6,7 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.xniu.rental.asset.dto.AssetBatchImportRequest;
 import com.xniu.rental.asset.dto.AssetBatchImportRowRequest;
 import com.xniu.rental.asset.dto.AssetRequest;
+import com.xniu.rental.asset.dto.AssetTypeRequest;
+import com.xniu.rental.asset.dto.AssetUpdateRequest;
 import com.xniu.rental.asset.service.AssetService;
+import com.xniu.rental.asset.service.AssetTypeService;
 import com.xniu.rental.auth.dto.CurrentAccountResponse;
 import com.xniu.rental.auth.dto.StoreScopeResponse;
 import com.xniu.rental.auth.security.AuthContext;
@@ -32,6 +35,9 @@ class AssetBatchImportIntegrationTests {
 
     @Autowired
     private AssetService assetService;
+
+    @Autowired
+    private AssetTypeService assetTypeService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -163,6 +169,143 @@ class AssetBatchImportIntegrationTests {
     }
 
     @Test
+    void platformShouldCreateAndEditCustomAssetTypesAndUseThemForEntry() {
+        var suffix = UUID.randomUUID().toString().substring(0, 8);
+        var createdType = assetTypeService.createType(new AssetTypeRequest(
+            "头盔-" + suffix,
+            "GENERAL",
+            "头盔编号",
+            80,
+            "DISABLED"
+        ));
+        assertThat(createdType.status()).isEqualTo("DISABLED");
+
+        var updatedType = assetTypeService.updateType(createdType.id(), new AssetTypeRequest(
+            "智能头盔-" + suffix,
+            "GENERAL",
+            "设备编号",
+            81,
+            "ENABLED"
+        ));
+        assertThat(updatedType.assetClass()).isEqualTo("GENERAL");
+        assertThat(updatedType.serialLabel()).isEqualTo("设备编号");
+
+        var serialNo = "HELMET-" + suffix;
+        var asset = assetService.createAsset(new AssetRequest(
+            updatedType.id(),
+            null,
+            serialNo,
+            1L,
+            1L,
+            1L,
+            new BigDecimal("399.00"),
+            null,
+            null,
+            LocalDate.of(2026, 7, 22)
+        ));
+
+        assertThat(asset.assetType()).isEqualTo("GENERAL");
+        assertThat(asset.assetTypeId()).isEqualTo(updatedType.id());
+        assertThat(asset.assetTypeName()).isEqualTo("智能头盔-" + suffix);
+        assertThat(asset.serialLabel()).isEqualTo("设备编号");
+        assertThat(assetService.listAssets(null, null, null, updatedType.id(), null, "IDLE", serialNo))
+            .extracting("id")
+            .containsExactly(asset.id());
+    }
+
+    @Test
+    void storeManagerShouldCreateAndEditOnlyAssetsInAuthorizedStore() {
+        var typeId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_type_definition WHERE type_code = 'VEHICLE_FRAME'",
+            Long.class
+        );
+        var otherStoreCode = "S-ASSET-" + UUID.randomUUID().toString().substring(0, 8);
+        jdbcTemplate.update(
+            "INSERT INTO merchant_store (merchant_id, store_code, store_name, address, qr_content) VALUES (1, ?, '资产测试门店', '测试地址', ?)",
+            otherStoreCode,
+            "QR-" + otherStoreCode
+        );
+        var otherStoreId = jdbcTemplate.queryForObject(
+            "SELECT id FROM merchant_store WHERE store_code = ?",
+            Long.class,
+            otherStoreCode
+        );
+        setStoreManagerAccount(
+            List.of("asset.read", "asset.manage"),
+            List.of(new StoreScopeResponse(1L, 1L, "STORE_ONLY"))
+        );
+
+        var serialNo = "STORE-FRAME-" + UUID.randomUUID().toString().substring(0, 8);
+        var created = assetService.createMerchantAsset(1L, new AssetRequest(
+            typeId,
+            null,
+            serialNo,
+            1L,
+            null,
+            null,
+            new BigDecimal("2600.00"),
+            null,
+            null,
+            LocalDate.of(2026, 7, 22)
+        ));
+        assertThat(created.currentMerchantId()).isEqualTo(1L);
+        assertThat(created.currentStoreId()).isEqualTo(1L);
+
+        var updated = assetService.updateMerchantAsset(1L, created.id(), new AssetUpdateRequest(
+            typeId,
+            serialNo + "-EDIT",
+            1L,
+            new BigDecimal("2680.00"),
+            new BigDecimal("200.00"),
+            LocalDate.of(2026, 7, 21)
+        ));
+        assertThat(updated.serialNo()).isEqualTo(serialNo + "-EDIT");
+        assertThat(updated.purchaseAmount()).isEqualByComparingTo("2680.00");
+
+        assertThatThrownBy(() -> assetService.createMerchantAsset(otherStoreId, new AssetRequest(
+            typeId,
+            null,
+            serialNo + "-OTHER",
+            1L,
+            null,
+            null,
+            new BigDecimal("2600.00"),
+            null,
+            null,
+            LocalDate.of(2026, 7, 22)
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("没有该门店权限");
+
+        assertThatThrownBy(() -> assetService.updateMerchantAsset(otherStoreId, created.id(), new AssetUpdateRequest(
+            typeId,
+            serialNo + "-CROSS",
+            1L,
+            new BigDecimal("2600.00"),
+            null,
+            LocalDate.of(2026, 7, 22)
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("没有该门店权限");
+
+        jdbcTemplate.update("UPDATE merchant_store SET status = 'DISABLED' WHERE id = 1");
+        assertThatThrownBy(() -> assetService.createMerchantAsset(1L, new AssetRequest(
+            typeId,
+            null,
+            serialNo + "-DISABLED",
+            1L,
+            null,
+            null,
+            new BigDecimal("2600.00"),
+            null,
+            null,
+            LocalDate.of(2026, 7, 22)
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("门店已停用");
+    }
+
+    @Test
     void merchantBatchImportShouldLockAssetsToAuthorizedStore() {
         setMerchantAccount(List.of("asset.read", "asset.import"), List.of(new StoreScopeResponse(1L, 1L, "STORE_ONLY")));
         var serialNo = "BATTERY-BATCH-" + UUID.randomUUID().toString().substring(0, 8);
@@ -236,19 +379,32 @@ class AssetBatchImportIntegrationTests {
     }
 
     private void setMerchantAccount(List<String> permissions, List<StoreScopeResponse> storeScopes) {
+        setMerchantAccount("MERCHANT_OWNER", null, permissions, storeScopes);
+    }
+
+    private void setStoreManagerAccount(List<String> permissions, List<StoreScopeResponse> storeScopes) {
+        setMerchantAccount("STORE_MANAGER", 1L, permissions, storeScopes);
+    }
+
+    private void setMerchantAccount(
+        String accountType,
+        Long storeId,
+        List<String> permissions,
+        List<StoreScopeResponse> storeScopes
+    ) {
         AuthContext.set(new CurrentAccount(
             "merchant-test-token",
             new CurrentAccountResponse(
                 2L,
-                "MERCHANT_OWNER",
+                accountType,
                 "merchant_demo",
                 "18800000002",
                 null,
                 "演示商户老板",
                 1L,
+                storeId,
                 null,
-                null,
-                List.of("MERCHANT_OWNER"),
+                List.of(accountType),
                 permissions,
                 storeScopes
             )

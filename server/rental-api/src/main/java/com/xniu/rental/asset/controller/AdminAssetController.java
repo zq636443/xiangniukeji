@@ -9,6 +9,7 @@ import com.xniu.rental.asset.dto.AssetRequest;
 import com.xniu.rental.asset.dto.AssetResponse;
 import com.xniu.rental.asset.dto.AssetStatusRequest;
 import com.xniu.rental.asset.dto.AssetTransferRequest;
+import com.xniu.rental.asset.dto.AssetUpdateRequest;
 import com.xniu.rental.asset.service.AssetService;
 import com.xniu.rental.asset.service.MaintenanceService;
 import com.xniu.rental.common.ApiResponse;
@@ -40,16 +41,22 @@ public class AdminAssetController {
         @RequestParam(required = false) Long investorId,
         @RequestParam(required = false) Long merchantId,
         @RequestParam(required = false) Long storeId,
+        @RequestParam(required = false) Long assetTypeId,
         @RequestParam(required = false) String assetType,
         @RequestParam(required = false) String status,
         @RequestParam(required = false) String keyword
     ) {
-        return ApiResponse.ok(assetService.listAssets(investorId, merchantId, storeId, assetType, status, keyword));
+        return ApiResponse.ok(assetService.listAssets(investorId, merchantId, storeId, assetTypeId, assetType, status, keyword));
     }
 
     @PostMapping
     public ApiResponse<AssetResponse> createAsset(@Valid @RequestBody AssetRequest request) {
         return ApiResponse.ok(assetService.createAsset(request));
+    }
+
+    @PutMapping("/{id}")
+    public ApiResponse<AssetResponse> updateAsset(@PathVariable Long id, @Valid @RequestBody AssetUpdateRequest request) {
+        return ApiResponse.ok(assetService.updateAsset(id, request));
     }
 
     @PostMapping("/batch-import")

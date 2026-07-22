@@ -130,9 +130,11 @@ class OrderBatchImportIntegrationTests {
         var serialNo = "FRAME-INTEGRATED-IMPORT-" + UUID.randomUUID().toString().substring(0, 8);
         jdbcTemplate.update("""
             INSERT INTO asset_item
-            (asset_code, asset_type, serial_no, investor_id, current_merchant_id, current_store_id, status,
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
              purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
-            VALUES (?, 'INTEGRATED_VEHICLE', ?, 1, 1, 1, 'IDLE', 4200.00, 0.00, NULL, CURRENT_DATE)
+            VALUES (?, 'INTEGRATED_VEHICLE',
+                    (SELECT id FROM asset_type_definition WHERE type_code = 'INTEGRATED_VEHICLE'),
+                    ?, 1, 1, 1, 'IDLE', 4200.00, 0.00, NULL, CURRENT_DATE)
             """, "A-integrated-import-" + UUID.randomUUID().toString().substring(0, 8), serialNo);
 
         var result = orderBatchImportService.batchImportAdmin(new OrderBatchImportRequest(List.of(

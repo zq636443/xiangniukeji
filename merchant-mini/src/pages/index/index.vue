@@ -214,7 +214,7 @@
         <view v-if="assets.length === 0" class="empty">当前门店暂无资产</view>
         <view v-for="asset in assets" :key="asset.id" class="asset-item">
           <view class="asset-main">
-            <text>{{ assetTypeText(asset.assetType) }}</text>
+            <text>{{ asset.assetTypeName || assetTypeText(asset.assetType) }}</text>
             <text class="asset-status">{{ statusText(asset.status) }}</text>
           </view>
           <view class="asset-sub">{{ asset.serialNo }}</view>
@@ -224,9 +224,9 @@
             <button class="mini-btn" @tap="prepareMaintenance(asset.id)">登记维修</button>
           </view>
           <view v-if="asset.status === 'IDLE'" class="action-row">
-            <button v-if="asset.assetType !== 'BATTERY'" class="mini-btn" @tap="fillFrameAsset(asset.id)">填入车架</button>
+            <button v-if="asset.assetType === 'VEHICLE_FRAME' || asset.assetType === 'INTEGRATED_VEHICLE'" class="mini-btn" @tap="fillFrameAsset(asset.id)">填入车架</button>
             <button v-if="asset.assetType === 'BATTERY'" class="mini-btn" @tap="fillBatteryAsset(asset.id)">填入电池</button>
-            <button class="mini-btn" @tap="fillNewAsset(asset.id, asset.assetType)">作为更换资产</button>
+            <button v-if="asset.assetType !== 'GENERAL'" class="mini-btn" @tap="fillNewAsset(asset.id, asset.assetType)">作为更换资产</button>
           </view>
         </view>
       </view>
@@ -1261,7 +1261,9 @@ function statusText(status: AssetStatus) {
 
 function assetTypeText(assetType: Asset['assetType']) {
   if (assetType === 'INTEGRATED_VEHICLE') return '车电一体';
-  return assetType === 'VEHICLE_FRAME' ? '车架' : '电池';
+  if (assetType === 'VEHICLE_FRAME') return '车架';
+  if (assetType === 'BATTERY') return '电池';
+  return '普通资产';
 }
 
 function collectionText(status: CollectionStatus) {

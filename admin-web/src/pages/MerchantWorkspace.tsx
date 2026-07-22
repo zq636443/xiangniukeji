@@ -1,4 +1,4 @@
-import { DownloadOutlined, ExportOutlined, GiftOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
+import { DownloadOutlined, EditOutlined, ExportOutlined, GiftOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
 import {
   Alert,
   Button,
@@ -26,10 +26,12 @@ import { http } from '../services/request';
 import { downloadCsv } from '../utils/csv';
 import type {
   AssetDetail,
+  AssetInvestorOption,
   AssetMaintenance,
   AssetRentalRecord,
   Asset,
   AssetStatus,
+  AssetTypeDefinition,
   CollectionStatus,
   CurrentAccount,
   OrderStatus,
@@ -102,6 +104,15 @@ type SparePartTransferForm = {
   remark?: string;
 };
 
+type MerchantAssetForm = {
+  assetTypeId: number;
+  serialNo: string;
+  investorId: number;
+  purchaseAmount: number;
+  residualValue?: number;
+  purchasedAt?: string;
+};
+
 const orderStatusOptions: { label: string; value: OrderStatus }[] = [
   { label: '待支付', value: 'PENDING_PAYMENT' },
   { label: '待实名', value: 'PENDING_REAL_NAME' },
@@ -131,12 +142,6 @@ const assetStatusOptions: { label: string; value: AssetStatus }[] = [
 const assetResultStatusOptions = assetStatusOptions.filter((item) =>
   ['IDLE', 'PENDING_REPAIR', 'SCRAPPED', 'EXCEPTION'].includes(item.value)
 );
-
-const assetTypeOptions: { label: string; value: Asset['assetType'] }[] = [
-  { label: '车架', value: 'VEHICLE_FRAME' },
-  { label: '电池', value: 'BATTERY' },
-  { label: '车电一体', value: 'INTEGRATED_VEHICLE' }
-];
 
 const collectionStatusOptions: { label: string; value: CollectionStatus; color: string }[] = [
   { label: '待催缴', value: 'PENDING', color: 'orange' },
@@ -375,7 +380,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
 
   const frameOptions = useMemo(() => assets
     .filter((item) => (item.assetType === 'VEHICLE_FRAME' || item.assetType === 'INTEGRATED_VEHICLE') && item.status === 'IDLE')
-    .map((item) => ({ label: `${item.serialNo} / ${assetTypeText(item.assetType)}`, value: item.id })), [assets]);
+    .map((item) => ({ label: `${item.serialNo} / ${item.assetTypeName || assetTypeText(item.assetType)}`, value: item.id })), [assets]);
 
   const batteryOptions = useMemo(() => assets
     .filter((item) => item.assetType === 'BATTERY' && item.status === 'IDLE')
@@ -389,7 +394,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
           : item.assetType === 'BATTERY';
         return typeMatches && item.status === 'IDLE';
       })
-      .map((item) => ({ label: `${item.serialNo} / ${assetTypeText(item.assetType)}`, value: item.id }));
+      .map((item) => ({ label: `${item.serialNo} / ${item.assetTypeName || assetTypeText(item.assetType)}`, value: item.id }));
   }, [assets, replaceAssetType]);
 
   const integratedCreateAssetSelected = useMemo(
@@ -1000,25 +1005,54 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
 
 export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPageProps) {
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [assetTypes, setAssetTypes] = useState<AssetTypeDefinition[]>([]);
+  const [investorOptions, setInvestorOptions] = useState<AssetInvestorOption[]>([]);
   const [assetKeyword, setAssetKeyword] = useState('');
-  const [assetTypeFilter, setAssetTypeFilter] = useState<Asset['assetType']>();
+  const [assetTypeFilter, setAssetTypeFilter] = useState<number>();
   const [assetStatusFilter, setAssetStatusFilter] = useState<AssetStatus>();
+  const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<AssetDetail | null>(null);
+  const [assetOpen, setAssetOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [assetForm] = Form.useForm<MerchantAssetForm>();
+  const selectedAssetTypeId = Form.useWatch('assetTypeId', assetForm);
   const currentStore = stores.find((item) => item.id === storeId);
   const canImportAssets = account.permissions.includes('asset.import') || account.permissions.includes('system.admin');
+  const canManageAssets = account.permissions.includes('asset.manage') || account.permissions.includes('system.admin');
+  const assetTypeFilterOptions = useMemo(() => assetTypes.map((type) => ({
+    label: `${type.typeName}${type.status === 'DISABLED' ? '（已停用）' : ''}`,
+    value: type.id
+  })), [assetTypes]);
+  const assetEntryTypeOptions = useMemo(() => assetTypes
+    .filter((type) => {
+      if (editingAsset) {
+        return type.assetClass === editingAsset.assetType && (type.status === 'ENABLED' || type.id === editingAsset.assetTypeId);
+      }
+      return type.status === 'ENABLED';
+    })
+    .map((type) => ({ label: type.typeName, value: type.id })), [assetTypes, editingAsset]);
+  const investorSelectOptions = useMemo(() => investorOptions.map((investor) => ({
+    label: `${investor.investorName} / ${investor.investorCode}`,
+    value: investor.id
+  })), [investorOptions]);
+  const selectedAssetType = useMemo(
+    () => assetTypes.find((type) => type.id === selectedAssetTypeId),
+    [assetTypes, selectedAssetTypeId]
+  );
   const filteredAssets = useMemo(() => {
     const keyword = assetKeyword.trim().toLowerCase();
     return assets.filter((asset) => {
-      if (assetTypeFilter && asset.assetType !== assetTypeFilter) return false;
+      if (assetTypeFilter && asset.assetTypeId !== assetTypeFilter) return false;
       if (assetStatusFilter && asset.status !== assetStatusFilter) return false;
       if (!keyword) return true;
       return asset.assetCode.toLowerCase().includes(keyword)
         || asset.serialNo.toLowerCase().includes(keyword)
-        || String(asset.investorName || '').toLowerCase().includes(keyword);
+        || String(asset.investorName || '').toLowerCase().includes(keyword)
+        || String(asset.assetTypeName || '').toLowerCase().includes(keyword);
     });
   }, [assetKeyword, assetStatusFilter, assetTypeFilter, assets]);
 
@@ -1029,7 +1063,16 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     }
     setLoading(true);
     try {
-      setAssets(await http.get<unknown, Asset[]>(`/api/merchant/assets/stores/${storeId}`));
+      const [assetData, typeData, investorData] = await Promise.all([
+        http.get<unknown, Asset[]>(`/api/merchant/assets/stores/${storeId}`),
+        http.get<unknown, AssetTypeDefinition[]>('/api/merchant/assets/types'),
+        canManageAssets
+          ? http.get<unknown, AssetInvestorOption[]>('/api/merchant/assets/investors')
+          : Promise.resolve<AssetInvestorOption[]>([])
+      ]);
+      setAssets(assetData);
+      setAssetTypes(typeData);
+      setInvestorOptions(investorData);
     } finally {
       setLoading(false);
     }
@@ -1049,6 +1092,49 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     }
   }
 
+  function openCreateAsset() {
+    setEditingAsset(null);
+    assetForm.resetFields();
+    assetForm.setFieldsValue({
+      assetTypeId: assetTypes.find((type) => type.status === 'ENABLED')?.id,
+      purchaseAmount: 0
+    });
+    setAssetOpen(true);
+  }
+
+  function openEditAsset(record: Asset) {
+    setEditingAsset(record);
+    assetForm.setFieldsValue({
+      assetTypeId: record.assetTypeId,
+      serialNo: record.serialNo,
+      investorId: record.investorId,
+      purchaseAmount: record.purchaseAmount,
+      residualValue: record.residualValue ?? undefined,
+      purchasedAt: record.purchasedAt ?? undefined
+    });
+    setAssetOpen(true);
+  }
+
+  async function submitAsset(values: MerchantAssetForm) {
+    if (!storeId) return;
+    setSaving(true);
+    try {
+      if (editingAsset) {
+        await http.put(`/api/merchant/assets/stores/${storeId}/${editingAsset.id}`, values);
+        message.success('资产资料已更新');
+      } else {
+        await http.post(`/api/merchant/assets/stores/${storeId}`, values);
+        message.success('资产已添加到当前门店');
+      }
+      assetForm.resetFields();
+      setEditingAsset(null);
+      setAssetOpen(false);
+      await loadAssets();
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function exportMerchantAssets() {
     downloadCsv(`门店资产-${currentStore?.storeCode || storeId}`, [
       '序号',
@@ -1063,7 +1149,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     ], filteredAssets.map((asset, index) => [
       index + 1,
       asset.assetCode,
-      assetTypeText(asset.assetType),
+      asset.assetTypeName || assetTypeText(asset.assetType),
       asset.serialNo,
       asset.investorName,
       assetStatusOptions.find((item) => item.value === asset.status)?.label || asset.status,
@@ -1081,6 +1167,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     <Space direction="vertical" size={16} className="page-stack">
       <Space align="center" className="toolbar" wrap>
         <Typography.Title level={3}>门店资产</Typography.Title>
+        {canManageAssets ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAsset}>新增资产</Button> : null}
         <Button
           icon={<DownloadOutlined />}
           onClick={() => downloadAssetImportTemplate({ storeCode: currentStore?.storeCode })}
@@ -1093,7 +1180,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
         <Input
           allowClear
           prefix={<SearchOutlined />}
-          placeholder="资产编码、序列号或出资方"
+          placeholder="资产编码、编号、类型或出资方"
           value={assetKeyword}
           style={{ width: 230 }}
           onChange={(event) => setAssetKeyword(event.target.value)}
@@ -1102,7 +1189,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           allowClear
           placeholder="资产类型"
           value={assetTypeFilter}
-          options={assetTypeOptions}
+          options={assetTypeFilterOptions}
           style={{ width: 150 }}
           onChange={setAssetTypeFilter}
         />
@@ -1132,13 +1219,31 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           columns={[
             { title: '序号', width: 70, render: (_value, _record, index) => index + 1 },
             { title: '资产编码', dataIndex: 'assetCode' },
-            { title: '类型', dataIndex: 'assetType', render: assetTypeText },
-            { title: '序列号', dataIndex: 'serialNo' },
+            { title: '类型', render: (_, record) => record.assetTypeName || assetTypeText(record.assetType) },
+            { title: '资产编号', dataIndex: 'serialNo' },
             { title: '出资方', dataIndex: 'investorName', render: (value?: string | null) => value || '-' },
             { title: '状态', dataIndex: 'status', render: assetStatusTag },
             { title: '采购金额', dataIndex: 'purchaseAmount', render: money },
             { title: '残值', dataIndex: 'residualValue', render: optionalMoney },
-            { title: '操作', render: (_, record) => <Button size="small" onClick={() => openDetail(record)}>详情</Button> }
+            {
+              title: '操作',
+              render: (_, record) => (
+                <Space>
+                  {canManageAssets ? (
+                    <Button
+                      size="small"
+                      icon={<EditOutlined />}
+                      disabled={record.status === 'RENTING'}
+                      title={record.status === 'RENTING' ? '租赁中的资产暂不能编辑' : undefined}
+                      onClick={() => openEditAsset(record)}
+                    >
+                      编辑
+                    </Button>
+                  ) : null}
+                  <Button size="small" onClick={() => openDetail(record)}>详情</Button>
+                </Space>
+              )
+            }
           ]}
         />
       </div>
@@ -1149,6 +1254,44 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
         onClose={() => setBatchImportOpen(false)}
         onImported={loadAssets}
       />
+
+      <Modal
+        title={editingAsset ? '编辑门店资产' : '新增门店资产'}
+        open={assetOpen}
+        onCancel={() => {
+          assetForm.resetFields();
+          setEditingAsset(null);
+          setAssetOpen(false);
+        }}
+        onOk={() => assetForm.submit()}
+        confirmLoading={saving}
+        forceRender
+      >
+        <Form form={assetForm} layout="vertical" onFinish={submitAsset}>
+          <Form.Item name="assetTypeId" label="资产类型" rules={[{ required: true, message: '请选择资产类型' }]}>
+            <Select showSearch optionFilterProp="label" options={assetEntryTypeOptions} />
+          </Form.Item>
+          <Form.Item
+            name="serialNo"
+            label={selectedAssetType?.serialLabel || '资产编号'}
+            rules={[{ required: true, message: `请输入${selectedAssetType?.serialLabel || '资产编号'}` }]}
+          >
+            <Input placeholder={selectedAssetType?.assetClass === 'INTEGRATED_VEHICLE' ? '车电一体仅录入车架号' : undefined} />
+          </Form.Item>
+          <Form.Item name="investorId" label="出资方" rules={[{ required: true, message: '请选择出资方' }]}>
+            <Select showSearch optionFilterProp="label" options={investorSelectOptions} />
+          </Form.Item>
+          <Form.Item name="purchaseAmount" label="采购金额" rules={[{ required: true, message: '请输入采购金额' }]}>
+            <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="residualValue" label="报废残值">
+            <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="purchasedAt" label="采购日期">
+            <Input placeholder="2026-07-22" />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         title={selectedAsset ? `${selectedAsset.asset.assetCode} / 资产详情` : '资产详情'}
@@ -1164,8 +1307,8 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           <Space direction="vertical" size={16} className="page-stack">
             <Descriptions bordered size="small" column={2}>
               <Descriptions.Item label="资产编码">{selectedAsset.asset.assetCode}</Descriptions.Item>
-              <Descriptions.Item label="资产类型">{assetTypeText(selectedAsset.asset.assetType)}</Descriptions.Item>
-              <Descriptions.Item label="序列号">{selectedAsset.asset.serialNo}</Descriptions.Item>
+              <Descriptions.Item label="资产类型">{selectedAsset.asset.assetTypeName || assetTypeText(selectedAsset.asset.assetType)}</Descriptions.Item>
+              <Descriptions.Item label={selectedAsset.asset.serialLabel || '资产编号'}>{selectedAsset.asset.serialNo}</Descriptions.Item>
               <Descriptions.Item label="当前状态">{assetStatusTag(selectedAsset.asset.status)}</Descriptions.Item>
               <Descriptions.Item label="出资方">{selectedAsset.asset.investorName || '-'}</Descriptions.Item>
               <Descriptions.Item label="所属门店">{selectedAsset.asset.storeName || '-'}</Descriptions.Item>
@@ -1909,7 +2052,9 @@ function assetStatusTag(value: AssetStatus) {
 
 function assetTypeText(value: Asset['assetType']) {
   if (value === 'INTEGRATED_VEHICLE') return '车电一体';
-  return value === 'VEHICLE_FRAME' ? '车架' : '电池';
+  if (value === 'VEHICLE_FRAME') return '车架';
+  if (value === 'BATTERY') return '电池';
+  return '普通资产';
 }
 
 function maintenanceColumns() {

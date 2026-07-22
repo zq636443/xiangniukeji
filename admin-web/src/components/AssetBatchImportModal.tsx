@@ -27,8 +27,8 @@ type TemplateOptions = {
 };
 
 const templateHeaders = [
-  '资产类型(车架/电池/车电一体)',
-  '车架号/电池号(车电一体填车架号)',
+  '资产类型(填写类型名称或编码)',
+  '资产编号',
   '出资方编码',
   '门店编码',
   '采购金额',
@@ -37,8 +37,8 @@ const templateHeaders = [
 ];
 
 const headerAliases: Record<keyof Omit<AssetImportRow, 'lineNo'>, string[]> = {
-  assetType: ['资产类型(车架/电池/车电一体)', '资产类型（车架/电池/车电一体）', '资产类型(车架/电池)', '资产类型（车架/电池）', '资产类型', 'assetType'],
-  serialNo: ['车架号/电池号(车电一体填车架号)', '车架号/电池号（车电一体填车架号）', '车架号/电池号', '车架号／电池号', '序列号', 'serialNo'],
+  assetType: ['资产类型(填写类型名称或编码)', '资产类型（填写类型名称或编码）', '资产类型(车架/电池/车电一体)', '资产类型（车架/电池/车电一体）', '资产类型(车架/电池)', '资产类型（车架/电池）', '资产类型', 'assetType'],
+  serialNo: ['资产编号', '车架号/电池号(车电一体填车架号)', '车架号/电池号（车电一体填车架号）', '车架号/电池号', '车架号／电池号', '序列号', 'serialNo'],
   investorCode: ['出资方编码', 'investorCode'],
   storeCode: ['门店编码', 'storeCode'],
   purchaseAmount: ['采购金额', 'purchaseAmount'],
@@ -141,7 +141,7 @@ export function AssetBatchImportModal({ open, endpoint, onClose, onImported }: A
               columns={[
                 { title: '行号', dataIndex: 'lineNo', width: 70 },
                 { title: '类型', dataIndex: 'assetType', width: 100 },
-                { title: '车架号 / 电池号', dataIndex: 'serialNo', width: 190 },
+                { title: '资产编号', dataIndex: 'serialNo', width: 190 },
                 { title: '出资方编码', dataIndex: 'investorCode', width: 140 },
                 { title: '门店编码', dataIndex: 'storeCode', width: 130, render: textOrDash },
                 { title: '采购金额', dataIndex: 'purchaseAmount', width: 110 },
@@ -165,7 +165,7 @@ export function AssetBatchImportModal({ open, endpoint, onClose, onImported }: A
               scroll={{ y: 280 }}
               columns={[
                 { title: '行号', dataIndex: 'lineNo', width: 80 },
-                { title: '车架号 / 电池号', dataIndex: 'serialNo', width: 220, render: textOrDash },
+                { title: '资产编号', dataIndex: 'serialNo', width: 220, render: textOrDash },
                 { title: '资产编码', dataIndex: 'assetCode', width: 170, render: textOrDash },
                 {
                   title: '状态',
