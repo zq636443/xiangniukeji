@@ -99,6 +99,7 @@ export type ExternalRentalOrder = {
   batteryAssetSerialNo?: string | null;
   orderStatus: ExternalRentalOrderStatus;
   externalRentalAmount: number;
+  verificationAmount: number;
   signFeeAmount: number;
   depositAmount: number;
   leaseUnit: 'DAY' | 'MONTH';
@@ -774,6 +775,7 @@ export type RentalOrder = {
   batterySerialNo?: string | null;
   orderStatus: OrderStatus;
   rentalAmount: number;
+  verificationAmount: number;
   signFeeAmount: number;
   depositAmount: number;
   payableAmount: number;

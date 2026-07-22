@@ -69,6 +69,10 @@
             </picker>
           </view>
           <view class="field compact">
+            <text>实际核销金额</text>
+            <input v-model="orderCreateForm.verificationAmount" type="digit" placeholder="请输入实际核销金额" />
+          </view>
+          <view class="field compact">
             <text>车架 / 车电一体资产</text>
             <picker :range="orderFrameAssetLabels" :value="orderCreateForm.frameAssetIndex" @change="onOrderFrameAssetChange">
               <view class="picker">{{ orderFrameAssetLabels[orderCreateForm.frameAssetIndex] }}</view>
@@ -96,7 +100,7 @@
           </view>
           <view class="asset-sub">{{ order.customerName || '未填姓名' }} / {{ order.customerPhone || '未填电话' }}</view>
           <view class="asset-sub">{{ order.storeSkuName || '商品' }} / {{ order.packageName || 'SKU' }} / {{ leaseText(order.leaseUnit, order.leaseValue) }}</view>
-          <view class="asset-sub">应付 {{ money(order.payableAmount) }} / 已付 {{ money(order.paidAmount) }}</view>
+          <view class="asset-sub">实际核销 {{ money(order.verificationAmount) }} / 应付 {{ money(order.payableAmount) }} / 已付 {{ money(order.paidAmount) }}</view>
           <view class="asset-sub">车架 {{ assetText(order.frameSerialNo, order.frameAssetCode, order.frameAssetId) }} / 电池 {{ assetText(order.batterySerialNo, order.batteryAssetCode, order.batteryAssetId) }}</view>
         </view>
       </view>
@@ -112,7 +116,8 @@
           <view class="asset-sub">车架：{{ assetText(selectedOrder.frameSerialNo, selectedOrder.frameAssetCode, selectedOrder.frameAssetId) }} / 电池：{{ assetText(selectedOrder.batterySerialNo, selectedOrder.batteryAssetCode, selectedOrder.batteryAssetId) }}</view>
           <view class="asset-sub">预计归还：{{ dateText(selectedOrder.expectedReturnAt) }}</view>
           <view class="asset-sub">赠送租期：好评 {{ selectedOrder.reviewBonusDays }} 天 / 活动 {{ selectedOrder.campaignBonusDays }} 天 / 合计 {{ selectedOrder.totalBonusDays }} 天</view>
-          <view class="asset-sub">租金 {{ money(selectedOrder.rentalAmount) }} / 签单费 {{ money(selectedOrder.signFeeAmount) }} / 押金 {{ money(selectedOrder.depositAmount) }}</view>
+          <view class="asset-sub">实际核销 {{ money(selectedOrder.verificationAmount) }} / 租金 {{ money(selectedOrder.rentalAmount) }}</view>
+          <view class="asset-sub">签单费 {{ money(selectedOrder.signFeeAmount) }} / 押金 {{ money(selectedOrder.depositAmount) }}</view>
           <view class="asset-sub">{{ renewalText(selectedOrder) }}</view>
           <view v-if="selectedOrder.items.length > 0" class="tag-row">
             <text v-for="item in selectedOrder.items" :key="item.id" class="tag">{{ item.itemName }} {{ money(item.totalAmount) }}</text>
@@ -515,6 +520,7 @@ const orderCreateForm = reactive({
   customerPhone: '',
   storeSkuIndex: 0,
   packageIndex: 0,
+  verificationAmount: '',
   frameAssetIndex: 0,
   batteryAssetIndex: 0
 });
@@ -804,6 +810,7 @@ function resetOrderCreateForm() {
   orderCreateForm.customerPhone = '';
   orderCreateForm.storeSkuIndex = 0;
   orderCreateForm.packageIndex = 0;
+  orderCreateForm.verificationAmount = orderPackages.value[0] ? String(orderPackages.value[0].rentalAmount) : '';
   orderCreateForm.frameAssetIndex = 0;
   orderCreateForm.batteryAssetIndex = 0;
 }
@@ -811,12 +818,16 @@ function resetOrderCreateForm() {
 function onOrderStoreSkuChange(event: { detail: { value: number } }) {
   orderCreateForm.storeSkuIndex = Number(event.detail.value);
   orderCreateForm.packageIndex = 0;
+  const firstPackage = storeSkus.value[orderCreateForm.storeSkuIndex]?.packages.find((item) => item.status === 'ENABLED');
+  orderCreateForm.verificationAmount = firstPackage ? String(firstPackage.rentalAmount) : '';
   orderCreateForm.frameAssetIndex = 0;
   orderCreateForm.batteryAssetIndex = 0;
 }
 
 function onOrderPackageChange(event: { detail: { value: number } }) {
   orderCreateForm.packageIndex = Number(event.detail.value);
+  const selectedPackage = orderPackages.value[orderCreateForm.packageIndex];
+  orderCreateForm.verificationAmount = selectedPackage ? String(selectedPackage.rentalAmount) : '';
 }
 
 function onOrderFrameAssetChange(event: { detail: { value: number } }) {
@@ -845,6 +856,11 @@ async function createMerchantOrder() {
     uni.showToast({ title: '请填写客户姓名和电话', icon: 'none' });
     return;
   }
+  const verificationAmount = Number(orderCreateForm.verificationAmount);
+  if (!orderCreateForm.verificationAmount.trim() || !Number.isFinite(verificationAmount) || verificationAmount < 0) {
+    uni.showToast({ title: '请填写正确的实际核销金额', icon: 'none' });
+    return;
+  }
   orderCreateSubmitting.value = true;
   try {
     const created = await request<RentalOrder>('/api/merchant/orders', {
@@ -855,6 +871,7 @@ async function createMerchantOrder() {
         customerPhone: orderCreateForm.customerPhone.trim(),
         storeSkuId: storeSku.id,
         packageId: rentalPackage.packageId,
+        verificationAmount,
         frameAssetId: orderCreateForm.frameAssetIndex > 0 ? orderFrameAssets.value[orderCreateForm.frameAssetIndex - 1]?.id : undefined,
         batteryAssetId: !orderUsesIntegratedVehicle.value && orderCreateForm.batteryAssetIndex > 0 ? orderBatteryAssets.value[orderCreateForm.batteryAssetIndex - 1]?.id : undefined
       }

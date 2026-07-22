@@ -107,11 +107,11 @@ public class OrderRepository {
                 INSERT INTO rental_order
                 (order_no, user_account_id, customer_name, customer_phone,
                  merchant_id, store_id, store_sku_id, sku_id, package_id,
-                 frame_asset_id, battery_asset_id, order_status, rental_amount, sign_fee_amount,
-                 deposit_amount, payable_amount, paid_amount, settlement_snapshot_id,
+                 frame_asset_id, battery_asset_id, order_status, rental_amount, verification_amount,
+                 sign_fee_amount, deposit_amount, payable_amount, paid_amount, settlement_snapshot_id,
                  lease_unit, lease_value, total_periods, bill_day_mode, bill_day, ordered_at,
                  auto_renew_enabled, renewal_unit, renewal_value, renewal_amount, expected_pickup_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.orderNo());
             setNullableLong(statement, 2, row.userAccountId());
@@ -126,30 +126,31 @@ public class OrderRepository {
             setNullableLong(statement, 11, row.batteryAssetId());
             statement.setString(12, row.orderStatus().name());
             statement.setBigDecimal(13, row.rentalAmount());
-            statement.setBigDecimal(14, row.signFeeAmount());
-            statement.setBigDecimal(15, row.depositAmount());
-            statement.setBigDecimal(16, row.payableAmount());
-            statement.setBigDecimal(17, row.paidAmount());
-            setNullableLong(statement, 18, row.settlementSnapshotId());
-            statement.setString(19, row.leaseUnit());
-            statement.setInt(20, row.leaseValue());
-            statement.setInt(21, row.totalPeriods());
-            statement.setString(22, row.billDayMode());
+            statement.setBigDecimal(14, row.verificationAmount());
+            statement.setBigDecimal(15, row.signFeeAmount());
+            statement.setBigDecimal(16, row.depositAmount());
+            statement.setBigDecimal(17, row.payableAmount());
+            statement.setBigDecimal(18, row.paidAmount());
+            setNullableLong(statement, 19, row.settlementSnapshotId());
+            statement.setString(20, row.leaseUnit());
+            statement.setInt(21, row.leaseValue());
+            statement.setInt(22, row.totalPeriods());
+            statement.setString(23, row.billDayMode());
             if (row.billDay() == null) {
-                statement.setObject(23, null);
+                statement.setObject(24, null);
             } else {
-                statement.setInt(23, row.billDay());
+                statement.setInt(24, row.billDay());
             }
-            statement.setObject(24, row.orderedAt());
-            statement.setBoolean(25, Boolean.TRUE.equals(row.autoRenewEnabled()));
-            statement.setString(26, row.renewalUnit());
+            statement.setObject(25, row.orderedAt());
+            statement.setBoolean(26, Boolean.TRUE.equals(row.autoRenewEnabled()));
+            statement.setString(27, row.renewalUnit());
             if (row.renewalValue() == null) {
-                statement.setObject(27, null);
+                statement.setObject(28, null);
             } else {
-                statement.setInt(27, row.renewalValue());
+                statement.setInt(28, row.renewalValue());
             }
-            statement.setBigDecimal(28, row.renewalAmount());
-            statement.setObject(29, row.expectedPickupAt());
+            statement.setBigDecimal(29, row.renewalAmount());
+            statement.setObject(30, row.expectedPickupAt());
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
@@ -387,6 +388,7 @@ public class OrderRepository {
         Long batteryAssetId,
         OrderStatus orderStatus,
         BigDecimal rentalAmount,
+        BigDecimal verificationAmount,
         BigDecimal signFeeAmount,
         BigDecimal depositAmount,
         BigDecimal payableAmount,
@@ -453,6 +455,7 @@ public class OrderRepository {
                 getNullableLong(rs, "battery_asset_id"),
                 OrderStatus.valueOf(rs.getString("order_status")),
                 rs.getBigDecimal("rental_amount"),
+                rs.getBigDecimal("verification_amount"),
                 rs.getBigDecimal("sign_fee_amount"),
                 rs.getBigDecimal("deposit_amount"),
                 rs.getBigDecimal("payable_amount"),

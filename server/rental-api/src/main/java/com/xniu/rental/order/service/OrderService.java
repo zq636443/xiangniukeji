@@ -36,6 +36,7 @@ import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
 import com.xniu.rental.settlement.service.SettlementService;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -216,7 +217,8 @@ public class OrderService {
         }
         var customer = resolveCustomer(userAccountId, request.customerName(), request.customerPhone());
         var orderedAt = resolveOrderedAt(request.orderedAt(), allowCustomOrderedAt);
-        var payableAmount = packagePrice.rentalAmount().add(storeSku.signFeeAmount()).add(packagePrice.depositAmount());
+        var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), packagePrice.rentalAmount());
+        var payableAmount = verificationAmount.add(storeSku.signFeeAmount()).add(packagePrice.depositAmount());
         var order = orderRepository.create(new OrderRepository.OrderCreateRow(
             nextOrderNo(),
             userAccountId,
@@ -230,7 +232,8 @@ public class OrderService {
             request.frameAssetId(),
             request.batteryAssetId(),
             OrderStatus.PENDING_PAYMENT,
-            packagePrice.rentalAmount(),
+            verificationAmount,
+            verificationAmount,
             storeSku.signFeeAmount(),
             packagePrice.depositAmount(),
             payableAmount,
@@ -248,7 +251,7 @@ public class OrderService {
             packagePrice.renewalAmount(),
             request.expectedPickupAt()
         ));
-        orderRepository.addItem(order.id(), OrderItemType.SKU, storeSku.id(), storeSku.displayName(), 1, packagePrice.rentalAmount(), packagePrice.rentalAmount());
+        orderRepository.addItem(order.id(), OrderItemType.SKU, storeSku.id(), storeSku.displayName(), 1, verificationAmount, verificationAmount);
         orderRepository.addItem(order.id(), OrderItemType.SIGN_FEE, null, "签单费", 1, storeSku.signFeeAmount(), storeSku.signFeeAmount());
         if (packagePrice.depositAmount().signum() > 0) {
             orderRepository.addItem(order.id(), OrderItemType.DEPOSIT, null, "押金", 1, packagePrice.depositAmount(), packagePrice.depositAmount());
@@ -266,7 +269,7 @@ public class OrderService {
             storeSku.id(),
             request.frameAssetId(),
             request.batteryAssetId(),
-            packagePrice.rentalAmount(),
+            verificationAmount,
             "DIRECT"
         ));
         order = orderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
@@ -400,6 +403,7 @@ public class OrderService {
             display.batterySerialNo(),
             order.orderStatus().name(),
             order.rentalAmount(),
+            order.verificationAmount(),
             order.signFeeAmount(),
             order.depositAmount(),
             order.payableAmount(),
@@ -431,6 +435,18 @@ public class OrderService {
             orderRepository.listLeaseBonuses(order.id()).stream().map(this::toLeaseBonusResponse).toList(),
             orderRepository.listLogs(order.id()).stream().map(this::toLogResponse).toList()
         );
+    }
+
+    private BigDecimal normalizeVerificationAmount(BigDecimal value, BigDecimal fallback) {
+        var amount = value == null ? fallback : value;
+        if (amount == null) {
+            throw BusinessException.badRequest("请输入实际核销金额");
+        }
+        var normalized = amount.setScale(2, RoundingMode.HALF_UP);
+        if (normalized.signum() < 0) {
+            throw BusinessException.badRequest("实际核销金额不能小于 0");
+        }
+        return normalized;
     }
 
     private void assertCanGrantLeaseBonus(RentalOrder order) {

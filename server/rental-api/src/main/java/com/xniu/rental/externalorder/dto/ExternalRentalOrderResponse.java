@@ -27,6 +27,7 @@ public record ExternalRentalOrderResponse(
     String batteryAssetSerialNo,
     String orderStatus,
     BigDecimal externalRentalAmount,
+    BigDecimal verificationAmount,
     BigDecimal signFeeAmount,
     BigDecimal depositAmount,
     String leaseUnit,

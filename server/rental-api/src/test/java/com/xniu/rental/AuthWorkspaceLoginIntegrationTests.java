@@ -62,7 +62,7 @@ class AuthWorkspaceLoginIntegrationTests {
     }
 
     @Test
-    void storeManagerCanReadSettlementWhileOtherStoreRolesCannot() {
+    void storeManagerCanReadSettlementAndCreateOrdersWhileOtherStoreRolesCannot() {
         var storeRolesWithSettlementRead = jdbcTemplate.queryForList("""
             SELECT r.role_code
             FROM auth_role r
@@ -79,6 +79,22 @@ class AuthWorkspaceLoginIntegrationTests {
             ORDER BY r.role_code
             """, String.class);
         assertThat(storeRolesWithSettlementRead).containsExactly("STORE_MANAGER");
+        var storeRolesWithOrderCreate = jdbcTemplate.queryForList("""
+            SELECT r.role_code
+            FROM auth_role r
+            JOIN auth_role_permission rp ON rp.role_id = r.id
+            JOIN auth_permission p ON p.id = rp.permission_id
+            WHERE r.role_code IN (
+                'STORE_MANAGER',
+                'STORE_OPERATOR',
+                'STORE_STAFF',
+                'MAINTENANCE_STAFF',
+                'WAREHOUSE_STAFF'
+            )
+              AND p.permission_code = 'order.create'
+            ORDER BY r.role_code
+            """, String.class);
+        assertThat(storeRolesWithOrderCreate).containsExactly("STORE_MANAGER");
 
         var password = "store-manager-workspace-test";
         var accountId = jdbcTemplate.queryForObject(
@@ -101,7 +117,7 @@ class AuthWorkspaceLoginIntegrationTests {
 
         assertThat(login.account().accountType()).isEqualTo("STORE_MANAGER");
         assertThat(login.account().roles()).contains("STORE_MANAGER");
-        assertThat(login.account().permissions()).contains("settlement.read");
+        assertThat(login.account().permissions()).contains("settlement.read", "order.create");
     }
 
     @Test

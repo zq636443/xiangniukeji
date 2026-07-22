@@ -289,11 +289,15 @@ export function SystemManagement({ mode }: SystemManagementProps) {
                 width: 110,
                 align: 'center',
                 render: (_, record) => record.merchantId ? (
-                  <Switch
-                    checked={record.directPermissions.includes('order.create')}
-                    loading={permissionUpdatingAccountId === record.id}
-                    onChange={(checked) => void toggleOrderCreatePermission(record, checked)}
-                  />
+                  record.roles.includes('STORE_MANAGER')
+                    ? <Tag color="green">店长默认</Tag>
+                    : (
+                      <Switch
+                        checked={record.directPermissions.includes('order.create')}
+                        loading={permissionUpdatingAccountId === record.id}
+                        onChange={(checked) => void toggleOrderCreatePermission(record, checked)}
+                      />
+                    )
                 ) : '-'
               },
               { title: '所属商户', dataIndex: 'merchantName', render: (value) => value || '-' },
@@ -424,7 +428,9 @@ export function SystemManagement({ mode }: SystemManagementProps) {
               </Space>
             </Descriptions.Item>
             <Descriptions.Item label="新建订单权限">
-              {selectedAccount.directPermissions.includes('order.create') ? <Tag color="green">已授权</Tag> : <Tag>未授权</Tag>}
+              {selectedAccount.permissions.includes('order.create')
+                ? <Tag color="green">{selectedAccount.roles.includes('STORE_MANAGER') ? '店长角色默认' : '已授权'}</Tag>
+                : <Tag>未授权</Tag>}
             </Descriptions.Item>
             <Descriptions.Item label="直接权限">
               <Space wrap>

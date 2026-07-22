@@ -91,6 +91,17 @@ class OrderBatchImportIntegrationTests {
             Long.class,
             orderId
         )).isNotNull();
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT verification_amount FROM rental_order WHERE id = ?",
+            java.math.BigDecimal.class,
+            orderId
+        )).isEqualByComparingTo("321.45");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT s.settlement_base_amount
+            FROM settlement_rule_snapshot s
+            JOIN rental_order o ON o.settlement_snapshot_id = s.id
+            WHERE o.id = ?
+            """, java.math.BigDecimal.class, orderId)).isEqualByComparingTo("321.45");
 
         var dueDates = jdbcTemplate.queryForList(
             "SELECT due_at FROM rental_bill WHERE order_id = ? ORDER BY period_no",
@@ -145,6 +156,7 @@ class OrderBatchImportIntegrationTests {
                 "",
                 "SSKU-demo-frame-battery",
                 "PKG-1-month",
+                "288.88",
                 serialNo,
                 "",
                 "2026-07-01 09:00",
@@ -216,6 +228,7 @@ class OrderBatchImportIntegrationTests {
             "",
             storeSkuCode,
             packageCode,
+            "321.45",
             "",
             "",
             orderedAt,

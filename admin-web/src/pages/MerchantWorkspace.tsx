@@ -90,6 +90,7 @@ type CreateOrderForm = {
   customerPhone: string;
   storeSkuId: number;
   packageId: number;
+  verificationAmount: number;
   frameAssetId?: number;
   batteryAssetId?: number;
   orderedAt: Dayjs;
@@ -356,6 +357,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
   const [replaceForm] = Form.useForm<ReplaceForm>();
   const [returnForm] = Form.useForm<ReturnForm>();
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
+  const selectedPackageId = Form.useWatch('packageId', createForm);
   const selectedCreateFrameAssetId = Form.useWatch('frameAssetId', createForm);
   const replaceAssetType = Form.useWatch('assetType', replaceForm);
   const canCreateOrder = account.permissions.includes('order.create');
@@ -364,6 +366,10 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
   const selectedStoreSku = useMemo(
     () => storeSkus.find((item) => item.id === selectedStoreSkuId),
     [storeSkus, selectedStoreSkuId]
+  );
+  const selectedPackage = useMemo(
+    () => selectedStoreSku?.packages.find((item) => item.packageId === selectedPackageId),
+    [selectedPackageId, selectedStoreSku]
   );
 
   const storeSkuOptions = useMemo(() => storeSkus.map((item) => ({
@@ -442,6 +448,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       'SKU',
       '车架号',
       '电池号',
+      '实际核销金额',
       '应付金额',
       '已付金额',
       '租期',
@@ -462,6 +469,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       order.packageName,
       order.frameSerialNo || order.frameAssetCode,
       order.batterySerialNo || order.batteryAssetCode,
+      order.verificationAmount,
       order.payableAmount,
       order.paidAmount,
       `${order.leaseValue}${order.leaseUnit === 'DAY' ? '天' : '月'} / ${order.totalPeriods}期`,
@@ -486,6 +494,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
     createForm.setFieldsValue({
       storeSkuId: firstStoreSku?.id,
       packageId: firstPackage?.packageId,
+      verificationAmount: firstPackage ? Number(firstPackage.rentalAmount) : undefined,
       orderedAt: dayjs()
     });
     setCreateOpen(true);
@@ -682,7 +691,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
           loading={loading}
           dataSource={orders}
           pagination={false}
-          scroll={{ x: 1650 }}
+          scroll={{ x: 1780 }}
           columns={[
             { title: '序号', width: 70, render: (_value, _record, index) => index + 1 },
             { title: '订单号', dataIndex: 'orderNo' },
@@ -692,6 +701,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
             { title: '租期', render: (_, record) => `${record.leaseValue}${record.leaseUnit === 'DAY' ? '天' : '月'} / ${record.totalPeriods}期` },
             { title: '车架号', render: (_, record) => assetText(record.frameSerialNo, record.frameAssetCode, record.frameAssetId) },
             { title: '电池号', render: (_, record) => assetText(record.batterySerialNo, record.batteryAssetCode, record.batteryAssetId) },
+            { title: '实际核销金额', dataIndex: 'verificationAmount', render: money },
             { title: '应付', dataIndex: 'payableAmount', render: money },
             { title: '已付', dataIndex: 'paidAmount', render: money },
             { title: '赠送租期', dataIndex: 'totalBonusDays', render: (value: number) => `${value} 天` },
@@ -759,6 +769,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
                 const firstPackage = nextStoreSku?.packages.find((item) => item.status === 'ENABLED');
                 createForm.setFieldsValue({
                   packageId: firstPackage?.packageId,
+                  verificationAmount: firstPackage ? Number(firstPackage.rentalAmount) : undefined,
                   frameAssetId: undefined,
                   batteryAssetId: undefined
                 });
@@ -766,7 +777,21 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
             />
           </Form.Item>
           <Form.Item name="packageId" label="租赁 SKU" rules={[{ required: true, message: '请选择租赁 SKU' }]}>
-            <Select options={packageOptions} />
+            <Select
+              options={packageOptions}
+              onChange={(value) => {
+                const nextPackage = selectedStoreSku?.packages.find((item) => item.packageId === value);
+                createForm.setFieldValue('verificationAmount', nextPackage ? Number(nextPackage.rentalAmount) : undefined);
+              }}
+            />
+          </Form.Item>
+          <Form.Item
+            name="verificationAmount"
+            label="实际核销金额"
+            rules={[{ required: true, message: '请输入实际核销金额' }]}
+            extra={selectedPackage ? `当前 SKU 参考价：${money(selectedPackage.rentalAmount)}` : undefined}
+          >
+            <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
             <Select allowClear options={frameOptions} />
@@ -856,6 +881,8 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
               <Descriptions.Item label="好评赠送">{selectedOrder.reviewBonusDays} 天</Descriptions.Item>
               <Descriptions.Item label="活动赠送">{selectedOrder.campaignBonusDays} 天</Descriptions.Item>
               <Descriptions.Item label="赠送合计">{selectedOrder.totalBonusDays} 天</Descriptions.Item>
+              <Descriptions.Item label="实际核销金额">{money(selectedOrder.verificationAmount)}</Descriptions.Item>
+              <Descriptions.Item label="应付金额">{money(selectedOrder.payableAmount)}</Descriptions.Item>
               <Descriptions.Item label="预计归还">{dateText(selectedOrder.expectedReturnAt)}</Descriptions.Item>
               <Descriptions.Item label="下单时间">{dateText(selectedOrder.orderedAt)}</Descriptions.Item>
               <Descriptions.Item label="系统录入时间">{dateText(selectedOrder.createdAt)}</Descriptions.Item>

@@ -169,6 +169,8 @@ public class ExternalRentalOrderService {
         }
         var frameAsset = request.frameAssetId() == null ? null : occupyAsset(request.frameAssetId(), AssetType.VEHICLE_FRAME, storeSku, "外部补录订单绑定车架");
         var batteryAsset = request.batteryAssetId() == null ? null : occupyAsset(request.batteryAssetId(), AssetType.BATTERY, storeSku, "外部补录订单绑定电池");
+        var externalRentalAmount = normalizeMoney(request.externalRentalAmount(), packagePricing.rentalAmount());
+        var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), externalRentalAmount);
         var order = externalRentalOrderRepository.create(new ExternalRentalOrderRepository.CreateRow(
             nextRecordNo(),
             parseSource(request.sourcePlatform()),
@@ -183,7 +185,8 @@ public class ExternalRentalOrderService {
             frameAsset == null ? null : frameAsset.id(),
             batteryAsset == null ? null : batteryAsset.id(),
             ExternalRentalOrderStatus.ACTIVE,
-            normalizeMoney(request.externalRentalAmount(), packagePricing.rentalAmount()),
+            externalRentalAmount,
+            verificationAmount,
             normalizeMoney(request.signFeeAmount(), storeSku.signFeeAmount()),
             normalizeMoney(request.depositAmount(), packagePricing.depositAmount()),
             packageTemplate.leaseUnit().name(),
@@ -411,6 +414,7 @@ public class ExternalRentalOrderService {
             view.batteryAssetSerialNo(),
             order.orderStatus().name(),
             order.externalRentalAmount(),
+            order.verificationAmount(),
             order.signFeeAmount(),
             order.depositAmount(),
             order.leaseUnit(),
@@ -562,6 +566,7 @@ public class ExternalRentalOrderService {
             row.frameAssetId(),
             row.batteryAssetId(),
             row.externalRentalAmount(),
+            row.verificationAmount(),
             row.signFeeAmount(),
             row.depositAmount(),
             row.remark()
@@ -611,6 +616,11 @@ public class ExternalRentalOrderService {
             throw BusinessException.badRequest("金额不能小于 0");
         }
         return amount;
+    }
+
+    private BigDecimal normalizeVerificationAmount(BigDecimal value, BigDecimal fallback) {
+        var amount = normalizeMoney(value, fallback);
+        return amount.setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     private LocalDateTime calculateExpectedReturnAt(LocalDateTime startedAt, ProductPackage productPackage) {

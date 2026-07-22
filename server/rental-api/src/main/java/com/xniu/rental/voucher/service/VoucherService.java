@@ -267,6 +267,7 @@ public class VoucherService {
             null,
             OrderStatus.PENDING_PAYMENT,
             verificationAmount,
+            verificationAmount,
             record.signFeeAmount().setScale(2, RoundingMode.HALF_UP),
             BigDecimal.ZERO,
             payableAmount,

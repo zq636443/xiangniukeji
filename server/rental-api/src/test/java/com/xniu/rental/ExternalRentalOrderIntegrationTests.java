@@ -133,6 +133,7 @@ class ExternalRentalOrderIntegrationTests {
             frameAssetId,
             batteryAssetId,
             new BigDecimal("399.00"),
+            new BigDecimal("368.50"),
             new BigDecimal("30.00"),
             BigDecimal.ZERO,
             "门店补录历史在租订单"
@@ -141,6 +142,8 @@ class ExternalRentalOrderIntegrationTests {
         assertThat(created.orderStatus()).isEqualTo("ACTIVE");
         assertThat(created.frameAssetId()).isEqualTo(frameAssetId);
         assertThat(created.batteryAssetId()).isEqualTo(batteryAssetId);
+        assertThat(created.externalRentalAmount()).isEqualByComparingTo("399.00");
+        assertThat(created.verificationAmount()).isEqualByComparingTo("368.50");
         assertThat(assetStatus(frameAssetId)).isEqualTo("RENTING");
         assertThat(assetStatus(batteryAssetId)).isEqualTo("RENTING");
 
@@ -220,6 +223,7 @@ class ExternalRentalOrderIntegrationTests {
                 frameAssetId,
                 batteryAssetId,
                 new BigDecimal("399.00"),
+                new BigDecimal("355.25"),
                 new BigDecimal("30.00"),
                 BigDecimal.ZERO,
                 "批量导入测试"
@@ -267,6 +271,7 @@ class ExternalRentalOrderIntegrationTests {
             integratedAssetId,
             2L,
             new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
             new BigDecimal("30.00"),
             BigDecimal.ZERO,
             null
@@ -286,6 +291,7 @@ class ExternalRentalOrderIntegrationTests {
             integratedAssetId,
             null,
             new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
             new BigDecimal("30.00"),
             BigDecimal.ZERO,
             null

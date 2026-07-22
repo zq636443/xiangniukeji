@@ -147,6 +147,7 @@ export type RentalOrder = {
   batterySerialNo?: string | null;
   orderStatus: OrderStatus;
   rentalAmount: number;
+  verificationAmount: number;
   signFeeAmount: number;
   depositAmount: number;
   payableAmount: number;

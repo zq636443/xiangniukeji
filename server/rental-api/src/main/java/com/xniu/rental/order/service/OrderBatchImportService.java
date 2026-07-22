@@ -13,6 +13,7 @@ import com.xniu.rental.order.dto.OrderCreateRequest;
 import com.xniu.rental.order.dto.OrderResponse;
 import com.xniu.rental.product.repository.ProductRepository;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -127,7 +128,8 @@ public class OrderBatchImportService {
             frameAssetId(row.frameSerialNo()),
             assetId(row.batterySerialNo(), AssetType.BATTERY),
             optionalDateTime(row.expectedPickupAt(), "预计取车时间"),
-            optionalDateTime(row.orderedAt(), "下单时间")
+            optionalDateTime(row.orderedAt(), "下单时间"),
+            requiredMoney(row.verificationAmount(), "实际核销金额")
         );
         return merchantImport
             ? orderCreationService.createMerchantOrder(request)
@@ -167,6 +169,19 @@ public class OrderBatchImportService {
             }
             return parsed;
         } catch (ArithmeticException | NumberFormatException exception) {
+            throw BusinessException.badRequest(fieldName + "格式不正确");
+        }
+    }
+
+    private BigDecimal requiredMoney(String value, String fieldName) {
+        var normalized = requiredText(value, fieldName);
+        try {
+            var amount = new BigDecimal(normalized).setScale(2, RoundingMode.HALF_UP);
+            if (amount.signum() < 0) {
+                throw BusinessException.badRequest(fieldName + "不能小于0");
+            }
+            return amount;
+        } catch (NumberFormatException exception) {
             throw BusinessException.badRequest(fieldName + "格式不正确");
         }
     }

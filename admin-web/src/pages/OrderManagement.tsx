@@ -47,6 +47,7 @@ type CreateForm = {
   customerPhone: string;
   storeSkuId: number;
   packageId: number;
+  verificationAmount: number;
   frameAssetId?: number;
   batteryAssetId?: number;
   orderedAt: Dayjs;
@@ -121,6 +122,7 @@ export function OrderManagement() {
   const [exceptionForm] = Form.useForm<ReasonForm>();
   const [filterForm] = Form.useForm<OrderFilterForm>();
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
+  const selectedPackageId = Form.useWatch('packageId', createForm);
   const selectedFrameAssetId = Form.useWatch('frameAssetId', createForm);
   const selectedPickupFrameAssetId = Form.useWatch('frameAssetId', pickupForm);
   const replaceAssetType = Form.useWatch('assetType', replaceForm);
@@ -146,6 +148,11 @@ export function OrderManagement() {
   const selectedStoreSku = useMemo(
     () => storeSkus.find((item) => item.id === selectedStoreSkuId),
     [storeSkus, selectedStoreSkuId]
+  );
+
+  const selectedPackage = useMemo(
+    () => selectedStoreSku?.packages.find((item) => item.packageId === selectedPackageId),
+    [selectedPackageId, selectedStoreSku]
   );
 
   const packageOptions = useMemo(() => (selectedStoreSku?.packages ?? [])
@@ -254,6 +261,7 @@ export function OrderManagement() {
       '车架号',
       '电池号',
       '租金',
+      '实际核销金额',
       '签单费',
       '押金',
       '应付金额',
@@ -282,6 +290,7 @@ export function OrderManagement() {
       order.frameSerialNo || order.frameAssetCode,
       order.batterySerialNo || order.batteryAssetCode,
       order.rentalAmount,
+      order.verificationAmount,
       order.signFeeAmount,
       order.depositAmount,
       order.payableAmount,
@@ -307,6 +316,7 @@ export function OrderManagement() {
     createForm.setFieldsValue({
       storeSkuId: firstStoreSku?.id,
       packageId: firstPackage?.packageId,
+      verificationAmount: firstPackage ? Number(firstPackage.rentalAmount) : undefined,
       orderedAt: dayjs()
     });
     setCreateOpen(true);
@@ -486,7 +496,7 @@ export function OrderManagement() {
           size="small"
           dataSource={orders}
           pagination={false}
-          scroll={{ x: 2200 }}
+          scroll={{ x: 2320 }}
           expandable={{
             expandedRowRender: (record) => (
               <Space direction="vertical" className="page-stack">
@@ -511,6 +521,7 @@ export function OrderManagement() {
                   <Descriptions.Item label="预计归还">{dateText(record.expectedReturnAt)}</Descriptions.Item>
                   <Descriptions.Item label="实际归还">{dateText(record.returnedAt)}</Descriptions.Item>
                   <Descriptions.Item label="租金">{moneyText(record.rentalAmount)}</Descriptions.Item>
+                  <Descriptions.Item label="实际核销金额">{moneyText(record.verificationAmount)}</Descriptions.Item>
                   <Descriptions.Item label="签单费">{moneyText(record.signFeeAmount)}</Descriptions.Item>
                   <Descriptions.Item label="押金">{moneyText(record.depositAmount)}</Descriptions.Item>
                   <Descriptions.Item label="分润快照">{record.settlementSnapshotId || '-'}</Descriptions.Item>
@@ -571,6 +582,7 @@ export function OrderManagement() {
             { title: 'SKU', width: 140, render: (_, record) => record.packageName || `#${record.packageId}` },
             { title: '车架号', width: 160, render: (_, record) => assetText(record.frameSerialNo, record.frameAssetCode, record.frameAssetId) },
             { title: '电池号', width: 160, render: (_, record) => assetText(record.batterySerialNo, record.batteryAssetCode, record.batteryAssetId) },
+            { title: '实际核销金额', dataIndex: 'verificationAmount', width: 130, render: moneyText },
             { title: '应付', dataIndex: 'payableAmount', width: 100, render: moneyText },
             { title: '已付', dataIndex: 'paidAmount', width: 100, render: moneyText },
             { title: '赠送租期', dataIndex: 'totalBonusDays', width: 100, render: (value: number) => `${value} 天` },
@@ -626,13 +638,30 @@ export function OrderManagement() {
                 const firstPackage = nextStoreSku?.packages.find((item) => item.status === 'ENABLED');
                 createForm.setFieldsValue({
                   packageId: firstPackage?.packageId,
+                  verificationAmount: firstPackage ? Number(firstPackage.rentalAmount) : undefined,
                   frameAssetId: undefined,
                   batteryAssetId: undefined
                 });
               }}
             />
           </Form.Item>
-          <Form.Item name="packageId" label="SKU" rules={[{ required: true, message: '请选择 SKU' }]}><Select options={packageOptions} /></Form.Item>
+          <Form.Item name="packageId" label="SKU" rules={[{ required: true, message: '请选择 SKU' }]}>
+            <Select
+              options={packageOptions}
+              onChange={(value) => {
+                const nextPackage = selectedStoreSku?.packages.find((item) => item.packageId === value);
+                createForm.setFieldValue('verificationAmount', nextPackage ? Number(nextPackage.rentalAmount) : undefined);
+              }}
+            />
+          </Form.Item>
+          <Form.Item
+            name="verificationAmount"
+            label="实际核销金额"
+            rules={[{ required: true, message: '请输入实际核销金额' }]}
+            extra={selectedPackage ? `当前 SKU 参考价：${moneyText(selectedPackage.rentalAmount)}` : undefined}
+          >
+            <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
+          </Form.Item>
           <Form.Item name="frameAssetId" label="车架 / 车电一体资产">
             <Select
               showSearch

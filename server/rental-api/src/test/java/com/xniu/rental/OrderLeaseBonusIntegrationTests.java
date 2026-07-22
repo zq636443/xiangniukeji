@@ -47,6 +47,11 @@ class OrderLeaseBonusIntegrationTests {
 
     @BeforeEach
     void setAdminAccount() {
+        jdbcTemplate.update("""
+            UPDATE asset_item
+            SET status = 'IDLE', current_merchant_id = 1, current_store_id = 1
+            WHERE id IN (1, 2)
+            """);
         AuthContext.set(adminAccount());
     }
 

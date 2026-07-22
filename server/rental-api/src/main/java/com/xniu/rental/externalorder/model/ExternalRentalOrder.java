@@ -19,6 +19,7 @@ public record ExternalRentalOrder(
     Long batteryAssetId,
     ExternalRentalOrderStatus orderStatus,
     BigDecimal externalRentalAmount,
+    BigDecimal verificationAmount,
     BigDecimal signFeeAmount,
     BigDecimal depositAmount,
     String leaseUnit,

@@ -99,6 +99,18 @@ class RentalBusinessFlowIntegrationTests {
 
     @BeforeEach
     void setCurrentAccount() {
+        jdbcTemplate.update("""
+            UPDATE asset_item
+            SET status = 'IDLE', current_merchant_id = 1, current_store_id = 1
+            WHERE id IN (1, 2)
+            """);
+        jdbcTemplate.update("UPDATE rental_order SET auto_renew_enabled = 0");
+        jdbcTemplate.update("""
+            UPDATE rental_bill
+            SET bill_status = 'CANCELLED'
+            WHERE bill_status IN ('PENDING_PAYMENT', 'FAILED')
+              AND payable_amount > paid_amount
+            """);
         AuthContext.set(new CurrentAccount(
             "test-token",
             new CurrentAccountResponse(

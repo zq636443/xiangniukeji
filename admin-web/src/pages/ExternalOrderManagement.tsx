@@ -37,6 +37,7 @@ type CreateForm = {
   frameAssetId?: number;
   batteryAssetId?: number;
   externalRentalAmount?: number;
+  verificationAmount: number;
   signFeeAmount?: number;
   depositAmount?: number;
   remark?: string;
@@ -136,6 +137,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     }
     createForm.setFieldsValue({
       externalRentalAmount: Number(selectedPackage.rentalAmount || 0),
+      verificationAmount: Number(selectedPackage.rentalAmount || 0),
       depositAmount: Number(selectedPackage.depositAmount || 0),
       expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), selectedPackage)
     });
@@ -229,6 +231,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       rentStartedAt: dayjs(),
       signFeeAmount: 0,
       externalRentalAmount: 0,
+      verificationAmount: 0,
       depositAmount: 0
     });
     setCreateOpen(true);
@@ -393,6 +396,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               )
             },
             { title: '租金', dataIndex: 'externalRentalAmount', width: 110, render: moneyText },
+            { title: '实际核销金额', dataIndex: 'verificationAmount', width: 130, render: moneyText },
             { title: '签单费', dataIndex: 'signFeeAmount', width: 110, render: moneyText },
             { title: '状态', dataIndex: 'orderStatus', width: 110, render: statusTag },
             { title: '起租时间', dataIndex: 'rentStartedAt', width: 170, render: dateText },
@@ -470,9 +474,19 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             </Form.Item>
           </Space>
           <Space size={12} style={{ width: '100%' }} align="start">
-            <Form.Item name="externalRentalAmount" label="租金" style={{ flex: 1 }}>
+            <Form.Item name="externalRentalAmount" label="外部订单租金" style={{ flex: 1 }}>
               <InputNumber min={0} precision={2} style={{ width: '100%' }} />
             </Form.Item>
+            <Form.Item
+              name="verificationAmount"
+              label="实际核销金额"
+              rules={[{ required: true, message: '请输入实际核销金额' }]}
+              style={{ flex: 1 }}
+            >
+              <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
+            </Form.Item>
+          </Space>
+          <Space size={12} style={{ width: '100%' }} align="start">
             <Form.Item name="signFeeAmount" label="签单费" style={{ flex: 1 }}>
               <InputNumber min={0} precision={2} style={{ width: '100%' }} />
             </Form.Item>
@@ -517,15 +531,15 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             type="info"
             showIcon
             message="一行一单，支持英文逗号或 Tab 分隔"
-            description="字段顺序：来源平台,外部订单号,门店商品ID,SKU ID,客户姓名,客户手机号,起租时间,预计归还时间,车架资产ID,电池资产ID,租金,签单费,押金,备注。车电一体只填车架资产ID，电池资产ID留空。"
+            description="字段顺序：来源平台,外部订单号,门店商品ID,SKU ID,客户姓名,客户手机号,起租时间,预计归还时间,车架资产ID,电池资产ID,外部订单租金,实际核销金额,签单费,押金,备注。车电一体只填车架资产ID，电池资产ID留空。"
           />
           <Input.TextArea
             rows={10}
             value={importText}
             onChange={(event) => setImportText(event.target.value)}
             placeholder={[
-              'MEITUAN,MT-001,1,2,张三,13800138000,2026-07-19 10:00:00,2026-08-19 10:00:00,101,202,399,30,0,历史在租订单',
-              'OFFLINE,,1,1,李四,13900139000,2026-07-18 09:30:00,,103,204,39,20,0,线下老单补录'
+              'MEITUAN,MT-001,1,2,张三,13800138000,2026-07-19 10:00:00,2026-08-19 10:00:00,101,202,399,368.50,30,0,历史在租订单',
+              'OFFLINE,,1,1,李四,13900139000,2026-07-18 09:30:00,,103,,39,35,20,0,线下老单补录'
             ].join('\n')}
           />
           {importResult ? (
@@ -626,7 +640,8 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               <Descriptions.Item label="租期">{leaseText(selectedOrder.leaseUnit, selectedOrder.leaseValue, selectedOrder.totalPeriods)}</Descriptions.Item>
               <Descriptions.Item label="车架资产">{selectedOrder.frameAssetSerialNo || '-'}</Descriptions.Item>
               <Descriptions.Item label="电池资产">{selectedOrder.batteryAssetSerialNo || '-'}</Descriptions.Item>
-              <Descriptions.Item label="租金">{moneyText(selectedOrder.externalRentalAmount)}</Descriptions.Item>
+              <Descriptions.Item label="外部订单租金">{moneyText(selectedOrder.externalRentalAmount)}</Descriptions.Item>
+              <Descriptions.Item label="实际核销金额">{moneyText(selectedOrder.verificationAmount)}</Descriptions.Item>
               <Descriptions.Item label="签单费">{moneyText(selectedOrder.signFeeAmount)}</Descriptions.Item>
               <Descriptions.Item label="押金">{moneyText(selectedOrder.depositAmount)}</Descriptions.Item>
               <Descriptions.Item label="起租时间">{dateText(selectedOrder.rentStartedAt)}</Descriptions.Item>
@@ -758,9 +773,10 @@ function parseImportRows(input: string) {
         frameAssetId: parseOptionalNumber(values[8]),
         batteryAssetId: parseOptionalNumber(values[9]),
         externalRentalAmount: parseOptionalNumber(values[10]),
-        signFeeAmount: parseOptionalNumber(values[11]),
-        depositAmount: parseOptionalNumber(values[12]),
-        remark: emptyToUndefined(values[13])
+        verificationAmount: parseOptionalNumber(values[11]),
+        signFeeAmount: parseOptionalNumber(values[12]),
+        depositAmount: parseOptionalNumber(values[13]),
+        remark: emptyToUndefined(values[14])
       };
     });
 }

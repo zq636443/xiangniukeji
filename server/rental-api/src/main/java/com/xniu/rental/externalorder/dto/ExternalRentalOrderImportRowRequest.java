@@ -16,6 +16,7 @@ public record ExternalRentalOrderImportRowRequest(
     Long frameAssetId,
     Long batteryAssetId,
     BigDecimal externalRentalAmount,
+    BigDecimal verificationAmount,
     BigDecimal signFeeAmount,
     BigDecimal depositAmount,
     String remark

@@ -166,9 +166,9 @@ public class ExternalRentalOrderRepository {
                 INSERT INTO external_rental_order
                 (record_no, source_platform, external_order_no, merchant_id, store_id, store_sku_id, sku_id, package_id,
                  customer_name, customer_phone, frame_asset_id, battery_asset_id, order_status,
-                 external_rental_amount, sign_fee_amount, deposit_amount, lease_unit, lease_value, total_periods,
+                 external_rental_amount, verification_amount, sign_fee_amount, deposit_amount, lease_unit, lease_value, total_periods,
                  rent_started_at, expected_return_at, remark, created_by_account_id, updated_by_account_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.recordNo());
             statement.setString(2, row.sourcePlatform().name());
@@ -184,16 +184,17 @@ public class ExternalRentalOrderRepository {
             setNullableLong(statement, 12, row.batteryAssetId());
             statement.setString(13, row.orderStatus().name());
             statement.setBigDecimal(14, row.externalRentalAmount());
-            statement.setBigDecimal(15, row.signFeeAmount());
-            statement.setBigDecimal(16, row.depositAmount());
-            statement.setString(17, row.leaseUnit());
-            statement.setInt(18, row.leaseValue());
-            statement.setInt(19, row.totalPeriods());
-            statement.setObject(20, row.rentStartedAt());
-            statement.setObject(21, row.expectedReturnAt());
-            statement.setString(22, row.remark());
-            setNullableLong(statement, 23, row.createdByAccountId());
-            setNullableLong(statement, 24, row.updatedByAccountId());
+            statement.setBigDecimal(15, row.verificationAmount());
+            statement.setBigDecimal(16, row.signFeeAmount());
+            statement.setBigDecimal(17, row.depositAmount());
+            statement.setString(18, row.leaseUnit());
+            statement.setInt(19, row.leaseValue());
+            statement.setInt(20, row.totalPeriods());
+            statement.setObject(21, row.rentStartedAt());
+            statement.setObject(22, row.expectedReturnAt());
+            statement.setString(23, row.remark());
+            setNullableLong(statement, 24, row.createdByAccountId());
+            setNullableLong(statement, 25, row.updatedByAccountId());
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
@@ -262,6 +263,7 @@ public class ExternalRentalOrderRepository {
                 getNullableLong(rs, "battery_asset_id"),
                 ExternalRentalOrderStatus.valueOf(rs.getString("order_status")),
                 rs.getBigDecimal("external_rental_amount"),
+                rs.getBigDecimal("verification_amount"),
                 rs.getBigDecimal("sign_fee_amount"),
                 rs.getBigDecimal("deposit_amount"),
                 rs.getString("lease_unit"),
@@ -330,6 +332,7 @@ public class ExternalRentalOrderRepository {
         Long batteryAssetId,
         ExternalRentalOrderStatus orderStatus,
         BigDecimal externalRentalAmount,
+        BigDecimal verificationAmount,
         BigDecimal signFeeAmount,
         BigDecimal depositAmount,
         String leaseUnit,

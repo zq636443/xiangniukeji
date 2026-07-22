@@ -18,6 +18,7 @@ public record RentalOrder(
     Long batteryAssetId,
     OrderStatus orderStatus,
     BigDecimal rentalAmount,
+    BigDecimal verificationAmount,
     BigDecimal signFeeAmount,
     BigDecimal depositAmount,
     BigDecimal payableAmount,

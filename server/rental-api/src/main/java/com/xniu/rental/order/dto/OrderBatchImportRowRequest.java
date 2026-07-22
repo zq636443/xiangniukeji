@@ -7,6 +7,7 @@ public record OrderBatchImportRowRequest(
     String userAccountId,
     String storeSkuCode,
     String packageCode,
+    String verificationAmount,
     String frameSerialNo,
     String batterySerialNo,
     String orderedAt,

@@ -26,6 +26,7 @@ public record OrderResponse(
     String batterySerialNo,
     String orderStatus,
     BigDecimal rentalAmount,
+    BigDecimal verificationAmount,
     BigDecimal signFeeAmount,
     BigDecimal depositAmount,
     BigDecimal payableAmount,

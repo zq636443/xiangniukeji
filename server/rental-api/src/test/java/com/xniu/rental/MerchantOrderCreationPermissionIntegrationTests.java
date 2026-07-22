@@ -12,6 +12,7 @@ import com.xniu.rental.order.controller.MerchantOrderController;
 import com.xniu.rental.order.dto.OrderCancelRequest;
 import com.xniu.rental.order.dto.OrderCreateRequest;
 import com.xniu.rental.order.service.OrderService;
+import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,16 @@ class MerchantOrderCreationPermissionIntegrationTests {
         assertThat(created.customerName()).isEqualTo("门店测试客户");
         assertThat(created.customerPhone()).isEqualTo("13800001111");
         assertThat(created.orderStatus()).isEqualTo("PENDING_PAYMENT");
+        assertThat(created.verificationAmount()).isEqualByComparingTo("321.45");
+        assertThat(created.rentalAmount()).isEqualByComparingTo("321.45");
+        assertThat(created.payableAmount()).isEqualByComparingTo(
+            created.verificationAmount().add(created.signFeeAmount()).add(created.depositAmount())
+        );
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT settlement_base_amount FROM settlement_rule_snapshot WHERE id = ?",
+            BigDecimal.class,
+            created.settlementSnapshotId()
+        )).isEqualByComparingTo("321.45");
         assertThat(jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM rental_bill WHERE order_id = ?",
             Integer.class,
@@ -84,7 +95,7 @@ class MerchantOrderCreationPermissionIntegrationTests {
 
     @Test
     void merchantCannotAttachAssetOutsideOrderStore() {
-        jdbcTemplate.update("UPDATE asset_item SET current_store_id = NULL WHERE id = 1");
+        jdbcTemplate.update("UPDATE asset_item SET status = 'IDLE', current_store_id = NULL WHERE id = 1");
         setMerchantAccount(List.of("order.read", "order.create"), allMerchantStores());
 
         var request = new OrderCreateRequest(null, "门店测试客户", "13800001111", 1L, 1L, 1L, null, null);
@@ -130,7 +141,18 @@ class MerchantOrderCreationPermissionIntegrationTests {
     }
 
     private OrderCreateRequest orderRequest() {
-        return new OrderCreateRequest(null, "门店测试客户", "13800001111", 1L, 1L, null, null, null);
+        return new OrderCreateRequest(
+            null,
+            "门店测试客户",
+            "13800001111",
+            1L,
+            1L,
+            null,
+            null,
+            null,
+            null,
+            new BigDecimal("321.45")
+        );
     }
 
     private List<StoreScopeResponse> allMerchantStores() {
