@@ -1170,7 +1170,12 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
         {canManageAssets ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAsset}>新增资产</Button> : null}
         <Button
           icon={<DownloadOutlined />}
-          onClick={() => downloadAssetImportTemplate({ storeCode: currentStore?.storeCode })}
+          onClick={() => void downloadAssetImportTemplate({
+            storeCode: currentStore?.storeCode,
+            assetTypes,
+            investors: investorOptions,
+            stores: currentStore ? [currentStore] : []
+          })}
         >
           下载模板
         </Button>

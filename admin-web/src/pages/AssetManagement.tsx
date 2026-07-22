@@ -471,7 +471,12 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
         {showInvestors && <Button type="primary" icon={<PlusOutlined />} onClick={openCreateInvestor}>新建出资方</Button>}
         {showAssets && account.accountType !== 'INVESTOR' ? (
           <>
-            <Button icon={<DownloadOutlined />} onClick={() => downloadAssetImportTemplate()}>下载模板</Button>
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={() => void downloadAssetImportTemplate({ assetTypes, investors, stores })}
+            >
+              下载模板
+            </Button>
             {canImportAssets ? <Button icon={<UploadOutlined />} onClick={() => setBatchImportOpen(true)}>批量录入</Button> : null}
             {canManageAssetTypes ? <Button icon={<SettingOutlined />} onClick={() => setAssetTypeManagerOpen(true)}>类型管理</Button> : null}
             {canManageAssets ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAsset}>资产入库</Button> : null}
