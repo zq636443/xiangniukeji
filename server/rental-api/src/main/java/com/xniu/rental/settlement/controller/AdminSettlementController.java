@@ -11,6 +11,7 @@ import com.xniu.rental.settlement.model.SettlementRuleStatus;
 import com.xniu.rental.settlement.service.SettlementService;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -48,9 +49,23 @@ public class AdminSettlementController {
         return ApiResponse.ok(settlementService.createRule(request));
     }
 
+    @PutMapping("/rules/{id}")
+    public ApiResponse<ProfitRuleResponse> updateRule(
+        @PathVariable Long id,
+        @Valid @RequestBody ProfitRuleRequest request
+    ) {
+        return ApiResponse.ok(settlementService.updateRule(id, request));
+    }
+
     @PutMapping("/rules/{id}/status")
     public ApiResponse<ProfitRuleResponse> updateRuleStatus(@PathVariable Long id, @RequestParam SettlementRuleStatus status) {
         return ApiResponse.ok(settlementService.updateRuleStatus(id, status));
+    }
+
+    @DeleteMapping("/rules/{id}")
+    public ApiResponse<Boolean> deleteRule(@PathVariable Long id) {
+        settlementService.deleteRule(id);
+        return ApiResponse.ok(true);
     }
 
     @PutMapping("/store-rules/{storeId}")

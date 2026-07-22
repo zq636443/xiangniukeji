@@ -23,6 +23,7 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,40 +61,85 @@ public class SettlementService {
     public List<ProfitRuleResponse> listStoreRules() {
         authorizationService.requirePermission("settlement.read");
         storeRepository.list(null, null).forEach(store -> initializeStoreProfitRuleInternal(store.id()));
-        return settlementRepository.listDefaultStoreRules().stream().map(this::toResponse).toList();
+        return settlementRepository.listRules(RuleScope.STORE, null).stream().map(this::toResponse).toList();
     }
 
     @Transactional
     public ProfitRuleResponse createRule(ProfitRuleRequest request) {
+        authorizationService.requirePlatformAccount();
         authorizationService.requirePermission("settlement.write");
-        validateRule(request);
+        var normalized = normalizeRule(request, null);
         var rule = settlementRepository.createRule(
             nextCode("RULE"),
-            request.ruleName(),
-            parseScope(request.ruleScope()),
-            normalizeRuleChannel(request.sourceChannel()),
-            normalizePriority(request.priority()),
-            request.skuId(),
-            request.merchantId(),
-            request.storeId(),
-            request.storeSkuId(),
-            rate(request.channelFeeRate()),
-            rate(request.platformFeeRate()),
-            rate(request.storeOperationRate()),
-            rate(request.maintenanceFundRate()),
-            rate(request.channelReferralRate()),
-            rate(request.investorShareRate()),
-            request.effectiveAt() == null ? LocalDateTime.now() : request.effectiveAt(),
-            request.expiredAt()
+            normalized.ruleName(),
+            normalized.scope(),
+            normalized.sourceChannel(),
+            normalized.priority(),
+            normalized.skuId(),
+            normalized.merchantId(),
+            normalized.storeId(),
+            normalized.storeSkuId(),
+            normalized.channelFeeRate(),
+            normalized.platformFeeRate(),
+            normalized.storeOperationRate(),
+            normalized.maintenanceFundRate(),
+            normalized.channelReferralRate(),
+            normalized.investorShareRate(),
+            normalized.effectiveAt(),
+            normalized.expiredAt()
         );
         return toResponse(rule);
     }
 
     @Transactional
-    public ProfitRuleResponse updateRuleStatus(Long id, SettlementRuleStatus status) {
+    public ProfitRuleResponse updateRule(Long id, ProfitRuleRequest request) {
+        authorizationService.requirePlatformAccount();
         authorizationService.requirePermission("settlement.write");
-        ensureRule(id);
+        var existing = ensureRule(id);
+        var normalized = normalizeRule(request, existing);
+        ensureFallbackRemains(existing, normalized);
+        return toResponse(settlementRepository.updateRule(
+            id,
+            normalized.ruleName(),
+            normalized.scope(),
+            normalized.sourceChannel(),
+            normalized.priority(),
+            normalized.skuId(),
+            normalized.merchantId(),
+            normalized.storeId(),
+            normalized.storeSkuId(),
+            normalized.channelFeeRate(),
+            normalized.platformFeeRate(),
+            normalized.storeOperationRate(),
+            normalized.maintenanceFundRate(),
+            normalized.channelReferralRate(),
+            normalized.investorShareRate(),
+            normalized.effectiveAt(),
+            normalized.expiredAt()
+        ));
+    }
+
+    @Transactional
+    public ProfitRuleResponse updateRuleStatus(Long id, SettlementRuleStatus status) {
+        authorizationService.requirePlatformAccount();
+        authorizationService.requirePermission("settlement.write");
+        var rule = ensureRule(id);
+        if (SettlementRuleStatus.DISABLED.equals(status)) {
+            ensureCanDeactivate(rule);
+        }
         return toResponse(settlementRepository.updateRuleStatus(id, status));
+    }
+
+    @Transactional
+    public void deleteRule(Long id) {
+        authorizationService.requirePlatformAccount();
+        authorizationService.requirePermission("settlement.write");
+        var rule = ensureRule(id);
+        ensureCanDeactivate(rule);
+        if (settlementRepository.countSnapshotsByRuleId(id) > 0) {
+            throw BusinessException.badRequest("该规则已生成分润快照，不能删除，可改为停用");
+        }
+        settlementRepository.deleteRule(id);
     }
 
     @Transactional
@@ -282,29 +328,44 @@ public class SettlementService {
         return persist ? settlementRepository.createSnapshot(snapshot) : snapshot;
     }
 
-    private void validateRule(ProfitRuleRequest request) {
+    private NormalizedRule normalizeRule(ProfitRuleRequest request, SettlementProfitRule existing) {
         var scope = parseScope(request.ruleScope());
+        Long skuId = null;
+        Long merchantId = null;
+        Long storeId = null;
+        Long storeSkuId = null;
         switch (scope) {
             case STORE_SKU -> {
                 if (request.storeSkuId() == null) {
                     throw BusinessException.badRequest("门店商品规则必须选择门店商品");
                 }
+                var storeSku = productRepository.findStoreSku(request.storeSkuId())
+                    .orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
+                skuId = storeSku.skuId();
+                merchantId = storeSku.merchantId();
+                storeId = storeSku.storeId();
+                storeSkuId = storeSku.id();
             }
             case STORE -> {
                 if (request.storeId() == null) {
                     throw BusinessException.badRequest("门店规则必须选择门店");
                 }
+                var store = storeRepository.findById(request.storeId())
+                    .orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+                merchantId = store.merchantId();
+                storeId = store.id();
             }
             case SKU -> {
                 if (request.skuId() == null) {
                     throw BusinessException.badRequest("链接规则必须选择商品链接");
                 }
+                var sku = productRepository.findSku(request.skuId())
+                    .orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
+                skuId = sku.id();
             }
             case PLATFORM -> {
             }
         }
-        normalizeRuleChannel(request.sourceChannel());
-        normalizePriority(request.priority());
         validateRates(
             request.channelFeeRate(),
             request.platformFeeRate(),
@@ -313,9 +374,67 @@ public class SettlementService {
             request.channelReferralRate(),
             request.investorShareRate()
         );
-        if (request.expiredAt() != null && request.effectiveAt() != null && !request.expiredAt().isAfter(request.effectiveAt())) {
+        var effectiveAt = request.effectiveAt() == null
+            ? existing == null ? LocalDateTime.now() : existing.effectiveAt()
+            : request.effectiveAt();
+        if (request.expiredAt() != null && !request.expiredAt().isAfter(effectiveAt)) {
             throw BusinessException.badRequest("失效时间必须晚于生效时间");
         }
+        return new NormalizedRule(
+            request.ruleName().trim(),
+            scope,
+            normalizeRuleChannel(request.sourceChannel()),
+            normalizePriority(request.priority()),
+            skuId,
+            merchantId,
+            storeId,
+            storeSkuId,
+            rate(request.channelFeeRate()),
+            rate(request.platformFeeRate()),
+            rate(request.storeOperationRate()),
+            rate(request.maintenanceFundRate()),
+            rate(request.channelReferralRate()),
+            rate(request.investorShareRate()),
+            effectiveAt,
+            request.expiredAt()
+        );
+    }
+
+    private void ensureFallbackRemains(SettlementProfitRule existing, NormalizedRule updated) {
+        var now = LocalDateTime.now();
+        if (!isCurrentFallback(existing, now)) {
+            return;
+        }
+        var remainsCurrentFallback = existing.ruleScope().equals(updated.scope())
+            && Objects.equals(existing.storeId(), updated.storeId())
+            && updated.sourceChannel() == null
+            && !updated.effectiveAt().isAfter(now)
+            && (updated.expiredAt() == null || updated.expiredAt().isAfter(now));
+        if (!remainsCurrentFallback) {
+            ensureAlternativeFallback(existing, now);
+        }
+    }
+
+    private void ensureCanDeactivate(SettlementProfitRule rule) {
+        var now = LocalDateTime.now();
+        if (isCurrentFallback(rule, now)) {
+            ensureAlternativeFallback(rule, now);
+        }
+    }
+
+    private void ensureAlternativeFallback(SettlementProfitRule rule, LocalDateTime now) {
+        if (!settlementRepository.existsOtherActiveFallbackRule(rule.ruleScope(), rule.storeId(), rule.id(), now)) {
+            var target = RuleScope.STORE.equals(rule.ruleScope()) ? "该门店" : "平台";
+            throw BusinessException.badRequest(target + "必须保留一条当前生效的全部渠道默认规则");
+        }
+    }
+
+    private boolean isCurrentFallback(SettlementProfitRule rule, LocalDateTime now) {
+        return SettlementRuleStatus.ENABLED.equals(rule.status())
+            && (RuleScope.STORE.equals(rule.ruleScope()) || RuleScope.PLATFORM.equals(rule.ruleScope()))
+            && rule.sourceChannel() == null
+            && !rule.effectiveAt().isAfter(now)
+            && (rule.expiredAt() == null || rule.expiredAt().isAfter(now));
     }
 
     private void validateRates(
@@ -365,6 +484,26 @@ public class SettlementService {
             rule.expiredAt(),
             rule.status().name()
         );
+    }
+
+    private record NormalizedRule(
+        String ruleName,
+        RuleScope scope,
+        String sourceChannel,
+        Integer priority,
+        Long skuId,
+        Long merchantId,
+        Long storeId,
+        Long storeSkuId,
+        BigDecimal channelFeeRate,
+        BigDecimal platformFeeRate,
+        BigDecimal storeOperationRate,
+        BigDecimal maintenanceFundRate,
+        BigDecimal channelReferralRate,
+        BigDecimal investorShareRate,
+        LocalDateTime effectiveAt,
+        LocalDateTime expiredAt
+    ) {
     }
 
     private SettlementSnapshotResponse toResponse(SettlementRuleSnapshot snapshot) {

@@ -214,6 +214,107 @@ public class SettlementRepository {
         return findRule(id).orElseThrow();
     }
 
+    public SettlementProfitRule updateRule(
+        Long id,
+        String ruleName,
+        RuleScope ruleScope,
+        String sourceChannel,
+        Integer priority,
+        Long skuId,
+        Long merchantId,
+        Long storeId,
+        Long storeSkuId,
+        BigDecimal channelFeeRate,
+        BigDecimal platformFeeRate,
+        BigDecimal storeOperationRate,
+        BigDecimal maintenanceFundRate,
+        BigDecimal channelReferralRate,
+        BigDecimal investorShareRate,
+        LocalDateTime effectiveAt,
+        LocalDateTime expiredAt
+    ) {
+        jdbcTemplate.update("""
+            UPDATE settlement_profit_rule
+            SET rule_name = ?,
+                rule_scope = ?,
+                source_channel = ?,
+                rule_priority = ?,
+                sku_id = ?,
+                merchant_id = ?,
+                store_id = ?,
+                store_sku_id = ?,
+                channel_fee_rate = ?,
+                platform_fee_rate = ?,
+                store_operation_rate = ?,
+                maintenance_fund_rate = ?,
+                channel_referral_rate = ?,
+                investor_share_rate = ?,
+                effective_at = ?,
+                expired_at = ?
+            WHERE id = ?
+            """,
+            ruleName,
+            ruleScope.name(),
+            sourceChannel,
+            priority,
+            skuId,
+            merchantId,
+            storeId,
+            storeSkuId,
+            channelFeeRate,
+            platformFeeRate,
+            storeOperationRate,
+            maintenanceFundRate,
+            channelReferralRate,
+            investorShareRate,
+            effectiveAt,
+            expiredAt,
+            id
+        );
+        return findRule(id).orElseThrow();
+    }
+
+    public int countSnapshotsByRuleId(Long ruleId) {
+        return jdbcTemplate.queryForObject(
+            "SELECT COUNT(1) FROM settlement_rule_snapshot WHERE matched_rule_id = ?",
+            Integer.class,
+            ruleId
+        );
+    }
+
+    public boolean existsOtherActiveFallbackRule(
+        RuleScope scope,
+        Long storeId,
+        Long excludedRuleId,
+        LocalDateTime now
+    ) {
+        var sql = new StringBuilder("""
+            SELECT COUNT(1)
+            FROM settlement_profit_rule
+            WHERE rule_scope = ?
+              AND source_channel IS NULL
+              AND status = 'ENABLED'
+              AND effective_at <= ?
+              AND (expired_at IS NULL OR expired_at > ?)
+              AND id <> ?
+            """);
+        var params = new ArrayList<Object>();
+        params.add(scope.name());
+        params.add(now);
+        params.add(now);
+        params.add(excludedRuleId);
+        if (RuleScope.STORE.equals(scope)) {
+            sql.append(" AND store_id = ?");
+            params.add(storeId);
+        }
+        var count = jdbcTemplate.queryForObject(sql.toString(), Integer.class, params.toArray());
+        return count != null && count > 0;
+    }
+
+    public void deleteRule(Long id) {
+        jdbcTemplate.update("DELETE FROM settlement_profit_rule WHERE id = ?", id);
+    }
+
     public SettlementProfitRule updateStoreRule(
         Long id,
         BigDecimal channelFeeRate,

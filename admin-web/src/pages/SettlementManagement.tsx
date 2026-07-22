@@ -1,5 +1,23 @@
-import { EditOutlined } from '@ant-design/icons';
-import { Button, Descriptions, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { DeleteOutlined, EditOutlined, PlusOutlined, PoweroffOutlined } from '@ant-design/icons';
+import {
+  Button,
+  Col,
+  DatePicker,
+  Descriptions,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Row,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+  message
+} from 'antd';
+import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
 import type {
@@ -16,13 +34,18 @@ import type {
 } from '../types/api';
 
 type RuleForm = {
-  storeName: string;
+  ruleName: string;
+  storeId: number;
+  sourceChannel?: string;
+  priority: number;
   channelFeeRate: number;
   platformFeeRate: number;
   storeOperationRate: number;
   maintenanceFundRate: number;
   channelReferralRate: number;
   investorShareRate: number;
+  effectiveAt: Dayjs;
+  expiredAt?: Dayjs;
 };
 
 type PreviewForm = {
@@ -38,6 +61,12 @@ const sourceChannelOptions = [
   { label: '抖音', value: 'DOUYIN' },
   { label: '美团', value: 'MEITUAN' },
   { label: '闲鱼', value: 'XIANYU' }
+];
+
+const ruleChannelOptions = [
+  ...sourceChannelOptions,
+  { label: '线下', value: 'OFFLINE' },
+  { label: '其他', value: 'OTHER' }
 ];
 
 export function SettlementManagement() {
@@ -56,6 +85,9 @@ export function SettlementManagement() {
   const [preview, setPreview] = useState<SettlementSnapshot | null>(null);
   const [ruleOpen, setRuleOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<ProfitRule | null>(null);
+  const [ruleStoreFilter, setRuleStoreFilter] = useState<number>();
+  const [ruleChannelFilter, setRuleChannelFilter] = useState<string>();
+  const [ruleStatusFilter, setRuleStatusFilter] = useState<ProfitRule['status']>();
   const [ruleForm] = Form.useForm<RuleForm>();
   const [previewForm] = Form.useForm<PreviewForm>();
   const [incomeForm] = Form.useForm<{ orderId: number }>();
@@ -81,6 +113,21 @@ export function SettlementManagement() {
     () => assets.some((item) => item.id === selectedPreviewFrameAssetId && item.assetType === 'INTEGRATED_VEHICLE'),
     [assets, selectedPreviewFrameAssetId]
   );
+  const filteredRules = useMemo(() => rules.filter((rule) => {
+    if (ruleStoreFilter && rule.storeId !== ruleStoreFilter) {
+      return false;
+    }
+    if (ruleStatusFilter && rule.status !== ruleStatusFilter) {
+      return false;
+    }
+    if (ruleChannelFilter === 'DEFAULT' && rule.sourceChannel) {
+      return false;
+    }
+    if (ruleChannelFilter && ruleChannelFilter !== 'DEFAULT' && rule.sourceChannel !== ruleChannelFilter) {
+      return false;
+    }
+    return true;
+  }), [ruleChannelFilter, ruleStatusFilter, ruleStoreFilter, rules]);
 
   useEffect(() => {
     if (integratedPreviewAssetSelected) {
@@ -118,25 +165,45 @@ export function SettlementManagement() {
     setStatements(statementData);
   }
 
+  function openRuleCreator() {
+    setEditingRule(null);
+    ruleForm.setFieldsValue({
+      ruleName: '',
+      storeId: undefined,
+      sourceChannel: undefined,
+      priority: 0,
+      channelFeeRate: 5,
+      platformFeeRate: 3,
+      storeOperationRate: 15,
+      maintenanceFundRate: 10,
+      channelReferralRate: 20,
+      investorShareRate: 55,
+      effectiveAt: dayjs(),
+      expiredAt: undefined
+    });
+    setRuleOpen(true);
+  }
+
   function openRuleEditor(record: ProfitRule) {
-    const store = stores.find((item) => item.id === record.storeId);
     setEditingRule(record);
     ruleForm.setFieldsValue({
-      storeName: store ? `${store.storeName} / ${store.storeCode}` : `门店 ${record.storeId}`,
+      ruleName: record.ruleName,
+      storeId: record.storeId || undefined,
+      sourceChannel: record.sourceChannel || undefined,
+      priority: record.priority,
       channelFeeRate: toPercentValue(record.channelFeeRate),
       platformFeeRate: toPercentValue(record.platformFeeRate),
       storeOperationRate: toPercentValue(record.storeOperationRate),
       maintenanceFundRate: toPercentValue(record.maintenanceFundRate),
       channelReferralRate: toPercentValue(record.channelReferralRate),
-      investorShareRate: toPercentValue(record.investorShareRate)
+      investorShareRate: toPercentValue(record.investorShareRate),
+      effectiveAt: dayjs(record.effectiveAt),
+      expiredAt: record.expiredAt ? dayjs(record.expiredAt) : undefined
     });
     setRuleOpen(true);
   }
 
-  async function updateStoreRule(values: RuleForm) {
-    if (!editingRule?.storeId) {
-      return;
-    }
+  async function saveRule(values: RuleForm) {
     if (values.channelFeeRate + values.platformFeeRate >= 100) {
       message.error('渠道核销扣点与租赁平台扣点之和必须小于 100%');
       return;
@@ -149,18 +216,50 @@ export function SettlementManagement() {
       message.error('门店运营、维修基金、渠道引流、出资方比例之和必须等于 100%');
       return;
     }
-    await http.put(`/api/admin/settlement/store-rules/${editingRule.storeId}`, {
+    if (values.expiredAt && !values.expiredAt.isAfter(values.effectiveAt)) {
+      message.error('失效时间必须晚于生效时间');
+      return;
+    }
+    const payload = {
+      ruleName: values.ruleName.trim(),
+      ruleScope: 'STORE',
+      sourceChannel: values.sourceChannel || null,
+      priority: values.priority,
+      skuId: null,
+      merchantId: null,
+      storeId: values.storeId,
+      storeSkuId: null,
       channelFeeRate: fromPercentValue(values.channelFeeRate),
       platformFeeRate: fromPercentValue(values.platformFeeRate),
       storeOperationRate: fromPercentValue(values.storeOperationRate),
       maintenanceFundRate: fromPercentValue(values.maintenanceFundRate),
       channelReferralRate: fromPercentValue(values.channelReferralRate),
-      investorShareRate: fromPercentValue(values.investorShareRate)
-    });
+      investorShareRate: fromPercentValue(values.investorShareRate),
+      effectiveAt: values.effectiveAt.format('YYYY-MM-DDTHH:mm:ss'),
+      expiredAt: values.expiredAt?.format('YYYY-MM-DDTHH:mm:ss') || null
+    };
+    if (editingRule) {
+      await http.put(`/api/admin/settlement/rules/${editingRule.id}`, payload);
+    } else {
+      await http.post('/api/admin/settlement/rules', payload);
+    }
     setRuleOpen(false);
     setEditingRule(null);
     ruleForm.resetFields();
-    message.success('门店分润规则已更新，新规则仅用于之后生成的分润快照');
+    message.success(editingRule ? '分润规则已更新，新规则仅用于之后生成的分润快照' : '分润规则已新增');
+    await loadAll();
+  }
+
+  async function updateRuleStatus(record: ProfitRule) {
+    const status = record.status === 'ENABLED' ? 'DISABLED' : 'ENABLED';
+    await http.put(`/api/admin/settlement/rules/${record.id}/status`, null, { params: { status } });
+    message.success(status === 'ENABLED' ? '分润规则已启用' : '分润规则已停用');
+    await loadAll();
+  }
+
+  async function deleteRule(record: ProfitRule) {
+    await http.delete(`/api/admin/settlement/rules/${record.id}`);
+    message.success('分润规则已删除');
     await loadAll();
   }
 
@@ -322,18 +421,61 @@ export function SettlementManagement() {
       </div>
 
       <div className="section">
-        <Typography.Title level={5}>门店分润规则</Typography.Title>
+        <Space align="center" className="toolbar" wrap>
+          <Typography.Title level={5}>门店分润规则</Typography.Title>
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="筛选门店"
+            value={ruleStoreFilter}
+            onChange={setRuleStoreFilter}
+            options={stores.map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id }))}
+            style={{ width: 220 }}
+          />
+          <Select
+            allowClear
+            placeholder="筛选渠道"
+            value={ruleChannelFilter}
+            onChange={setRuleChannelFilter}
+            options={[{ label: '全部渠道默认规则', value: 'DEFAULT' }, ...ruleChannelOptions]}
+            style={{ width: 180 }}
+          />
+          <Select
+            allowClear
+            placeholder="筛选状态"
+            value={ruleStatusFilter}
+            onChange={setRuleStatusFilter}
+            options={[
+              { label: '已启用', value: 'ENABLED' },
+              { label: '已停用', value: 'DISABLED' }
+            ]}
+            style={{ width: 130 }}
+          />
+          <Button type="primary" icon={<PlusOutlined />} onClick={openRuleCreator}>新增规则</Button>
+        </Space>
         <Table
           rowKey="id"
           size="small"
-          dataSource={rules}
+          dataSource={filteredRules}
           pagination={{ pageSize: 10 }}
-          scroll={{ x: 1180 }}
+          scroll={{ x: 1900 }}
           columns={[
+            {
+              title: '规则',
+              dataIndex: 'ruleName',
+              fixed: 'left',
+              width: 210,
+              render: (value, record) => (
+                <Space direction="vertical" size={0}>
+                  <Typography.Text strong>{value}</Typography.Text>
+                  <Typography.Text type="secondary">{record.ruleCode}</Typography.Text>
+                </Space>
+              )
+            },
             {
               title: '门店',
               dataIndex: 'storeId',
-              fixed: 'left',
               width: 180,
               render: (value) => stores.find((item) => item.id === value)?.storeName || `门店 ${value}`
             },
@@ -343,6 +485,13 @@ export function SettlementManagement() {
               width: 150,
               render: (value) => stores.find((item) => item.id === value)?.storeCode || '-'
             },
+            {
+              title: '适用渠道',
+              dataIndex: 'sourceChannel',
+              width: 130,
+              render: (value) => value ? channelText(value) : <Tag color="blue">全部渠道</Tag>
+            },
+            { title: '优先级', dataIndex: 'priority', width: 90 },
             { title: '渠道扣点', dataIndex: 'channelFeeRate', render: percent },
             { title: '平台扣点', dataIndex: 'platformFeeRate', render: percent },
             { title: '门店运营', dataIndex: 'storeOperationRate', render: percent },
@@ -350,11 +499,47 @@ export function SettlementManagement() {
             { title: '渠道引流', dataIndex: 'channelReferralRate', render: percent },
             { title: '出资方', dataIndex: 'investorShareRate', render: percent },
             {
+              title: '有效期',
+              dataIndex: 'effectiveAt',
+              width: 175,
+              render: (value, record) => (
+                <Space direction="vertical" size={0}>
+                  <span>{formatDateTime(value)}</span>
+                  <Typography.Text type="secondary">{record.expiredAt ? `至 ${formatDateTime(record.expiredAt)}` : '长期有效'}</Typography.Text>
+                </Space>
+              )
+            },
+            {
+              title: '状态',
+              dataIndex: 'status',
+              width: 90,
+              render: (value: ProfitRule['status']) => value === 'ENABLED'
+                ? <Tag color="green">已启用</Tag>
+                : <Tag>已停用</Tag>
+            },
+            {
               title: '操作',
               fixed: 'right',
-              width: 100,
+              width: 260,
               render: (_, record) => (
-                <Button size="small" icon={<EditOutlined />} onClick={() => openRuleEditor(record)}>编辑</Button>
+                <Space>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openRuleEditor(record)}>编辑</Button>
+                  <Popconfirm
+                    title={record.status === 'ENABLED' ? '确认停用这条规则？' : '确认启用这条规则？'}
+                    onConfirm={() => updateRuleStatus(record)}
+                  >
+                    <Button size="small" icon={<PoweroffOutlined />}>
+                      {record.status === 'ENABLED' ? '停用' : '启用'}
+                    </Button>
+                  </Popconfirm>
+                  <Popconfirm
+                    title="确认删除这条分润规则？"
+                    description="已生成分润快照或作为唯一默认规则时不能删除。"
+                    onConfirm={() => deleteRule(record)}
+                  >
+                    <Button danger size="small" icon={<DeleteOutlined />}>删除</Button>
+                  </Popconfirm>
+                </Space>
               )
             }
           ]}
@@ -424,7 +609,7 @@ export function SettlementManagement() {
       </div>
 
       <Modal
-        title="编辑门店分润规则"
+        title={editingRule ? '编辑门店分润规则' : '新增门店分润规则'}
         open={ruleOpen}
         onCancel={() => {
           setRuleOpen(false);
@@ -432,31 +617,79 @@ export function SettlementManagement() {
           ruleForm.resetFields();
         }}
         onOk={() => ruleForm.submit()}
-        okText="保存"
-        width={720}
+        okText={editingRule ? '保存' : '新增'}
+        width={820}
         styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
         destroyOnHidden
       >
-        <Form form={ruleForm} layout="vertical" onFinish={updateStoreRule}>
-          <Form.Item name="storeName" label="门店"><Input disabled /></Form.Item>
-          <Form.Item name="channelFeeRate" label="渠道核销扣点 (%)" rules={[{ required: true, message: '请输入比例' }]}>
-            <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="platformFeeRate" label="租赁平台扣点 (%)" rules={[{ required: true, message: '请输入比例' }]}>
-            <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="storeOperationRate" label="剩余金额：门店运营 (%)" rules={[{ required: true, message: '请输入比例' }]}>
-            <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="maintenanceFundRate" label="剩余金额：维修基金 (%)" rules={[{ required: true, message: '请输入比例' }]}>
-            <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="channelReferralRate" label="剩余金额：渠道引流 (%)" rules={[{ required: true, message: '请输入比例' }]}>
-            <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="investorShareRate" label="剩余金额：出资方 (%)" rules={[{ required: true, message: '请输入比例' }]}>
-            <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
-          </Form.Item>
+        <Form form={ruleForm} layout="vertical" onFinish={saveRule}>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="ruleName" label="规则名称" rules={[{ required: true, message: '请输入规则名称' }]}>
+                <Input maxLength={128} placeholder="例如：王城大道店抖音分润规则" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="storeId" label="适用门店" rules={[{ required: true, message: '请选择门店' }]}>
+                <Select
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="选择门店"
+                  options={stores.map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="sourceChannel" label="适用渠道">
+                <Select allowClear placeholder="全部渠道" options={ruleChannelOptions} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="priority" label="优先级" rules={[{ required: true, message: '请输入优先级' }]}>
+                <InputNumber min={-10000} max={10000} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="effectiveAt" label="生效时间" rules={[{ required: true, message: '请选择生效时间' }]}>
+                <DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="expiredAt" label="失效时间">
+                <DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="channelFeeRate" label="渠道核销扣点 (%)" rules={[{ required: true, message: '请输入比例' }]}>
+                <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="platformFeeRate" label="租赁平台扣点 (%)" rules={[{ required: true, message: '请输入比例' }]}>
+                <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="storeOperationRate" label="剩余金额：门店运营 (%)" rules={[{ required: true, message: '请输入比例' }]}>
+                <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="maintenanceFundRate" label="剩余金额：维修基金 (%)" rules={[{ required: true, message: '请输入比例' }]}>
+                <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="channelReferralRate" label="剩余金额：渠道引流 (%)" rules={[{ required: true, message: '请输入比例' }]}>
+                <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="investorShareRate" label="剩余金额：出资方 (%)" rules={[{ required: true, message: '请输入比例' }]}>
+                <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
 
@@ -508,6 +741,10 @@ function fromPercentValue(value: number) {
 
 function money(value: number) {
   return `¥${Number(value || 0).toFixed(2)}`;
+}
+
+function formatDateTime(value: string) {
+  return dayjs(value).format('YYYY-MM-DD HH:mm');
 }
 
 function beneficiaryText(value: SettlementIncomeEntry['beneficiaryType']) {
@@ -593,7 +830,9 @@ function channelText(value?: string | null) {
     DIRECT: '平台直租',
     DOUYIN: '抖音',
     MEITUAN: '美团',
-    XIANYU: '闲鱼'
+    XIANYU: '闲鱼',
+    OFFLINE: '线下',
+    OTHER: '其他'
   };
   return value ? (map[value] || value) : '全部渠道';
 }
