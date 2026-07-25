@@ -262,6 +262,14 @@ class RentalBusinessFlowIntegrationTests {
                 assertThat(entry.beneficiaryId()).isEqualTo(1L);
                 assertThat(entry.amount()).isPositive();
             });
+        assertThat(income.entries())
+            .filteredOn(entry -> "MAINTENANCE_FUND_SHARE".equals(entry.lineType()))
+            .singleElement()
+            .satisfies(entry -> {
+                assertThat(entry.beneficiaryType()).isEqualTo("MERCHANT");
+                assertThat(entry.beneficiaryId()).isEqualTo(1L);
+                assertThat(entry.amount()).isEqualByComparingTo("91.91");
+            });
 
         var repeatedIncome = settlementIncomeService.generateForOrder(order.id());
         assertThat(repeatedIncome.createdCount()).isZero();
@@ -293,6 +301,79 @@ class RentalBusinessFlowIntegrationTests {
         assertThat(assetStatus(2L)).isEqualTo("RENTING");
         assertThat(jdbcTemplate.queryForObject("SELECT paid_amount FROM rental_order WHERE id = ?", BigDecimal.class, order.id()))
             .isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void orderLifecycleShouldRejectAssetsOwnedByDifferentInvestors() {
+        var suffix = String.valueOf(System.nanoTime());
+        jdbcTemplate.update("""
+            INSERT INTO investor
+            (investor_code, investor_name, contact_name, contact_phone, operation_fee_rate, status)
+            VALUES (?, ?, '测试联系人', '18800009999', 0.0000, 'ENABLED')
+            """, "I-mixed-" + suffix, "混合出资方-" + suffix);
+        var otherInvestorId = jdbcTemplate.queryForObject(
+            "SELECT id FROM investor WHERE investor_code = ?",
+            Long.class,
+            "I-mixed-" + suffix
+        );
+        jdbcTemplate.update("UPDATE asset_item SET investor_id = ? WHERE id = 2", otherInvestorId);
+
+        assertThatThrownBy(() -> orderService.createOrder(new OrderCreateRequest(
+            1002L,
+            1L,
+            2L,
+            1L,
+            2L,
+            LocalDateTime.of(2026, 7, 2, 10, 0)
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("不同出资方");
+
+        jdbcTemplate.update("UPDATE asset_item SET investor_id = 1 WHERE id = 2");
+        var order = orderService.createOrder(new OrderCreateRequest(
+            1002L,
+            1L,
+            2L,
+            1L,
+            2L,
+            LocalDateTime.of(2026, 7, 2, 10, 0)
+        ));
+        jdbcTemplate.update("UPDATE asset_item SET investor_id = ? WHERE id = 2", otherInvestorId);
+
+        assertThatThrownBy(() -> assetFulfillmentService.shipWithoutPayment(
+            order.id(),
+            new AssetPickupRequest(null, null, "混合出资方发货")
+        ))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("不同出资方");
+        assertThat(assetStatus(1L)).isEqualTo("IDLE");
+        assertThat(assetStatus(2L)).isEqualTo("IDLE");
+
+        jdbcTemplate.update("UPDATE asset_item SET investor_id = 1 WHERE id = 2");
+        assetFulfillmentService.shipWithoutPayment(order.id(), new AssetPickupRequest(null, null, "同出资方发货"));
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES (?, 'VEHICLE_FRAME',
+                    (SELECT id FROM asset_type_definition WHERE type_code = 'VEHICLE_FRAME'),
+                    ?, ?, 1, 1, 'IDLE', 2600.00, 0.00, NULL, CURRENT_DATE)
+            """, "A-mixed-replace-" + suffix, "FRAME-MIXED-REPLACE-" + suffix, otherInvestorId);
+        var otherInvestorAssetId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_item WHERE asset_code = ?",
+            Long.class,
+            "A-mixed-replace-" + suffix
+        );
+
+        assertThatThrownBy(() -> assetFulfillmentService.replaceAsset(order.id(), new AssetReplaceRequest(
+            "VEHICLE_FRAME",
+            otherInvestorAssetId,
+            "IDLE",
+            "跨出资方换车"
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("其他出资方");
+        assertThat(assetStatus(otherInvestorAssetId)).isEqualTo("IDLE");
     }
 
     @Test
@@ -615,6 +696,8 @@ class RentalBusinessFlowIntegrationTests {
         settlementStatementService.generateMonth(statementMonth);
         assertThat(statementLineAmount(renewalBill.id(), "MERCHANT_RENT_SHARE"))
             .isEqualByComparingTo(new BigDecimal("55.06"));
+        assertThat(statementLineAmount(renewalBill.id(), "MERCHANT_MAINTENANCE_SHARE"))
+            .isEqualByComparingTo(new BigDecimal("36.71"));
         assertThat(statementLineAmount(renewalBill.id(), "INVESTOR_GROSS_RENT"))
             .isEqualByComparingTo(new BigDecimal("201.89"));
         assertThat(jdbcTemplate.queryForObject(
@@ -866,7 +949,7 @@ class RentalBusinessFlowIntegrationTests {
     }
 
     @Test
-    void monthStatementsGroupInvestorRentBeforeRounding() {
+    void monthStatementsIncludeStoreMaintenanceShareWithoutInvestorMaintenanceDeduction() {
         jdbcTemplate.update(
             "UPDATE asset_item SET current_merchant_id = ?, current_store_id = ? WHERE id IN (?, ?)",
             1L,
@@ -911,9 +994,9 @@ class RentalBusinessFlowIntegrationTests {
             """
             INSERT INTO asset_maintenance_record
             (maintenance_no, asset_id, order_id, store_id, maintenance_type, maintenance_status,
-             started_at, completed_at, labor_cost, external_cost, parts_cost, total_cost,
+             responsibility_type, started_at, completed_at, labor_cost, external_cost, parts_cost, total_cost,
              cost_bearer_type, cost_bearer_id, operator_account_id, remark)
-            VALUES (?, ?, ?, ?, 'REPAIR', 'COMPLETED', ?, ?, ?, ?, ?, ?, 'INVESTOR', ?, ?, ?)
+            VALUES (?, ?, ?, ?, 'REPAIR', 'COMPLETED', 'ROUTINE_MAINTENANCE', ?, ?, ?, ?, ?, ?, 'INVESTOR', ?, ?, ?)
             """,
             "MT-TEST-INV-" + order.id(),
             1L,
@@ -934,9 +1017,9 @@ class RentalBusinessFlowIntegrationTests {
             """
             INSERT INTO asset_maintenance_record
             (maintenance_no, asset_id, order_id, store_id, maintenance_type, maintenance_status,
-             started_at, completed_at, labor_cost, external_cost, parts_cost, total_cost,
+             responsibility_type, started_at, completed_at, labor_cost, external_cost, parts_cost, total_cost,
              cost_bearer_type, cost_bearer_id, operator_account_id, remark)
-            VALUES (?, ?, ?, ?, 'REPAIR', 'COMPLETED', ?, ?, ?, ?, ?, ?, 'MERCHANT', ?, ?, ?)
+            VALUES (?, ?, ?, ?, 'REPAIR', 'COMPLETED', 'MERCHANT_RESPONSIBILITY', ?, ?, ?, ?, ?, ?, 'MERCHANT', ?, ?, ?)
             """,
             "MT-TEST-MER-" + order.id(),
             2L,
@@ -970,8 +1053,17 @@ class RentalBusinessFlowIntegrationTests {
         assertThat(investorStatement.get("rent_base_amount")).isEqualTo(new BigDecimal("399.00"));
         assertThat(investorStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("201.89"));
         assertThat(investorStatement.get("operation_fee_amount")).isEqualTo(new BigDecimal("0.00"));
-        assertThat(investorStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("50.00"));
-        assertThat(investorStatement.get("payable_amount")).isEqualTo(new BigDecimal("151.89"));
+        assertThat(investorStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("0.00"));
+        assertThat(investorStatement.get("payable_amount")).isEqualTo(new BigDecimal("201.89"));
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement_line
+            WHERE line_type = 'INVESTOR_MAINTENANCE_DEDUCT'
+              AND source_type = 'MAINTENANCE'
+              AND source_id IN (
+                SELECT id FROM asset_maintenance_record WHERE order_id = ?
+              )
+            """, Integer.class, order.id())).isZero();
 
         var merchantStatement = jdbcTemplate.queryForMap(
             """
@@ -986,9 +1078,9 @@ class RentalBusinessFlowIntegrationTests {
             """);
         assertThat(merchantStatement.get("rent_base_amount")).isEqualTo(new BigDecimal("399.00"));
         assertThat(merchantStatement.get("sign_fee_income_amount")).isEqualTo(new BigDecimal("30.00"));
-        assertThat(merchantStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("55.06"));
+        assertThat(merchantStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("91.77"));
         assertThat(merchantStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("12.00"));
-        assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("73.06"));
+        assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("109.77"));
     }
 
     @Test
@@ -1161,10 +1253,10 @@ class RentalBusinessFlowIntegrationTests {
 
         assertThat(maintenance.responsibilityType()).isEqualTo("ROUTINE_MAINTENANCE");
         assertThat(maintenance.partsCost()).isEqualByComparingTo(new BigDecimal("28.00"));
-        assertThat(maintenance.merchantReimbursementAmount()).isEqualByComparingTo(new BigDecimal("28.00"));
-        assertThat(maintenance.investorDeductAmount()).isEqualByComparingTo(new BigDecimal("28.00"));
+        assertThat(maintenance.merchantReimbursementAmount()).isEqualByComparingTo(new BigDecimal("0.00"));
+        assertThat(maintenance.investorDeductAmount()).isEqualByComparingTo(new BigDecimal("0.00"));
         assertThat(maintenance.customerChargeAmount()).isEqualByComparingTo(new BigDecimal("0.00"));
-        assertThat(maintenance.costBearerType()).isEqualTo("INVESTOR");
+        assertThat(maintenance.costBearerType()).isEqualTo("MERCHANT");
 
         var storeStockAfterConsume = jdbcTemplate.queryForObject(
             "SELECT stock_quantity FROM store_spare_part_stock WHERE store_id = ? AND part_id = ?",

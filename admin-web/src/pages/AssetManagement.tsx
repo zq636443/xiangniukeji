@@ -86,7 +86,7 @@ type MaintenanceForm = {
   maintenanceType: string;
   maintenanceStatus?: string;
   responsibilityType?: 'ROUTINE_MAINTENANCE' | 'CUSTOMER_DAMAGE' | 'MERCHANT_RESPONSIBILITY' | 'PLATFORM_SUBSIDY';
-  costBearerType?: 'USER' | 'INVESTOR' | 'MERCHANT' | 'PLATFORM';
+  costBearerType?: 'USER' | 'MERCHANT' | 'PLATFORM';
   costBearerId?: number;
   laborCost?: number;
   externalCost?: number;
@@ -354,7 +354,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
       maintenanceType: 'REPAIR',
       maintenanceStatus: 'COMPLETED',
       responsibilityType: 'ROUTINE_MAINTENANCE',
-      costBearerType: 'INVESTOR',
+      costBearerType: 'MERCHANT',
       laborCost: 0,
       externalCost: 0,
       parts: []
@@ -895,8 +895,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
                 { title: '人工费', dataIndex: 'laborCost', render: money },
                 { title: '外协费', dataIndex: 'externalCost', render: money },
                 { title: '总费用', dataIndex: 'totalCost', render: money },
-                { title: '补门店', dataIndex: 'merchantReimbursementAmount', render: money },
-                { title: '扣出资方', dataIndex: 'investorDeductAmount', render: money },
+                { title: '平台补门店', dataIndex: 'merchantReimbursementAmount', render: money },
                 { title: '承担方', dataIndex: 'costBearerType', render: costBearerText },
                 { title: '备注', dataIndex: 'remark', render: (value) => value || '-' },
                 { title: '时间', dataIndex: 'createdAt', render: dateText }
@@ -923,7 +922,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
               ]} />
             </Form.Item>
             <Form.Item name="responsibilityType" label="责任归因" rules={[{ required: true, message: '请选择责任归因' }]} style={{ flex: 1 }}>
-              <Select options={[
+              <Select onChange={(value) => maintenanceForm.setFieldValue('costBearerType', maintenanceCostBearerType(value))} options={[
                 { label: '日常资产维护', value: 'ROUTINE_MAINTENANCE' },
                 { label: '客户损坏', value: 'CUSTOMER_DAMAGE' },
                 { label: '门店责任', value: 'MERCHANT_RESPONSIBILITY' },
@@ -940,8 +939,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           </Space>
           <Space style={{ width: '100%' }} size={12}>
             <Form.Item name="costBearerType" label="成本承担方" rules={[{ required: true, message: '请选择成本承担方' }]} style={{ flex: 1 }}>
-              <Select options={[
-                { label: '出资方', value: 'INVESTOR' },
+              <Select disabled options={[
                 { label: '商户', value: 'MERCHANT' },
                 { label: '用户', value: 'USER' },
                 { label: '平台', value: 'PLATFORM' }
@@ -1096,6 +1094,12 @@ function responsibilityTypeText(value?: AssetMaintenance['responsibilityType'] |
     PLATFORM_SUBSIDY: '平台兜底'
   };
   return value ? map[value] || value : '-';
+}
+
+function maintenanceCostBearerType(value?: MaintenanceForm['responsibilityType']): NonNullable<MaintenanceForm['costBearerType']> {
+  if (value === 'CUSTOMER_DAMAGE') return 'USER';
+  if (value === 'PLATFORM_SUBSIDY') return 'PLATFORM';
+  return 'MERCHANT';
 }
 
 function rentalBillsTable(record: AssetRentalRecord) {

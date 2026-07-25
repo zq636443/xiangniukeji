@@ -137,9 +137,12 @@ public class SettlementStatementService {
             if (snapshot == null) {
                 throw BusinessException.badRequest("订单 " + first.orderId() + " 的分润快照不存在");
             }
-            var merchantShare = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
-                ? calculateProfitV2(snapshot, rentAmount).storeOperationAmount()
-                : money(rentAmount.multiply(snapshot.merchantRentShareRate()));
+            var profitAllocation = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+                ? calculateProfitV2(snapshot, rentAmount)
+                : null;
+            var merchantShare = profitAllocation == null
+                ? money(rentAmount.multiply(snapshot.merchantRentShareRate()))
+                : profitAllocation.storeOperationAmount();
             if (merchantShare.signum() > 0) {
                 var merchantDraft = merchantDraft(merchantDrafts, first.merchantId(), first.storeId());
                 merchantDraft.register(
@@ -158,6 +161,25 @@ public class SettlementStatementService {
                         snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2 ? "门店运营分润" : "租金分润"
                     ),
                     rentAmount
+                );
+            }
+            if (profitAllocation != null && profitAllocation.maintenanceFundAmount().signum() > 0) {
+                merchantDraft(merchantDrafts, first.merchantId(), first.storeId()).register(
+                    new LineDraft(
+                        "BILL",
+                        first.billId(),
+                        first.orderId(),
+                        first.billId(),
+                        null,
+                        first.merchantId(),
+                        first.storeId(),
+                        0L,
+                        SettlementStatementLineType.MERCHANT_MAINTENANCE_SHARE,
+                        profitAllocation.maintenanceFundAmount(),
+                        first.paidAt(),
+                        "门店维修分润"
+                    ),
+                    BigDecimal.ZERO
                 );
             }
             for (var allocation : buildInvestorAllocations(snapshot, first.orderId(), rentAmount, usageMap.get(first.orderId()))) {
@@ -238,6 +260,26 @@ public class SettlementStatementService {
                     settlementBase
                 );
             }
+            if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+                && snapshot.maintenanceFundAmount().signum() > 0) {
+                merchantDraft(merchantDrafts, externalOrder.merchantId(), externalOrder.storeId()).register(
+                    new LineDraft(
+                        "EXTERNAL_ORDER",
+                        externalOrder.externalOrderId(),
+                        null,
+                        null,
+                        null,
+                        externalOrder.merchantId(),
+                        externalOrder.storeId(),
+                        0L,
+                        SettlementStatementLineType.MERCHANT_MAINTENANCE_SHARE,
+                        snapshot.maintenanceFundAmount(),
+                        externalOrder.createdAt(),
+                        "补录订单 " + externalOrder.recordNo() + " 门店维修分润"
+                    ),
+                    BigDecimal.ZERO
+                );
+            }
             for (var allocation : buildInvestorAllocations(snapshot, null, settlementBase, null)) {
                 if (allocation.grossRentAmount().signum() <= 0) {
                     continue;
@@ -269,14 +311,8 @@ public class SettlementStatementService {
             }
             var responsibilityType = maintenance.responsibilityType();
             var merchantReimbursement = money(maintenance.merchantReimbursementAmount());
-            var investorDeduct = money(maintenance.investorDeductAmount());
-            var customerCharge = money(maintenance.customerChargeAmount());
-            var shouldFallbackToLegacy = "ROUTINE_MAINTENANCE".equals(responsibilityType)
-                && merchantReimbursement.signum() == 0
-                && investorDeduct.signum() == 0
-                && customerCharge.signum() == 0;
-            if (responsibilityType != null && !responsibilityType.isBlank() && !shouldFallbackToLegacy) {
-                if ("ROUTINE_MAINTENANCE".equals(responsibilityType) || "PLATFORM_SUBSIDY".equals(responsibilityType)) {
+            if (responsibilityType != null && !responsibilityType.isBlank()) {
+                if ("PLATFORM_SUBSIDY".equals(responsibilityType)) {
                     if (merchantReimbursement.signum() > 0 && maintenance.merchantId() != null && maintenance.storeId() != null) {
                         var merchantDraft = merchantDraft(merchantDrafts, maintenance.merchantId(), maintenance.storeId());
                         merchantDraft.register(
@@ -293,28 +329,6 @@ public class SettlementStatementService {
                                 merchantReimbursement,
                                 maintenance.occurredAt(),
                                 "配件消耗补回"
-                            ),
-                            BigDecimal.ZERO
-                        );
-                    }
-                }
-                if ("ROUTINE_MAINTENANCE".equals(responsibilityType)) {
-                    if (investorDeduct.signum() > 0 && maintenance.investorId() != null && maintenance.investorId() > 0) {
-                        var investorDraft = investorDraft(investorDrafts, maintenance.investorId());
-                        investorDraft.register(
-                            new LineDraft(
-                                "MAINTENANCE",
-                                maintenance.maintenanceId(),
-                                null,
-                                null,
-                                maintenance.assetId(),
-                                maintenance.merchantId() == null ? 0L : maintenance.merchantId(),
-                                maintenance.storeId() == null ? 0L : maintenance.storeId(),
-                                maintenance.investorId(),
-                                SettlementStatementLineType.INVESTOR_MAINTENANCE_DEDUCT,
-                                investorDeduct.negate(),
-                                maintenance.occurredAt(),
-                                "配件消耗扣减"
                             ),
                             BigDecimal.ZERO
                         );
@@ -355,26 +369,6 @@ public class SettlementStatementService {
                         maintenance.storeId() == null ? 0L : maintenance.storeId(),
                         maintenance.investorId(),
                         SettlementStatementLineType.MERCHANT_MAINTENANCE_DEDUCT,
-                        totalCost.negate(),
-                        maintenance.occurredAt(),
-                        "维修费用扣减"
-                    ),
-                    BigDecimal.ZERO
-                );
-            }
-            if ("INVESTOR".equals(maintenance.costBearerType()) && maintenance.costBearerId() != null && maintenance.costBearerId() > 0) {
-                var investorDraft = investorDraft(investorDrafts, maintenance.costBearerId());
-                investorDraft.register(
-                    new LineDraft(
-                        "MAINTENANCE",
-                        maintenance.maintenanceId(),
-                        null,
-                        null,
-                        maintenance.assetId(),
-                        maintenance.merchantId() == null ? 0L : maintenance.merchantId(),
-                        maintenance.storeId() == null ? 0L : maintenance.storeId(),
-                        maintenance.costBearerId(),
-                        SettlementStatementLineType.INVESTOR_MAINTENANCE_DEDUCT,
                         totalCost.negate(),
                         maintenance.occurredAt(),
                         "维修费用扣减"
@@ -564,34 +558,20 @@ public class SettlementStatementService {
         if (investorAssets.isEmpty()) {
             return List.of();
         }
-        var perAssetRent = rentAmount.divide(BigDecimal.valueOf(investorAssets.size()), 2, RoundingMode.DOWN);
-        var rentBaseByInvestor = new LinkedHashMap<Long, BigDecimal>();
-        var remainingRent = money(rentAmount);
-        for (var index = 0; index < investorAssets.size(); index += 1) {
-            var asset = investorAssets.get(index);
-            var assetRent = index == investorAssets.size() - 1 ? remainingRent : perAssetRent;
-            remainingRent = remainingRent.subtract(assetRent);
-            rentBaseByInvestor.merge(asset.investorId(), assetRent, BigDecimal::add);
+        if (investorAssets.stream().anyMatch(asset -> asset.investorId() == null)) {
+            throw BusinessException.badRequest("订单资产未绑定出资方，不能生成月结");
         }
+        var investorIds = investorAssets.stream().map(InvestorAssetRef::investorId).distinct().toList();
+        if (investorIds.size() > 1) {
+            var orderLabel = orderId == null ? "补录订单" : "订单 " + orderId;
+            throw BusinessException.badRequest(orderLabel + " 绑定了不同出资方的资产，请拆分订单后再生成月结");
+        }
+        var investorId = investorIds.get(0);
         var profitV2 = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2;
-        var shareByInvestor = new LinkedHashMap<Long, BigDecimal>();
-        if (profitV2) {
-            var investorShare = calculateProfitV2(snapshot, rentAmount).investorShareAmount();
-            var perAssetShare = investorShare.divide(BigDecimal.valueOf(investorAssets.size()), 2, RoundingMode.DOWN);
-            var remainingShare = money(investorShare);
-            for (var index = 0; index < investorAssets.size(); index += 1) {
-                var asset = investorAssets.get(index);
-                var assetShare = index == investorAssets.size() - 1 ? remainingShare : perAssetShare;
-                remainingShare = remainingShare.subtract(assetShare);
-                shareByInvestor.merge(asset.investorId(), assetShare, BigDecimal::add);
-            }
-        }
-        return rentBaseByInvestor.entrySet().stream().map(entry -> {
-            var grossAmount = profitV2
-                ? money(shareByInvestor.get(entry.getKey()))
-                : money(entry.getValue().multiply(snapshot.investorRentShareRate()));
-            return new InvestorAllocation(entry.getKey(), money(rentBaseByInvestor.get(entry.getKey())), grossAmount);
-        }).toList();
+        var grossAmount = profitV2
+            ? money(calculateProfitV2(snapshot, rentAmount).investorShareAmount())
+            : money(rentAmount.multiply(snapshot.investorRentShareRate()));
+        return List.of(new InvestorAllocation(investorId, money(rentAmount), grossAmount));
     }
 
     private ProfitSharingCalculator.Allocation calculateProfitV2(SettlementRuleSnapshot snapshot, BigDecimal settlementBaseAmount) {
@@ -805,7 +785,7 @@ public class SettlementStatementService {
             payableAmount = payableAmount.add(line.amount());
             switch (line.lineType()) {
                 case MERCHANT_SIGN_FEE -> signFeeIncomeAmount = signFeeIncomeAmount.add(line.amount());
-                case MERCHANT_RENT_SHARE, INVESTOR_GROSS_RENT -> rentShareIncomeAmount = rentShareIncomeAmount.add(line.amount());
+                case MERCHANT_RENT_SHARE, MERCHANT_MAINTENANCE_SHARE, INVESTOR_GROSS_RENT -> rentShareIncomeAmount = rentShareIncomeAmount.add(line.amount());
                 case INVESTOR_OPERATION_FEE -> operationFeeAmount = operationFeeAmount.add(line.amount().abs());
                 case MERCHANT_MAINTENANCE_DEDUCT, INVESTOR_MAINTENANCE_DEDUCT -> maintenanceDeductAmount = maintenanceDeductAmount.add(line.amount().abs());
                 case MERCHANT_ADJUSTMENT, INVESTOR_ADJUSTMENT -> adjustmentAmount = adjustmentAmount.add(line.amount());

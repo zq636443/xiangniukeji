@@ -213,7 +213,7 @@ export function SettlementManagement() {
       + values.channelReferralRate
       + values.investorShareRate;
     if (Math.abs(distributionRate - 100) > 0.001) {
-      message.error('门店运营、维修基金、渠道引流、出资方比例之和必须等于 100%');
+      message.error('门店运营、门店维修、渠道引流、出资方比例之和必须等于 100%');
       return;
     }
     if (values.expiredAt && !values.expiredAt.isAfter(values.effectiveAt)) {
@@ -357,7 +357,7 @@ export function SettlementManagement() {
             { title: '门店', dataIndex: 'storeId', render: (value, record) => record.beneficiaryType === 'MERCHANT' ? value : '-' },
             { title: '实收租金基数', dataIndex: 'rentBaseAmount', render: money },
             { title: '签单费', dataIndex: 'signFeeIncomeAmount', render: money },
-            { title: '租金收益', dataIndex: 'rentShareIncomeAmount', render: money },
+            { title: '分润收益', dataIndex: 'rentShareIncomeAmount', render: money },
             { title: '运营手续费', dataIndex: 'operationFeeAmount', render: money },
             { title: '维保扣减', dataIndex: 'maintenanceDeductAmount', render: money },
             { title: '应结算金额', dataIndex: 'payableAmount', render: money },
@@ -412,7 +412,8 @@ export function SettlementManagement() {
             <Descriptions.Item label="租赁平台扣点">{money(preview.platformFeeAmount)} / {percent(preview.platformFeeRate)}</Descriptions.Item>
             <Descriptions.Item label="剩余可分配">{money(preview.distributableAmount)}</Descriptions.Item>
             <Descriptions.Item label="门店运营">{money(preview.storeOperationAmount)} / {percent(preview.storeOperationRate)}</Descriptions.Item>
-            <Descriptions.Item label="维修基金">{money(preview.maintenanceFundAmount)} / {percent(preview.maintenanceFundRate)}</Descriptions.Item>
+            <Descriptions.Item label="门店维修分润">{money(preview.maintenanceFundAmount)} / {percent(preview.maintenanceFundRate)}</Descriptions.Item>
+            <Descriptions.Item label="门店合计分润">{money(Number(preview.storeOperationAmount || 0) + Number(preview.maintenanceFundAmount || 0))}</Descriptions.Item>
             <Descriptions.Item label="渠道引流">{money(preview.channelReferralAmount)} / {percent(preview.channelReferralRate)}</Descriptions.Item>
             <Descriptions.Item label="出资方">{money(preview.investorShareAmount)} / {percent(preview.investorShareRate)}</Descriptions.Item>
             <Descriptions.Item label="快照号">{preview.snapshotNo}</Descriptions.Item>
@@ -495,7 +496,7 @@ export function SettlementManagement() {
             { title: '渠道扣点', dataIndex: 'channelFeeRate', render: percent },
             { title: '平台扣点', dataIndex: 'platformFeeRate', render: percent },
             { title: '门店运营', dataIndex: 'storeOperationRate', render: percent },
-            { title: '维修基金', dataIndex: 'maintenanceFundRate', render: percent },
+            { title: '门店维修', dataIndex: 'maintenanceFundRate', render: percent },
             { title: '渠道引流', dataIndex: 'channelReferralRate', render: percent },
             { title: '出资方', dataIndex: 'investorShareRate', render: percent },
             {
@@ -564,7 +565,7 @@ export function SettlementManagement() {
             { title: '渠道扣点', dataIndex: 'channelFeeAmount', render: money },
             { title: '平台扣点', dataIndex: 'platformFeeAmount', render: money },
             { title: '门店运营', dataIndex: 'storeOperationAmount', render: money },
-            { title: '维修基金', dataIndex: 'maintenanceFundAmount', render: money },
+            { title: '门店维修', dataIndex: 'maintenanceFundAmount', render: money },
             { title: '渠道引流', dataIndex: 'channelReferralAmount', render: money },
             { title: '出资方', dataIndex: 'investorShareAmount', render: money },
             { title: '生成时间', dataIndex: 'createdAt' }
@@ -677,7 +678,7 @@ export function SettlementManagement() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="maintenanceFundRate" label="剩余金额：维修基金 (%)" rules={[{ required: true, message: '请输入比例' }]}>
+              <Form.Item name="maintenanceFundRate" label="剩余金额：门店维修 (%)" rules={[{ required: true, message: '请输入比例' }]}>
                 <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
               </Form.Item>
             </Col>
@@ -757,7 +758,7 @@ function beneficiaryText(value: SettlementIncomeEntry['beneficiaryType']) {
     INVESTOR: '出资方',
     PLATFORM: '平台',
     CHANNEL: '渠道',
-    MAINTENANCE_FUND: '维修基金'
+    MAINTENANCE_FUND: '历史维修基金'
   };
   return map[value] || value;
 }
@@ -767,7 +768,7 @@ function lineTypeText(value: SettlementIncomeEntry['lineType']) {
     CHANNEL_VERIFICATION_FEE: '渠道核销扣点',
     PLATFORM_SERVICE_FEE: '租赁平台扣点',
     STORE_OPERATION_SHARE: '门店运营分润',
-    MAINTENANCE_FUND_SHARE: '维修基金计提',
+    MAINTENANCE_FUND_SHARE: '门店维修分润',
     CHANNEL_REFERRAL_SHARE: '渠道引流分润',
     INVESTOR_SHARE: '出资方分润',
     MERCHANT_ORDER_FEE: '门店办单费',
@@ -807,6 +808,7 @@ function statementLineText(value: SettlementStatementLine['lineType']) {
   const map: Record<SettlementStatementLine['lineType'], string> = {
     MERCHANT_SIGN_FEE: '商户签单费',
     MERCHANT_RENT_SHARE: '商户租金分润',
+    MERCHANT_MAINTENANCE_SHARE: '门店维修分润',
     MERCHANT_MAINTENANCE_REIMBURSE: '门店配件补回',
     MERCHANT_MAINTENANCE_DEDUCT: '商户维保扣减',
     MERCHANT_ADJUSTMENT: '商户调整',

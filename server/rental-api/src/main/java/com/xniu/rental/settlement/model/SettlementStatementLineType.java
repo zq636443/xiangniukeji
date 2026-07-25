@@ -3,6 +3,7 @@ package com.xniu.rental.settlement.model;
 public enum SettlementStatementLineType {
     MERCHANT_SIGN_FEE,
     MERCHANT_RENT_SHARE,
+    MERCHANT_MAINTENANCE_SHARE,
     MERCHANT_MAINTENANCE_REIMBURSE,
     MERCHANT_MAINTENANCE_DEDUCT,
     MERCHANT_ADJUSTMENT,

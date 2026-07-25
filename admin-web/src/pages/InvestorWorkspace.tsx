@@ -96,8 +96,7 @@ export function InvestorDashboard({ account }: InvestorPageProps) {
             { title: '业务单号', render: (_, record) => record.sourceNo || record.sourceId },
             { title: '收益类型', dataIndex: 'lineType', render: lineTypeText },
             { title: '金额', dataIndex: 'amount', render: money },
-            { title: '状态', dataIndex: 'entryStatus', render: incomeStatusTag },
-            { title: '计入时间', dataIndex: 'occurredAt', render: dateText }
+            { title: '状态', dataIndex: 'entryStatus', render: incomeStatusTag }
           ]}
         />
       </div>
@@ -194,8 +193,7 @@ export function InvestorIncomePage() {
             { title: '金额', dataIndex: 'amount', render: money },
             { title: '状态', dataIndex: 'entryStatus', render: incomeStatusTag },
             { title: '备注', dataIndex: 'remark', render: (value?: string | null) => value || '-' },
-            { title: '结算时间', dataIndex: 'settledAt', render: dateText },
-            { title: '计入时间', dataIndex: 'occurredAt', render: dateText }
+            { title: '结算时间', dataIndex: 'settledAt', render: dateText }
           ]}
         />
       </div>
@@ -251,7 +249,6 @@ export function InvestorIncomePage() {
             { title: '订单', dataIndex: 'orderId', render: (value) => value ?? '-' },
             { title: '账单', dataIndex: 'billId', render: (value) => value ?? '-' },
             { title: '资产', dataIndex: 'assetId', render: (value) => value ?? '-' },
-            { title: '发生时间', dataIndex: 'occurredAt', render: dateText },
             { title: '金额', dataIndex: 'amount', render: signedMoney },
             { title: '备注', dataIndex: 'remark', render: (value?: string | null) => value || '-' }
           ]}
@@ -474,6 +471,7 @@ function statementLineText(value: SettlementStatementLine['lineType']) {
   const map: Record<SettlementStatementLine['lineType'], string> = {
     MERCHANT_SIGN_FEE: '商户签单费',
     MERCHANT_RENT_SHARE: '商户租金分润',
+    MERCHANT_MAINTENANCE_SHARE: '门店维修分润',
     MERCHANT_MAINTENANCE_REIMBURSE: '门店配件补回',
     MERCHANT_MAINTENANCE_DEDUCT: '商户维保扣减',
     MERCHANT_ADJUSTMENT: '商户调整',
@@ -495,7 +493,7 @@ function lineTypeText(value: SettlementIncomeEntry['lineType']) {
     CHANNEL_VERIFICATION_FEE: '渠道核销扣点',
     PLATFORM_SERVICE_FEE: '租赁平台扣点',
     STORE_OPERATION_SHARE: '门店运营分润',
-    MAINTENANCE_FUND_SHARE: '维修基金',
+    MAINTENANCE_FUND_SHARE: '门店维修分润',
     CHANNEL_REFERRAL_SHARE: '渠道引流分润',
     INVESTOR_SHARE: '出资方分润',
     MERCHANT_ORDER_FEE: '门店办单费',

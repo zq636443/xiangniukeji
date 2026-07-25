@@ -25,6 +25,7 @@ import com.xniu.rental.order.model.RentalOrder;
 import com.xniu.rental.order.repository.OrderRepository;
 import com.xniu.rental.product.repository.ProductRepository;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -105,6 +106,7 @@ public class AssetFulfillmentService {
             throw BusinessException.badRequest("请至少绑定主资产或电池资产");
         }
         var batteryAsset = batteryAssetId == null ? null : ensureAssetReadyForOrder(batteryAssetId, AssetType.BATTERY, order);
+        validateSingleInvestor(frameAsset, batteryAsset, "车架和电池属于不同出资方，请分别创建订单");
         if (frameAsset != null) {
             markAssetStatus(frameAsset.id(), AssetStatus.RENTING, defaultRemark + "：绑定主资产");
         }
@@ -154,6 +156,7 @@ public class AssetFulfillmentService {
         }
         var oldAssetId = assetType == AssetType.VEHICLE_FRAME ? order.frameAssetId() : order.batteryAssetId();
         var newAsset = ensureAssetReadyForOrder(request.newAssetId(), assetType, order);
+        validateReplacementInvestor(order, newAsset);
         var oldStatus = parseReturnStatus(request.oldAssetResultStatus(), AssetStatus.IDLE);
         if (oldAssetId != null) {
             markAssetStatus(oldAssetId, oldStatus, defaultRemark(request.remark(), "更换资产，原资产回收"));
@@ -282,6 +285,40 @@ public class AssetFulfillmentService {
             throw BusinessException.badRequest("资产不在订单门店");
         }
         return asset;
+    }
+
+    private void validateSingleInvestor(AssetItem first, AssetItem second, String message) {
+        if (first != null
+            && second != null
+            && !java.util.Objects.equals(first.investorId(), second.investorId())) {
+            throw BusinessException.badRequest(message);
+        }
+    }
+
+    private void validateReplacementInvestor(RentalOrder order, AssetItem newAsset) {
+        var investorIds = new LinkedHashSet<Long>();
+        fulfillmentRepository.listUsageByOrder(order.id()).stream()
+            .map(AssetFulfillmentRepository.OrderAssetUsageRow::investorId)
+            .filter(java.util.Objects::nonNull)
+            .forEach(investorIds::add);
+        addAssetInvestor(order.frameAssetId(), investorIds);
+        addAssetInvestor(order.batteryAssetId(), investorIds);
+        if (newAsset.investorId() != null) {
+            investorIds.add(newAsset.investorId());
+        }
+        if (investorIds.size() > 1) {
+            throw BusinessException.badRequest("更换后的资产属于其他出资方，请结束原订单后另建订单");
+        }
+    }
+
+    private void addAssetInvestor(Long assetId, LinkedHashSet<Long> investorIds) {
+        if (assetId == null) {
+            return;
+        }
+        var investorId = ensureAsset(assetId).investorId();
+        if (investorId != null) {
+            investorIds.add(investorId);
+        }
     }
 
     private void closeActiveSlotUsage(Long orderId, AssetType assetType, String endReason) {

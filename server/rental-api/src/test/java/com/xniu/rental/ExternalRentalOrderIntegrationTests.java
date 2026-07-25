@@ -166,6 +166,20 @@ class ExternalRentalOrderIntegrationTests {
               AND beneficiary_type = 'INVESTOR'
               AND beneficiary_id = 1
             """, BigDecimal.class, created.id())).isEqualByComparingTo(created.investorShareAmount());
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER'
+              AND source_id = ?
+              AND beneficiary_type = 'MERCHANT'
+            """, BigDecimal.class, created.id())).isEqualByComparingTo("114.75");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT beneficiary_id
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER'
+              AND source_id = ?
+              AND line_type = 'MAINTENANCE_FUND_SHARE'
+            """, Long.class, created.id())).isEqualTo(created.storeId());
 
         jdbcTemplate.update(
             "UPDATE external_rental_order SET created_at = '2099-01-15 10:00:00' WHERE id = ?",
@@ -183,6 +197,20 @@ class ExternalRentalOrderIntegrationTests {
               AND s.beneficiary_type = 'INVESTOR'
               AND s.beneficiary_id = 1
             """, Integer.class, created.id())).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT amount
+            FROM settlement_statement_line
+            WHERE source_type = 'EXTERNAL_ORDER'
+              AND source_id = ?
+              AND line_type = 'MERCHANT_MAINTENANCE_SHARE'
+            """, BigDecimal.class, created.id())).isEqualByComparingTo("33.90");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT payable_amount
+            FROM settlement_statement
+            WHERE statement_month = '2099-01'
+              AND beneficiary_type = 'MERCHANT'
+              AND store_id = ?
+            """, BigDecimal.class, created.storeId())).isEqualByComparingTo("114.75");
         assertThat(assetStatus(frameAssetId)).isEqualTo("RENTING");
         assertThat(assetStatus(batteryAssetId)).isEqualTo("RENTING");
 
@@ -596,6 +624,57 @@ class ExternalRentalOrderIntegrationTests {
 
         assertThat(assetStatus(assetId)).isEqualTo("IDLE");
         assertThat(assetStore(assetId)).isEqualTo(otherStore.id());
+    }
+
+    @Test
+    void createExternalOrderShouldRejectAssetsOwnedByDifferentInvestors() {
+        var suffix = String.valueOf(System.nanoTime());
+        jdbcTemplate.update("""
+            INSERT INTO investor
+            (investor_code, investor_name, contact_name, contact_phone, operation_fee_rate, status)
+            VALUES (?, ?, '补录测试', '18800008888', 0.0000, 'ENABLED')
+            """, "I-ext-mixed-" + suffix, "补录混合出资方-" + suffix);
+        var otherInvestorId = jdbcTemplate.queryForObject(
+            "SELECT id FROM investor WHERE investor_code = ?",
+            Long.class,
+            "I-ext-mixed-" + suffix
+        );
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES
+            (?, 'VEHICLE_FRAME', (SELECT id FROM asset_type_definition WHERE type_code = 'VEHICLE_FRAME'), ?, 1, 1, 1, 'IDLE', 2600.00, 0.00, NULL, CURRENT_DATE),
+            (?, 'BATTERY', (SELECT id FROM asset_type_definition WHERE type_code = 'BATTERY'), ?, ?, 1, 1, 'IDLE', 1800.00, 0.00, NULL, CURRENT_DATE)
+            """,
+            "A-ext-mixed-frame-" + suffix, "EXT-MIXED-FRAME-" + suffix,
+            "A-ext-mixed-battery-" + suffix, "EXT-MIXED-BATTERY-" + suffix, otherInvestorId
+        );
+        var frameAssetId = jdbcTemplate.queryForObject("SELECT id FROM asset_item WHERE asset_code = ?", Long.class, "A-ext-mixed-frame-" + suffix);
+        var batteryAssetId = jdbcTemplate.queryForObject("SELECT id FROM asset_item WHERE asset_code = ?", Long.class, "A-ext-mixed-battery-" + suffix);
+
+        assertThatThrownBy(() -> externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "EXT-MIXED-" + suffix,
+            1L,
+            2L,
+            "混合出资客户",
+            "13800138888",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            frameAssetId,
+            batteryAssetId,
+            new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            null
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("不同出资方");
+
+        assertThat(assetStatus(frameAssetId)).isEqualTo("IDLE");
+        assertThat(assetStatus(batteryAssetId)).isEqualTo("IDLE");
     }
 
     private String assetStatus(Long assetId) {

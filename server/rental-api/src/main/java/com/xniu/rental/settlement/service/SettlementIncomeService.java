@@ -148,7 +148,7 @@ public class SettlementIncomeService {
         add(created, snapshot, source, IncomeBeneficiaryType.CHANNEL, PLATFORM_BENEFICIARY_ID, IncomeLineType.CHANNEL_VERIFICATION_FEE, snapshot.channelFeeAmount(), snapshot.sourceChannel() + "渠道核销扣点");
         add(created, snapshot, source, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.PLATFORM_SERVICE_FEE, snapshot.platformFeeAmount(), "租赁平台扣点");
         add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.STORE_OPERATION_SHARE, snapshot.storeOperationAmount(), "门店运营分润");
-        add(created, snapshot, source, IncomeBeneficiaryType.MAINTENANCE_FUND, PLATFORM_BENEFICIARY_ID, IncomeLineType.MAINTENANCE_FUND_SHARE, snapshot.maintenanceFundAmount(), "维修基金计提");
+        add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MAINTENANCE_FUND_SHARE, snapshot.maintenanceFundAmount(), "门店维修分润");
         add(created, snapshot, source, IncomeBeneficiaryType.CHANNEL, PLATFORM_BENEFICIARY_ID, IncomeLineType.CHANNEL_REFERRAL_SHARE, snapshot.channelReferralAmount(), snapshot.sourceChannel() + "渠道引流分润");
         addV2InvestorEntries(created, snapshot, source);
         if (source.sourceType() == SnapshotSourceType.EXTERNAL_ORDER) {
@@ -184,18 +184,14 @@ public class SettlementIncomeService {
         if (assets.isEmpty()) {
             return List.of();
         }
-        var amountByInvestor = new LinkedHashMap<Long, BigDecimal>();
-        var remaining = money(snapshot.investorShareAmount());
-        var perAssetAmount = remaining.divide(BigDecimal.valueOf(assets.size()), 2, RoundingMode.DOWN);
-        for (var index = 0; index < assets.size(); index += 1) {
-            var asset = assets.get(index);
-            var amount = index == assets.size() - 1 ? remaining : perAssetAmount;
-            remaining = remaining.subtract(amount);
-            amountByInvestor.merge(asset.investorId(), amount, BigDecimal::add);
+        if (assets.stream().anyMatch(asset -> asset.investorId() == null)) {
+            throw BusinessException.badRequest("订单资产未绑定出资方，不能生成分润");
         }
-        return amountByInvestor.entrySet().stream()
-            .map(entry -> new V2InvestorAllocation(entry.getKey(), money(entry.getValue())))
-            .toList();
+        var investorIds = assets.stream().map(AssetItem::investorId).distinct().toList();
+        if (investorIds.size() > 1) {
+            throw BusinessException.badRequest("订单绑定了不同出资方的资产，请拆分订单后再生成分润");
+        }
+        return List.of(new V2InvestorAllocation(investorIds.get(0), money(snapshot.investorShareAmount())));
     }
 
     private void addInvestorEntries(List<SettlementIncomeEntry> created, SettlementRuleSnapshot snapshot, IncomeSource source, List<InvestorIncomeAllocation> allocations) {

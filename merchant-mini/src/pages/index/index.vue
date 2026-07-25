@@ -181,7 +181,7 @@
               <text>{{ money(settlement.storeOperationAmount) }}</text>
             </view>
             <view>
-              <text>维修基金</text>
+              <text>门店维修分润</text>
               <text>{{ money(settlement.maintenanceFundAmount) }}</text>
             </view>
             <view>
@@ -328,7 +328,7 @@
           </view>
           <view class="asset-sub">资产 {{ record.assetCode }} / {{ assetTypeText(record.assetType) }} / {{ responsibilityText(record.responsibilityType) }}</view>
           <view class="asset-sub">配件费 {{ money(record.partsCost) }} / 总费用 {{ money(record.totalCost) }}</view>
-          <view class="asset-sub">补门店 {{ money(record.merchantReimbursementAmount) }} / 扣出资方 {{ money(record.investorDeductAmount) }}</view>
+          <view class="asset-sub">平台补门店 {{ money(record.merchantReimbursementAmount) }} / 用户追偿 {{ money(record.customerChargeAmount) }}</view>
           <view class="asset-sub">备注：{{ record.remark || '-' }}</view>
           <view v-if="record.parts.length > 0" class="tag-row">
             <text v-for="part in record.parts" :key="part.id" class="tag">{{ part.partNameSnapshot }} x{{ part.quantity }} / {{ money(part.totalAmount) }}</text>
@@ -1370,6 +1370,7 @@ function incomeStatusText(value: SettlementIncomeEntry['entryStatus']) {
 function incomeLineText(value: SettlementIncomeEntry['lineType']) {
   const map: Partial<Record<SettlementIncomeEntry['lineType'], string>> = {
     STORE_OPERATION_SHARE: '门店运营分润',
+    MAINTENANCE_FUND_SHARE: '门店维修分润',
     MERCHANT_ORDER_FEE: '门店办单费',
     MERCHANT_RENT_SHARE: '门店租金分成'
   };

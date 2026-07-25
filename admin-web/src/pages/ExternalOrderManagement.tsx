@@ -106,6 +106,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
   const selectedPackageId = Form.useWatch('packageId', createForm);
   const selectedFrameAssetId = Form.useWatch('frameAssetId', createForm);
+  const selectedBatteryAssetId = Form.useWatch('batteryAssetId', createForm);
   const selectedStoreSku = useMemo(() => storeSkus.find((item) => item.id === selectedStoreSkuId), [storeSkus, selectedStoreSkuId]);
   const selectedPackage = useMemo(
     () => selectedStoreSku?.packages.find((item) => item.packageId === selectedPackageId),
@@ -137,10 +138,12 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   }, [selectedStoreSku]);
 
   const frameAssetOptions = useMemo(() => {
+    const batteryInvestorId = assets.find((item) => item.id === selectedBatteryAssetId)?.investorId;
     return assets
       .filter((item) => {
         const isCurrentAsset = item.id === editingOrder?.frameAssetId;
         return item.assetType !== 'BATTERY'
+          && (batteryInvestorId == null || item.investorId === batteryInvestorId)
           && (isCurrentAsset || (
             item.status === 'IDLE'
             && item.currentMerchantId === selectedStoreSku?.merchantId
@@ -148,13 +151,15 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           ));
       })
       .map((item) => ({ label: formatAssetLabel(item), value: item.id }));
-  }, [assets, editingOrder, selectedStoreSku]);
+  }, [assets, editingOrder, selectedBatteryAssetId, selectedStoreSku]);
 
   const batteryAssetOptions = useMemo(() => {
+    const frameInvestorId = assets.find((item) => item.id === selectedFrameAssetId)?.investorId;
     return assets
       .filter((item) => {
         const isCurrentAsset = item.id === editingOrder?.batteryAssetId;
         return item.assetType === 'BATTERY'
+          && (frameInvestorId == null || item.investorId === frameInvestorId)
           && (isCurrentAsset || (
             item.status === 'IDLE'
             && item.currentMerchantId === selectedStoreSku?.merchantId
@@ -162,7 +167,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           ));
       })
       .map((item) => ({ label: formatAssetLabel(item), value: item.id }));
-  }, [assets, editingOrder, selectedStoreSku]);
+  }, [assets, editingOrder, selectedFrameAssetId, selectedStoreSku]);
 
   const integratedVehicleSelected = useMemo(
     () => assets.some((item) => item.id === selectedFrameAssetId && item.assetType === 'INTEGRATED_VEHICLE'),
@@ -172,8 +177,14 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   useEffect(() => {
     if (integratedVehicleSelected) {
       createForm.setFieldValue('batteryAssetId', undefined);
+      return;
     }
-  }, [createForm, integratedVehicleSelected]);
+    const frameInvestorId = assets.find((item) => item.id === selectedFrameAssetId)?.investorId;
+    const batteryInvestorId = assets.find((item) => item.id === selectedBatteryAssetId)?.investorId;
+    if (frameInvestorId != null && batteryInvestorId != null && frameInvestorId !== batteryInvestorId) {
+      createForm.setFieldValue('batteryAssetId', undefined);
+    }
+  }, [assets, createForm, integratedVehicleSelected, selectedBatteryAssetId, selectedFrameAssetId]);
 
   const storeOptions = useMemo(() => stores.map((item) => ({
     label: `${item.storeName} / ${item.storeCode}`,
@@ -748,7 +759,8 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               <Descriptions.Item label="渠道核销扣点">{moneyText(selectedOrder.channelFeeAmount)}</Descriptions.Item>
               <Descriptions.Item label="平台扣点">{moneyText(selectedOrder.platformFeeAmount)}</Descriptions.Item>
               <Descriptions.Item label="门店运营分润">{moneyText(selectedOrder.storeOperationAmount)}</Descriptions.Item>
-              <Descriptions.Item label="维修基金">{moneyText(selectedOrder.maintenanceFundAmount)}</Descriptions.Item>
+              <Descriptions.Item label="门店维修分润">{moneyText(selectedOrder.maintenanceFundAmount)}</Descriptions.Item>
+              <Descriptions.Item label="门店合计分润">{moneyText(Number(selectedOrder.storeOperationAmount || 0) + Number(selectedOrder.maintenanceFundAmount || 0))}</Descriptions.Item>
               <Descriptions.Item label="渠道引流分润">{moneyText(selectedOrder.channelReferralAmount)}</Descriptions.Item>
               <Descriptions.Item label="出资方分润">{moneyText(selectedOrder.investorShareAmount)}</Descriptions.Item>
               <Descriptions.Item label="签单费">{moneyText(selectedOrder.signFeeAmount)}</Descriptions.Item>

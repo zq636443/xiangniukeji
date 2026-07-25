@@ -199,6 +199,14 @@ public class OrderService {
         return asset;
     }
 
+    private void validateSingleInvestor(AssetItem frameAsset, AssetItem batteryAsset) {
+        if (frameAsset != null
+            && batteryAsset != null
+            && !java.util.Objects.equals(frameAsset.investorId(), batteryAsset.investorId())) {
+            throw BusinessException.badRequest("车架和电池属于不同出资方，请分别创建订单");
+        }
+    }
+
     private OrderResponse createOrderInternal(OrderCreateRequest request, Long userAccountId, boolean allowCustomOrderedAt) {
         var storeSku = productRepository.findStoreSku(request.storeSkuId())
             .orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
@@ -227,7 +235,8 @@ public class OrderService {
         if (frameAsset != null && frameAsset.assetType().isIntegratedVehicle() && request.batteryAssetId() != null) {
             throw BusinessException.badRequest("车电一体资产只需绑定车架号，无需再选择电池资产");
         }
-        validateOrderAsset(request.batteryAssetId(), AssetType.BATTERY, storeSku.merchantId(), storeSku.storeId());
+        var batteryAsset = validateOrderAsset(request.batteryAssetId(), AssetType.BATTERY, storeSku.merchantId(), storeSku.storeId());
+        validateSingleInvestor(frameAsset, batteryAsset);
         var packagePrice = productRepository.listStoreSkuPackages(storeSku.id()).stream()
             .filter(item -> item.packageId().equals(request.packageId()))
             .findFirst()
@@ -326,12 +335,13 @@ public class OrderService {
         if (frameAsset != null && frameAsset.assetType().isIntegratedVehicle() && request.batteryAssetId() != null) {
             throw BusinessException.badRequest("车电一体资产只需绑定主资产，无需再选择电池资产");
         }
-        validateOrderAsset(
+        var batteryAsset = validateOrderAsset(
             request.batteryAssetId(),
             AssetType.BATTERY,
             product.storeSku().merchantId(),
             product.storeSku().storeId()
         );
+        validateSingleInvestor(frameAsset, batteryAsset);
 
         var customer = resolveCustomer(request.userAccountId(), request.customerName(), request.customerPhone());
         var orderedAt = resolveOrderedAt(request.orderedAt() == null ? order.orderedAt() : request.orderedAt(), true);

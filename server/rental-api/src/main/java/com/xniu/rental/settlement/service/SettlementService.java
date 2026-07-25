@@ -454,7 +454,7 @@ public class SettlementService {
             .add(rate(channelReferralRate))
             .add(rate(investorShareRate));
         if (distributionRate.compareTo(ONE) != 0) {
-            throw BusinessException.badRequest("门店运营、维修基金、渠道引流、出资方比例之和必须等于 1");
+            throw BusinessException.badRequest("门店运营、门店维修、渠道引流、出资方比例之和必须等于 1");
         }
     }
 

@@ -390,6 +390,12 @@ public class ExternalRentalOrderService {
         if (frameAssetId != null && frameAssetId.equals(batteryAssetId)) {
             throw BusinessException.badRequest("车架和电池不能选择同一条资产");
         }
+        var batteryAsset = batteryAssetId == null ? null : ensureAsset(batteryAssetId);
+        if (frameAsset != null
+            && batteryAsset != null
+            && !java.util.Objects.equals(frameAsset.investorId(), batteryAsset.investorId())) {
+            throw BusinessException.badRequest("车架和电池属于不同出资方，请分别创建补录订单");
+        }
     }
 
     private void validateEditableAsset(

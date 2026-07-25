@@ -125,7 +125,9 @@ export function OrderManagement() {
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
   const selectedPackageId = Form.useWatch('packageId', createForm);
   const selectedFrameAssetId = Form.useWatch('frameAssetId', createForm);
+  const selectedBatteryAssetId = Form.useWatch('batteryAssetId', createForm);
   const selectedPickupFrameAssetId = Form.useWatch('frameAssetId', pickupForm);
+  const selectedPickupBatteryAssetId = Form.useWatch('batteryAssetId', pickupForm);
   const replaceAssetType = Form.useWatch('assetType', replaceForm);
 
   useEffect(() => {
@@ -163,34 +165,52 @@ export function OrderManagement() {
       value: pkg.packageId
     })), [editingOrder, selectedStoreSku]);
 
-  const frameAssetOptions = useMemo(() => assets.filter((item) => item.assetType !== 'BATTERY'
-    && (item.status === 'IDLE' || item.id === editingOrder?.frameAssetId)
-    && item.currentStoreId === selectedStoreSku?.storeId).map((item) => ({
-    label: `${item.serialNo} / ${item.assetCode} / ${item.assetTypeName || primaryAssetTypeText(item)}`,
-    value: item.id
-  })), [assets, editingOrder, selectedStoreSku]);
+  const frameAssetOptions = useMemo(() => {
+    const batteryInvestorId = assets.find((item) => item.id === selectedBatteryAssetId)?.investorId;
+    return assets.filter((item) => item.assetType !== 'BATTERY'
+      && (item.status === 'IDLE' || item.id === editingOrder?.frameAssetId)
+      && item.currentStoreId === selectedStoreSku?.storeId
+      && (batteryInvestorId == null || item.investorId === batteryInvestorId)).map((item) => ({
+      label: `${item.serialNo} / ${item.assetCode} / ${item.assetTypeName || primaryAssetTypeText(item)}`,
+      value: item.id
+    }));
+  }, [assets, editingOrder, selectedBatteryAssetId, selectedStoreSku]);
 
-  const batteryAssetOptions = useMemo(() => assets.filter((item) => item.assetType === 'BATTERY'
-    && (item.status === 'IDLE' || item.id === editingOrder?.batteryAssetId)
-    && item.currentStoreId === selectedStoreSku?.storeId).map((item) => ({
-    label: `${item.serialNo} / ${item.assetCode}`,
-    value: item.id
-  })), [assets, editingOrder, selectedStoreSku]);
+  const batteryAssetOptions = useMemo(() => {
+    const frameInvestorId = assets.find((item) => item.id === selectedFrameAssetId)?.investorId;
+    return assets.filter((item) => item.assetType === 'BATTERY'
+      && (item.status === 'IDLE' || item.id === editingOrder?.batteryAssetId)
+      && item.currentStoreId === selectedStoreSku?.storeId
+      && (frameInvestorId == null || item.investorId === frameInvestorId)).map((item) => ({
+      label: `${item.serialNo} / ${item.assetCode}`,
+      value: item.id
+    }));
+  }, [assets, editingOrder, selectedFrameAssetId, selectedStoreSku]);
 
   const integratedVehicleSelected = useMemo(
     () => assets.some((item) => item.id === selectedFrameAssetId && item.assetType === 'INTEGRATED_VEHICLE'),
     [assets, selectedFrameAssetId]
   );
 
-  const pickupFrameAssetOptions = useMemo(() => assets
-    .filter((item) => item.assetType !== 'BATTERY'
-      && item.status === 'IDLE'
-      && item.currentStoreId === selectedOrder?.storeId)
-    .map((item) => ({ label: `${item.serialNo} / ${item.assetCode} / ${item.assetTypeName || primaryAssetTypeText(item)}`, value: item.id })), [assets, selectedOrder]);
+  const pickupFrameAssetOptions = useMemo(() => {
+    const batteryInvestorId = assets.find((item) => item.id === selectedPickupBatteryAssetId)?.investorId;
+    return assets
+      .filter((item) => item.assetType !== 'BATTERY'
+        && item.status === 'IDLE'
+        && item.currentStoreId === selectedOrder?.storeId
+        && (batteryInvestorId == null || item.investorId === batteryInvestorId))
+      .map((item) => ({ label: `${item.serialNo} / ${item.assetCode} / ${item.assetTypeName || primaryAssetTypeText(item)}`, value: item.id }));
+  }, [assets, selectedOrder, selectedPickupBatteryAssetId]);
 
-  const pickupBatteryAssetOptions = useMemo(() => assets
-    .filter((item) => item.assetType === 'BATTERY' && item.status === 'IDLE' && item.currentStoreId === selectedOrder?.storeId)
-    .map((item) => ({ label: item.serialNo, value: item.id })), [assets, selectedOrder]);
+  const pickupBatteryAssetOptions = useMemo(() => {
+    const frameInvestorId = assets.find((item) => item.id === selectedPickupFrameAssetId)?.investorId;
+    return assets
+      .filter((item) => item.assetType === 'BATTERY'
+        && item.status === 'IDLE'
+        && item.currentStoreId === selectedOrder?.storeId
+        && (frameInvestorId == null || item.investorId === frameInvestorId))
+      .map((item) => ({ label: item.serialNo, value: item.id }));
+  }, [assets, selectedOrder, selectedPickupFrameAssetId]);
 
   const pickupIntegratedVehicleSelected = useMemo(
     () => assets.some((item) => item.id === selectedPickupFrameAssetId && item.assetType === 'INTEGRATED_VEHICLE'),
@@ -202,7 +222,12 @@ export function OrderManagement() {
       const typeMatches = replaceAssetType === 'VEHICLE_FRAME'
         ? item.assetType !== 'BATTERY'
         : item.assetType === 'BATTERY';
-      return typeMatches && item.status === 'IDLE' && item.currentStoreId === selectedOrder?.storeId;
+      const orderInvestorId = assets.find((asset) => asset.id === selectedOrder?.frameAssetId)?.investorId
+        ?? assets.find((asset) => asset.id === selectedOrder?.batteryAssetId)?.investorId;
+      return typeMatches
+        && item.status === 'IDLE'
+        && item.currentStoreId === selectedOrder?.storeId
+        && (orderInvestorId == null || item.investorId === orderInvestorId);
     })
     .map((item) => ({ label: `${item.serialNo} / ${item.assetCode} / ${item.assetTypeName || primaryAssetTypeText(item)}`, value: item.id })),
   [assets, replaceAssetType, selectedOrder]);
@@ -221,14 +246,26 @@ export function OrderManagement() {
   useEffect(() => {
     if (integratedVehicleSelected) {
       createForm.setFieldValue('batteryAssetId', undefined);
+      return;
     }
-  }, [createForm, integratedVehicleSelected]);
+    const frameInvestorId = assets.find((item) => item.id === selectedFrameAssetId)?.investorId;
+    const batteryInvestorId = assets.find((item) => item.id === selectedBatteryAssetId)?.investorId;
+    if (frameInvestorId != null && batteryInvestorId != null && frameInvestorId !== batteryInvestorId) {
+      createForm.setFieldValue('batteryAssetId', undefined);
+    }
+  }, [assets, createForm, integratedVehicleSelected, selectedBatteryAssetId, selectedFrameAssetId]);
 
   useEffect(() => {
     if (pickupIntegratedVehicleSelected) {
       pickupForm.setFieldValue('batteryAssetId', undefined);
+      return;
     }
-  }, [pickupForm, pickupIntegratedVehicleSelected]);
+    const frameInvestorId = assets.find((item) => item.id === selectedPickupFrameAssetId)?.investorId;
+    const batteryInvestorId = assets.find((item) => item.id === selectedPickupBatteryAssetId)?.investorId;
+    if (frameInvestorId != null && batteryInvestorId != null && frameInvestorId !== batteryInvestorId) {
+      pickupForm.setFieldValue('batteryAssetId', undefined);
+    }
+  }, [assets, pickupForm, pickupIntegratedVehicleSelected, selectedPickupBatteryAssetId, selectedPickupFrameAssetId]);
 
   async function loadAll(filters: OrderFilterForm = filterForm.getFieldsValue()) {
     const [orderData, storeSkuData, assetData, storeData] = await Promise.all([

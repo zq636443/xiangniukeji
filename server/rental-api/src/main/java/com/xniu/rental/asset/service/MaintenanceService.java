@@ -302,7 +302,7 @@ public class MaintenanceService {
         var externalCost = money(request.externalCost());
         var totalCost = partsCost.add(laborCost).add(externalCost).setScale(2, RoundingMode.HALF_UP);
         var merchantReimbursementAmount = merchantReimbursementAmount(responsibilityType, partsCost);
-        var investorDeductAmount = investorDeductAmount(responsibilityType, partsCost);
+        var investorDeductAmount = investorDeductAmount();
         var customerChargeAmount = customerChargeAmount(responsibilityType, totalCost);
         var record = maintenanceRepository.createMaintenance(
             nextMaintenanceNo(),
@@ -436,9 +436,16 @@ public class MaintenanceService {
     }
 
     private String resolveCostBearerType(String value, String responsibilityType) {
-        var type = value == null || value.isBlank() ? defaultCostBearerType(responsibilityType) : value.trim().toUpperCase(Locale.ROOT);
-        if (!Set.of("USER", "INVESTOR", "MERCHANT", "PLATFORM").contains(type)) {
+        var expectedType = defaultCostBearerType(responsibilityType);
+        var type = value == null || value.isBlank() ? expectedType : value.trim().toUpperCase(Locale.ROOT);
+        if ("INVESTOR".equals(type)) {
+            throw BusinessException.badRequest("维修费用不再由出资方承担");
+        }
+        if (!Set.of("USER", "MERCHANT", "PLATFORM").contains(type)) {
             throw BusinessException.badRequest("不支持的维修成本承担方");
+        }
+        if (!expectedType.equals(type)) {
+            throw BusinessException.badRequest("维修责任归因与成本承担方不一致");
         }
         return type;
     }
@@ -448,7 +455,7 @@ public class MaintenanceService {
             case "CUSTOMER_DAMAGE" -> "USER";
             case "MERCHANT_RESPONSIBILITY" -> "MERCHANT";
             case "PLATFORM_SUBSIDY" -> "PLATFORM";
-            default -> "INVESTOR";
+            default -> "MERCHANT";
         };
     }
 
@@ -614,15 +621,13 @@ public class MaintenanceService {
 
     private BigDecimal merchantReimbursementAmount(String responsibilityType, BigDecimal partsCost) {
         return switch (responsibilityType) {
-            case "ROUTINE_MAINTENANCE", "PLATFORM_SUBSIDY" -> partsCost;
+            case "PLATFORM_SUBSIDY" -> partsCost;
             default -> BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
         };
     }
 
-    private BigDecimal investorDeductAmount(String responsibilityType, BigDecimal partsCost) {
-        return "ROUTINE_MAINTENANCE".equals(responsibilityType)
-            ? partsCost
-            : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    private BigDecimal investorDeductAmount() {
+        return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     }
 
     private BigDecimal customerChargeAmount(String responsibilityType, BigDecimal totalCost) {

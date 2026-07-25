@@ -120,7 +120,7 @@ type MerchantMaintenanceForm = {
   maintenanceType: string;
   maintenanceStatus?: string;
   responsibilityType: 'ROUTINE_MAINTENANCE' | 'CUSTOMER_DAMAGE' | 'MERCHANT_RESPONSIBILITY' | 'PLATFORM_SUBSIDY';
-  costBearerType: 'USER' | 'INVESTOR' | 'MERCHANT' | 'PLATFORM';
+  costBearerType: 'USER' | 'MERCHANT' | 'PLATFORM';
   costBearerId?: number;
   laborCost?: number;
   externalCost?: number;
@@ -336,7 +336,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
               { title: '月结单号', dataIndex: 'statementNo' },
               { title: '月份', dataIndex: 'statementMonth' },
               { title: '签单费', dataIndex: 'signFeeIncomeAmount', render: money },
-              { title: '租金分润', dataIndex: 'rentShareIncomeAmount', render: money },
+              { title: '运营及维修分润', dataIndex: 'rentShareIncomeAmount', render: money },
               { title: '维保扣减', dataIndex: 'maintenanceDeductAmount', render: money },
               { title: '应结算', dataIndex: 'payableAmount', render: money },
               { title: '状态', dataIndex: 'status', render: statementStatusTag }
@@ -402,6 +402,9 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
   const selectedPackageId = Form.useWatch('packageId', createForm);
   const selectedCreateFrameAssetId = Form.useWatch('frameAssetId', createForm);
+  const selectedCreateBatteryAssetId = Form.useWatch('batteryAssetId', createForm);
+  const selectedPickupFrameAssetId = Form.useWatch('frameAssetId', pickupForm);
+  const selectedPickupBatteryAssetId = Form.useWatch('batteryAssetId', pickupForm);
   const replaceAssetType = Form.useWatch('assetType', replaceForm);
   const canCreateOrder = account.permissions.includes('order.create');
   const canOperateOrder = account.permissions.includes('order.operate');
@@ -429,28 +432,58 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       value: item.packageId
     })), [editingOrder, selectedStoreSku]);
 
-  const frameOptions = useMemo(() => assets
-    .filter((item) => item.assetType !== 'BATTERY'
-      && (item.status === 'IDLE' || item.id === editingOrder?.frameAssetId)
-      && item.currentStoreId === storeId)
-    .map((item) => ({ label: assetSelectLabel(item), value: item.id })), [assets, editingOrder, storeId]);
+  const createFrameOptions = useMemo(() => {
+    const batteryInvestorId = assets.find((item) => item.id === selectedCreateBatteryAssetId)?.investorId;
+    return assets
+      .filter((item) => item.assetType !== 'BATTERY'
+        && (item.status === 'IDLE' || item.id === editingOrder?.frameAssetId)
+        && item.currentStoreId === storeId
+        && (batteryInvestorId == null || item.investorId === batteryInvestorId))
+      .map((item) => ({ label: assetSelectLabel(item), value: item.id }));
+  }, [assets, editingOrder, selectedCreateBatteryAssetId, storeId]);
 
-  const batteryOptions = useMemo(() => assets
-    .filter((item) => item.assetType === 'BATTERY'
-      && (item.status === 'IDLE' || item.id === editingOrder?.batteryAssetId)
-      && item.currentStoreId === storeId)
-    .map((item) => ({ label: assetSelectLabel(item), value: item.id })), [assets, editingOrder, storeId]);
+  const createBatteryOptions = useMemo(() => {
+    const frameInvestorId = assets.find((item) => item.id === selectedCreateFrameAssetId)?.investorId;
+    return assets
+      .filter((item) => item.assetType === 'BATTERY'
+        && (item.status === 'IDLE' || item.id === editingOrder?.batteryAssetId)
+        && item.currentStoreId === storeId
+        && (frameInvestorId == null || item.investorId === frameInvestorId))
+      .map((item) => ({ label: assetSelectLabel(item), value: item.id }));
+  }, [assets, editingOrder, selectedCreateFrameAssetId, storeId]);
+
+  const pickupFrameOptions = useMemo(() => {
+    const batteryInvestorId = assets.find((item) => item.id === selectedPickupBatteryAssetId)?.investorId;
+    return assets
+      .filter((item) => item.assetType !== 'BATTERY'
+        && item.status === 'IDLE'
+        && (batteryInvestorId == null || item.investorId === batteryInvestorId))
+      .map((item) => ({ label: assetSelectLabel(item), value: item.id }));
+  }, [assets, selectedPickupBatteryAssetId]);
+
+  const pickupBatteryOptions = useMemo(() => {
+    const frameInvestorId = assets.find((item) => item.id === selectedPickupFrameAssetId)?.investorId;
+    return assets
+      .filter((item) => item.assetType === 'BATTERY'
+        && item.status === 'IDLE'
+        && (frameInvestorId == null || item.investorId === frameInvestorId))
+      .map((item) => ({ label: assetSelectLabel(item), value: item.id }));
+  }, [assets, selectedPickupFrameAssetId]);
 
   const replaceAssetOptions = useMemo(() => {
+    const orderInvestorId = assets.find((item) => item.id === selectedOrder?.frameAssetId)?.investorId
+      ?? assets.find((item) => item.id === selectedOrder?.batteryAssetId)?.investorId;
     return assets
       .filter((item) => {
         const typeMatches = replaceAssetType === 'VEHICLE_FRAME'
           ? item.assetType !== 'BATTERY'
           : item.assetType === 'BATTERY';
-        return typeMatches && item.status === 'IDLE';
+        return typeMatches
+          && item.status === 'IDLE'
+          && (orderInvestorId == null || item.investorId === orderInvestorId);
       })
       .map((item) => ({ label: assetSelectLabel(item), value: item.id }));
-  }, [assets, replaceAssetType]);
+  }, [assets, replaceAssetType, selectedOrder]);
 
   const integratedCreateAssetSelected = useMemo(
     () => assets.some((item) => item.id === selectedCreateFrameAssetId && item.assetType === 'INTEGRATED_VEHICLE'),
@@ -459,8 +492,26 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
   useEffect(() => {
     if (integratedCreateAssetSelected) {
       createForm.setFieldValue('batteryAssetId', undefined);
+      return;
     }
-  }, [createForm, integratedCreateAssetSelected]);
+    const frameInvestorId = assets.find((item) => item.id === selectedCreateFrameAssetId)?.investorId;
+    const batteryInvestorId = assets.find((item) => item.id === selectedCreateBatteryAssetId)?.investorId;
+    if (frameInvestorId != null && batteryInvestorId != null && frameInvestorId !== batteryInvestorId) {
+      createForm.setFieldValue('batteryAssetId', undefined);
+    }
+  }, [assets, createForm, integratedCreateAssetSelected, selectedCreateBatteryAssetId, selectedCreateFrameAssetId]);
+
+  useEffect(() => {
+    const frameAsset = assets.find((item) => item.id === selectedPickupFrameAssetId);
+    if (frameAsset?.assetType === 'INTEGRATED_VEHICLE') {
+      pickupForm.setFieldValue('batteryAssetId', undefined);
+      return;
+    }
+    const batteryInvestorId = assets.find((item) => item.id === selectedPickupBatteryAssetId)?.investorId;
+    if (frameAsset?.investorId != null && batteryInvestorId != null && frameAsset.investorId !== batteryInvestorId) {
+      pickupForm.setFieldValue('batteryAssetId', undefined);
+    }
+  }, [assets, pickupForm, selectedPickupBatteryAssetId, selectedPickupFrameAssetId]);
 
   async function loadAll(keyword = orderKeyword) {
     if (!storeId) {
@@ -889,7 +940,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
               optionFilterProp="label"
               placeholder="输入序列号、资产编号或自定义类型搜索"
               notFoundContent="该门店暂无空闲主资产或自定义资产"
-              options={frameOptions}
+              options={createFrameOptions}
             />
           </Form.Item>
           <Form.Item name="batteryAssetId" label="电池资产">
@@ -900,7 +951,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
               disabled={integratedCreateAssetSelected}
               placeholder={integratedCreateAssetSelected ? '车电一体无需独立电池' : '输入电池号或资产编号搜索，可不选'}
               notFoundContent="该门店暂无空闲电池资产"
-              options={batteryOptions}
+              options={createBatteryOptions}
             />
           </Form.Item>
           <Form.Item name="orderedAt" label="下单时间" rules={[{ required: true, message: '请选择下单时间' }]}>
@@ -1029,7 +1080,8 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
                       <Descriptions.Item label="渠道核销扣点">{money(settlement.channelFeeAmount)}</Descriptions.Item>
                       <Descriptions.Item label="租赁平台扣点">{money(settlement.platformFeeAmount)}</Descriptions.Item>
                       <Descriptions.Item label="门店运营分润">{money(settlement.storeOperationAmount)}</Descriptions.Item>
-                      <Descriptions.Item label="维修基金">{money(settlement.maintenanceFundAmount)}</Descriptions.Item>
+                      <Descriptions.Item label="门店维修分润">{money(settlement.maintenanceFundAmount)}</Descriptions.Item>
+                      <Descriptions.Item label="门店合计分润">{money(Number(settlement.storeOperationAmount || 0) + Number(settlement.maintenanceFundAmount || 0))}</Descriptions.Item>
                       <Descriptions.Item label="渠道引流分润">{money(settlement.channelReferralAmount)}</Descriptions.Item>
                       <Descriptions.Item label="出资方分润">{money(settlement.investorShareAmount)}</Descriptions.Item>
                     </>
@@ -1060,7 +1112,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
               optionFilterProp="label"
               placeholder="输入序列号、资产编号或自定义类型搜索"
               notFoundContent="该门店暂无空闲主资产或自定义资产"
-              options={frameOptions}
+              options={pickupFrameOptions}
               onChange={(value) => {
                 if (assets.some((item) => item.id === value && item.assetType === 'INTEGRATED_VEHICLE')) {
                   pickupForm.setFieldValue('batteryAssetId', undefined);
@@ -1081,7 +1133,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
                     disabled={integratedVehicleSelected}
                     placeholder={integratedVehicleSelected ? '车电一体无需独立电池' : '输入电池号或资产编号搜索'}
                     notFoundContent="该门店暂无空闲电池资产"
-                    options={batteryOptions}
+                    options={pickupBatteryOptions}
                   />
                 </Form.Item>
               );
@@ -1273,7 +1325,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
       maintenanceType: 'REPAIR',
       maintenanceStatus: 'COMPLETED',
       responsibilityType: 'ROUTINE_MAINTENANCE',
-      costBearerType: 'INVESTOR',
+      costBearerType: 'MERCHANT',
       laborCost: 0,
       externalCost: 0,
       parts: []
@@ -1534,7 +1586,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
               ]} />
             </Form.Item>
             <Form.Item name="responsibilityType" label="责任归因" rules={[{ required: true, message: '请选择责任归因' }]} style={{ flex: 1 }}>
-              <Select options={[
+              <Select onChange={(value) => maintenanceForm.setFieldValue('costBearerType', merchantMaintenanceCostBearerType(value))} options={[
                 { label: '日常资产维护', value: 'ROUTINE_MAINTENANCE' },
                 { label: '客户损坏', value: 'CUSTOMER_DAMAGE' },
                 { label: '门店责任', value: 'MERCHANT_RESPONSIBILITY' },
@@ -1551,8 +1603,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           </Space>
           <Space style={{ width: '100%' }} size={12} align="start">
             <Form.Item name="costBearerType" label="成本承担方" rules={[{ required: true, message: '请选择成本承担方' }]} style={{ flex: 1 }}>
-              <Select options={[
-                { label: '出资方', value: 'INVESTOR' },
+              <Select disabled options={[
                 { label: '商户', value: 'MERCHANT' },
                 { label: '用户', value: 'USER' },
                 { label: '平台', value: 'PLATFORM' }
@@ -2179,7 +2230,7 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
             { title: '月结单号', dataIndex: 'statementNo' },
             { title: '月份', dataIndex: 'statementMonth' },
             { title: '签单费', dataIndex: 'signFeeIncomeAmount', render: money },
-            { title: '租金分润', dataIndex: 'rentShareIncomeAmount', render: money },
+            { title: '运营及维修分润', dataIndex: 'rentShareIncomeAmount', render: money },
             { title: '维保扣减', dataIndex: 'maintenanceDeductAmount', render: money },
             { title: '应结算', dataIndex: 'payableAmount', render: money },
             { title: '状态', dataIndex: 'status', render: statementStatusTag },
@@ -2397,8 +2448,7 @@ function maintenanceColumns() {
     { title: '配件成本', dataIndex: 'partsCost', render: money },
     { title: '人工+外协', render: (_: unknown, record: AssetMaintenance) => money(Number(record.laborCost || 0) + Number(record.externalCost || 0)) },
     { title: '总成本', dataIndex: 'totalCost', render: money },
-    { title: '补门店', dataIndex: 'merchantReimbursementAmount', render: money },
-    { title: '扣出资方', dataIndex: 'investorDeductAmount', render: money },
+    { title: '平台补门店', dataIndex: 'merchantReimbursementAmount', render: money },
     { title: '状态', dataIndex: 'maintenanceStatus', render: (value: string) => <Tag>{value}</Tag> },
     { title: '完成时间', dataIndex: 'completedAt', render: dateText }
   ];
@@ -2433,6 +2483,12 @@ function responsibilityText(value: AssetMaintenance['responsibilityType']) {
   return map[value] || value;
 }
 
+function merchantMaintenanceCostBearerType(value: MerchantMaintenanceForm['responsibilityType']): MerchantMaintenanceForm['costBearerType'] {
+  if (value === 'CUSTOMER_DAMAGE') return 'USER';
+  if (value === 'PLATFORM_SUBSIDY') return 'PLATFORM';
+  return 'MERCHANT';
+}
+
 function incomeStatusTag(value: SettlementIncomeEntry['entryStatus']) {
   const map: Record<SettlementIncomeEntry['entryStatus'], { label: string; color: string }> = {
     PENDING: { label: '待结算', color: 'gold' },
@@ -2461,7 +2517,7 @@ function incomeLineText(value: SettlementIncomeEntry['lineType']) {
     CHANNEL_VERIFICATION_FEE: '渠道核销扣点',
     PLATFORM_SERVICE_FEE: '租赁平台扣点',
     STORE_OPERATION_SHARE: '门店运营分润',
-    MAINTENANCE_FUND_SHARE: '维修基金',
+    MAINTENANCE_FUND_SHARE: '门店维修分润',
     CHANNEL_REFERRAL_SHARE: '渠道引流分润',
     INVESTOR_SHARE: '出资方分润',
     MERCHANT_ORDER_FEE: '签单费',
@@ -2478,6 +2534,7 @@ function statementLineText(value: SettlementStatementLine['lineType']) {
   const map: Record<SettlementStatementLine['lineType'], string> = {
     MERCHANT_SIGN_FEE: '商户签单费',
     MERCHANT_RENT_SHARE: '商户租金分润',
+    MERCHANT_MAINTENANCE_SHARE: '门店维修分润',
     MERCHANT_MAINTENANCE_REIMBURSE: '门店配件补回',
     MERCHANT_MAINTENANCE_DEDUCT: '商户维保扣减',
     MERCHANT_ADJUSTMENT: '商户调整',
