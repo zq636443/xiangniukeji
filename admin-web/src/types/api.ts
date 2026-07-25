@@ -225,6 +225,7 @@ export type Investor = {
   investorName: string;
   contactName: string;
   contactPhone: string;
+  operationFeeRate: number;
   status: 'ENABLED' | 'DISABLED';
 };
 

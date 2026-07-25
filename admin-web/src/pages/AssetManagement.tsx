@@ -27,6 +27,7 @@ type InvestorForm = {
   investorName: string;
   contactName: string;
   contactPhone: string;
+  operationFeeRate: number;
   createAccount?: boolean;
   username?: string;
   displayName?: string;
@@ -249,7 +250,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   function openCreateInvestor() {
     setEditingInvestor(null);
     investorForm.resetFields();
-    investorForm.setFieldsValue({ createAccount: true, password: 'Xniu@2026' });
+    investorForm.setFieldsValue({ operationFeeRate: 0.08, createAccount: true, password: 'Xniu@2026' });
     setInvestorOpen(true);
   }
 
@@ -508,6 +509,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
             { title: '名称', dataIndex: 'investorName' },
             { title: '联系人', dataIndex: 'contactName' },
             { title: '电话', dataIndex: 'contactPhone' },
+            { title: '运营手续费', dataIndex: 'operationFeeRate', render: (rate: number) => `${(rate * 100).toFixed(2)}%` },
             { title: '状态', dataIndex: 'status', render: enabledTag },
             {
               title: '操作',
@@ -650,6 +652,9 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           <Form.Item name="investorName" label="出资方名称" rules={[{ required: true, message: '请输入出资方名称' }]}><Input /></Form.Item>
           <Form.Item name="contactName" label="联系人" rules={[{ required: true, message: '请输入联系人' }]}><Input /></Form.Item>
           <Form.Item name="contactPhone" label="联系电话" rules={[{ required: true, message: '请输入联系电话' }]}><Input /></Form.Item>
+          <Form.Item name="operationFeeRate" label="运营手续费比例" rules={[{ required: true, message: '请输入运营手续费比例' }]}>
+            <InputNumber min={0} max={1} step={0.01} style={{ width: '100%' }} />
+          </Form.Item>
           {!editingInvestor ? (
             <>
               <Form.Item name="createAccount" valuePropName="checked">

@@ -111,7 +111,7 @@ class ManagementDeletionIntegrationTests {
             "SELECT operation_fee_rate FROM investor WHERE id = ?",
             BigDecimal.class,
             unused.id()
-        )).isEqualByComparingTo(BigDecimal.ZERO);
+        )).isEqualByComparingTo("0.0800");
 
         investorService.deleteInvestor(unused.id());
 
@@ -225,6 +225,7 @@ class ManagementDeletionIntegrationTests {
             name,
             "测试联系人",
             "138" + UUID.randomUUID().toString().replace("-", "").substring(0, 8),
+            new BigDecimal("0.0800"),
             false,
             null,
             null,

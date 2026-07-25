@@ -44,11 +44,13 @@ public class InvestorService {
     @Transactional
     public InvestorResponse createInvestor(InvestorRequest request) {
         authorizationService.requirePermission("investor.write");
+        validateRate(request);
         var investor = investorRepository.create(
             nextCode(),
             request.investorName(),
             request.contactName(),
-            request.contactPhone()
+            request.contactPhone(),
+            request.operationFeeRate()
         );
         if (Boolean.TRUE.equals(request.createAccount())) {
             validateAccountRequest(request);
@@ -60,12 +62,14 @@ public class InvestorService {
     @Transactional
     public InvestorResponse updateInvestor(Long id, InvestorRequest request) {
         authorizationService.requirePermission("investor.write");
+        validateRate(request);
         ensureInvestorExists(id);
         return toResponse(investorRepository.update(
             id,
             request.investorName(),
             request.contactName(),
-            request.contactPhone()
+            request.contactPhone(),
+            request.operationFeeRate()
         ));
     }
 
@@ -88,6 +92,12 @@ public class InvestorService {
 
     public Investor ensureInvestorExists(Long id) {
         return investorRepository.findById(id).orElseThrow(() -> BusinessException.badRequest("出资方不存在"));
+    }
+
+    private void validateRate(InvestorRequest request) {
+        if (request.operationFeeRate().signum() < 0 || request.operationFeeRate().compareTo(java.math.BigDecimal.ONE) > 0) {
+            throw BusinessException.badRequest("运营手续费比例必须在 0 到 1 之间");
+        }
     }
 
     private void validateAccountRequest(InvestorRequest request) {
@@ -130,6 +140,7 @@ public class InvestorService {
             investor.investorName(),
             investor.contactName(),
             investor.contactPhone(),
+            investor.operationFeeRate(),
             investor.status().name()
         );
     }
