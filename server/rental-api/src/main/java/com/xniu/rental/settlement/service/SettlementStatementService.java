@@ -6,8 +6,6 @@ import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.BusinessException;
-import com.xniu.rental.investor.model.Investor;
-import com.xniu.rental.investor.repository.InvestorRepository;
 import com.xniu.rental.settlement.dto.SettlementOverviewResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementGenerateResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementLineResponse;
@@ -47,7 +45,6 @@ public class SettlementStatementService {
     private final SettlementRepository settlementRepository;
     private final AssetFulfillmentRepository assetFulfillmentRepository;
     private final AssetRepository assetRepository;
-    private final InvestorRepository investorRepository;
     private final AuthorizationService authorizationService;
 
     public SettlementStatementService(
@@ -55,14 +52,12 @@ public class SettlementStatementService {
         SettlementRepository settlementRepository,
         AssetFulfillmentRepository assetFulfillmentRepository,
         AssetRepository assetRepository,
-        InvestorRepository investorRepository,
         AuthorizationService authorizationService
     ) {
         this.statementRepository = statementRepository;
         this.settlementRepository = settlementRepository;
         this.assetFulfillmentRepository = assetFulfillmentRepository;
         this.assetRepository = assetRepository;
-        this.investorRepository = investorRepository;
         this.authorizationService = authorizationService;
     }
 
@@ -77,11 +72,16 @@ public class SettlementStatementService {
 
         var range = monthRange(month);
         var paidBillItems = statementRepository.listPaidBillItems(range.startAt(), range.endAt());
+        var externalOrderItems = statementRepository.listExternalOrderItems(range.startAt(), range.endAt());
         var maintenanceCosts = statementRepository.listMaintenanceCosts(range.startAt(), range.endAt());
         var snapshotIds = paidBillItems.stream()
             .map(SettlementStatementRepository.PaidBillItemRow::settlementSnapshotId)
             .filter(java.util.Objects::nonNull)
             .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        externalOrderItems.stream()
+            .map(SettlementStatementRepository.ExternalOrderItemRow::settlementSnapshotId)
+            .filter(java.util.Objects::nonNull)
+            .forEach(snapshotIds::add);
         var snapshotMap = settlementRepository.findSnapshotsByIds(snapshotIds).stream()
             .collect(java.util.stream.Collectors.toMap(SettlementRuleSnapshot::id, item -> item));
         var orderIds = paidBillItems.stream()
@@ -181,25 +181,84 @@ public class SettlementStatementService {
                         allocation.rentBaseAmount()
                     );
                 }
-                if (allocation.operationFeeAmount().signum() > 0) {
-                    investorDraft.register(
-                        new LineDraft(
-                            "BILL",
-                            first.billId(),
-                            first.orderId(),
-                            first.billId(),
-                            null,
-                            first.merchantId(),
-                            first.storeId(),
-                            allocation.investorId(),
-                            SettlementStatementLineType.INVESTOR_OPERATION_FEE,
-                            allocation.operationFeeAmount().negate(),
-                            first.paidAt(),
-                            "运营手续费扣减"
-                        ),
-                        BigDecimal.ZERO
-                    );
+            }
+        }
+
+        for (var externalOrder : externalOrderItems) {
+            var snapshot = snapshotMap.get(externalOrder.settlementSnapshotId());
+            if (snapshot == null) {
+                throw BusinessException.badRequest("补录订单 " + externalOrder.recordNo() + " 的分润快照不存在");
+            }
+            if (!"EXTERNAL_ORDER".equals(snapshot.sourceType().name()) || !externalOrder.externalOrderId().equals(snapshot.sourceId())) {
+                throw BusinessException.badRequest("补录订单 " + externalOrder.recordNo() + " 的分润快照不匹配");
+            }
+            var signFeeAmount = money(externalOrder.signFeeAmount());
+            if (signFeeAmount.signum() > 0) {
+                merchantDraft(merchantDrafts, externalOrder.merchantId(), externalOrder.storeId()).register(
+                    new LineDraft(
+                        "EXTERNAL_ORDER",
+                        externalOrder.externalOrderId(),
+                        null,
+                        null,
+                        null,
+                        externalOrder.merchantId(),
+                        externalOrder.storeId(),
+                        0L,
+                        SettlementStatementLineType.MERCHANT_SIGN_FEE,
+                        signFeeAmount,
+                        externalOrder.createdAt(),
+                        "补录订单 " + externalOrder.recordNo() + " 签单费"
+                    ),
+                    BigDecimal.ZERO
+                );
+            }
+            var settlementBase = money(externalOrder.verificationAmount());
+            if (settlementBase.signum() <= 0) {
+                continue;
+            }
+            var merchantShare = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+                ? snapshot.storeOperationAmount()
+                : money(settlementBase.multiply(snapshot.merchantRentShareRate()));
+            if (merchantShare.signum() > 0) {
+                merchantDraft(merchantDrafts, externalOrder.merchantId(), externalOrder.storeId()).register(
+                    new LineDraft(
+                        "EXTERNAL_ORDER",
+                        externalOrder.externalOrderId(),
+                        null,
+                        null,
+                        null,
+                        externalOrder.merchantId(),
+                        externalOrder.storeId(),
+                        0L,
+                        SettlementStatementLineType.MERCHANT_RENT_SHARE,
+                        merchantShare,
+                        externalOrder.createdAt(),
+                        "补录订单 " + externalOrder.recordNo() + " 门店运营分润"
+                    ),
+                    settlementBase
+                );
+            }
+            for (var allocation : buildInvestorAllocations(snapshot, null, settlementBase, null)) {
+                if (allocation.grossRentAmount().signum() <= 0) {
+                    continue;
                 }
+                investorDraft(investorDrafts, allocation.investorId()).register(
+                    new LineDraft(
+                        "EXTERNAL_ORDER",
+                        externalOrder.externalOrderId(),
+                        null,
+                        null,
+                        null,
+                        externalOrder.merchantId(),
+                        externalOrder.storeId(),
+                        allocation.investorId(),
+                        SettlementStatementLineType.INVESTOR_GROSS_RENT,
+                        allocation.grossRentAmount(),
+                        externalOrder.createdAt(),
+                        "补录订单 " + externalOrder.recordNo() + " 出资方分润"
+                    ),
+                    allocation.rentBaseAmount()
+                );
             }
         }
 
@@ -452,7 +511,7 @@ public class SettlementStatementService {
                 money(draft.maintenanceDeductAmount()),
                 money(draft.adjustmentAmount()),
                 money(draft.payableAmount()),
-                draft.orderIds().size(),
+                draft.orderCount(),
                 draft.billIds().size(),
                 SettlementStatementStatus.DRAFT,
                 "系统自动生成月结单"
@@ -528,14 +587,10 @@ public class SettlementStatementService {
             }
         }
         return rentBaseByInvestor.entrySet().stream().map(entry -> {
-            var investor = investorRepository.findById(entry.getKey()).orElseThrow(() -> BusinessException.badRequest("出资方不存在"));
             var grossAmount = profitV2
                 ? money(shareByInvestor.get(entry.getKey()))
                 : money(entry.getValue().multiply(snapshot.investorRentShareRate()));
-            var operationFee = profitV2
-                ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
-                : money(grossAmount.multiply(investor.operationFeeRate() == null ? BigDecimal.ZERO : investor.operationFeeRate()));
-            return new InvestorAllocation(entry.getKey(), money(rentBaseByInvestor.get(entry.getKey())), grossAmount, operationFee);
+            return new InvestorAllocation(entry.getKey(), money(rentBaseByInvestor.get(entry.getKey())), grossAmount);
         }).toList();
     }
 
@@ -691,7 +746,7 @@ public class SettlementStatementService {
     private record InvestorAssetRef(Long assetId, Long investorId) {
     }
 
-    private record InvestorAllocation(Long investorId, BigDecimal rentBaseAmount, BigDecimal grossRentAmount, BigDecimal operationFeeAmount) {
+    private record InvestorAllocation(Long investorId, BigDecimal rentBaseAmount, BigDecimal grossRentAmount) {
     }
 
     private record LineDraft(
@@ -716,6 +771,7 @@ public class SettlementStatementService {
         private final Long merchantId;
         private final Long storeId;
         private final Set<Long> orderIds = new LinkedHashSet<>();
+        private final Set<String> businessOrderKeys = new LinkedHashSet<>();
         private final Set<Long> billIds = new LinkedHashSet<>();
         private final List<LineDraft> lines = new ArrayList<>();
         private BigDecimal rentBaseAmount = BigDecimal.ZERO;
@@ -736,6 +792,10 @@ public class SettlementStatementService {
         private void register(LineDraft line, BigDecimal rentBaseIncrement) {
             if (line.orderId() != null) {
                 orderIds.add(line.orderId());
+                businessOrderKeys.add("ORDER:" + line.orderId());
+            }
+            if ("EXTERNAL_ORDER".equals(line.sourceType())) {
+                businessOrderKeys.add("EXTERNAL_ORDER:" + line.sourceId());
             }
             if (line.billId() != null) {
                 billIds.add(line.billId());
@@ -768,8 +828,8 @@ public class SettlementStatementService {
             return storeId;
         }
 
-        private Set<Long> orderIds() {
-            return orderIds;
+        private int orderCount() {
+            return businessOrderKeys.size();
         }
 
         private Set<Long> billIds() {

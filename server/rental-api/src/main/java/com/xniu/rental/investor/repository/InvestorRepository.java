@@ -2,7 +2,6 @@ package com.xniu.rental.investor.repository;
 
 import com.xniu.rental.investor.model.Investor;
 import com.xniu.rental.investor.model.InvestorStatus;
-import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
@@ -46,36 +45,51 @@ public class InvestorRepository {
         return investors.stream().findFirst();
     }
 
-    public Investor create(String investorCode, String investorName, String contactName, String contactPhone, BigDecimal operationFeeRate) {
+    public Investor create(String investorCode, String investorName, String contactName, String contactPhone) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             var statement = connection.prepareStatement("""
                 INSERT INTO investor
                 (investor_code, investor_name, contact_name, contact_phone, operation_fee_rate)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 0.0000)
                 """, new String[] {"id"});
             statement.setString(1, investorCode);
             statement.setString(2, investorName);
             statement.setString(3, contactName);
             statement.setString(4, contactPhone);
-            statement.setBigDecimal(5, operationFeeRate);
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
     }
 
-    public Investor update(Long id, String investorName, String contactName, String contactPhone, BigDecimal operationFeeRate) {
+    public Investor update(Long id, String investorName, String contactName, String contactPhone) {
         jdbcTemplate.update("""
             UPDATE investor
-            SET investor_name = ?, contact_name = ?, contact_phone = ?, operation_fee_rate = ?
+            SET investor_name = ?, contact_name = ?, contact_phone = ?, operation_fee_rate = 0.0000
             WHERE id = ?
-            """, investorName, contactName, contactPhone, operationFeeRate, id);
+            """, investorName, contactName, contactPhone, id);
         return findById(id).orElseThrow();
     }
 
     public Investor updateStatus(Long id, InvestorStatus status) {
         jdbcTemplate.update("UPDATE investor SET status = ? WHERE id = ?", status.name(), id);
         return findById(id).orElseThrow();
+    }
+
+    public int countReferences(Long investorId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT
+                (SELECT COUNT(*) FROM asset_item WHERE investor_id = ?)
+              + (SELECT COUNT(*) FROM asset_ownership_history WHERE investor_id = ?)
+              + (SELECT COUNT(*) FROM order_asset_usage WHERE investor_id = ?)
+              + (SELECT COUNT(*) FROM settlement_statement_line WHERE investor_id = ?)
+              + (SELECT COUNT(*) FROM sys_account WHERE investor_id = ?)
+            """, Integer.class, investorId, investorId, investorId, investorId, investorId);
+        return count == null ? 0 : count;
+    }
+
+    public void delete(Long id) {
+        jdbcTemplate.update("DELETE FROM investor WHERE id = ?", id);
     }
 
     private static class InvestorMapper implements RowMapper<Investor> {
@@ -87,7 +101,6 @@ public class InvestorRepository {
                 rs.getString("investor_name"),
                 rs.getString("contact_name"),
                 rs.getString("contact_phone"),
-                rs.getBigDecimal("operation_fee_rate"),
                 InvestorStatus.valueOf(rs.getString("status")),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class)

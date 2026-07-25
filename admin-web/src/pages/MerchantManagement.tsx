@@ -496,7 +496,10 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
           layout="vertical"
           onFinish={createEmployee}
           onValuesChange={(changedValues) => {
-            if ('merchantId' in changedValues || 'roleCode' in changedValues) {
+            if ('merchantId' in changedValues) {
+              employeeForm.setFieldValue('storeIds', undefined);
+            }
+            if (changedValues.roleCode === 'MERCHANT_OWNER') {
               employeeForm.setFieldValue('storeIds', undefined);
             }
           }}

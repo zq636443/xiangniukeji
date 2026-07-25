@@ -1,3 +1,4 @@
+import { EditOutlined } from '@ant-design/icons';
 import { Alert, Button, DatePicker, Descriptions, Empty, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
@@ -89,6 +90,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   const [filters, setFilters] = useState<FilterForm>({});
   const [loading, setLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<ExternalRentalOrder | null>(null);
+  const [editingOrder, setEditingOrder] = useState<ExternalRentalOrder | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -120,29 +122,6 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     void loadAll();
   }, [scope, storeId, filters.status, filters.sourcePlatform, filters.keyword]);
 
-  useEffect(() => {
-    if (!selectedStoreSku) {
-      return;
-    }
-    createForm.setFieldsValue({
-      signFeeAmount: Number(selectedStoreSku.signFeeAmount || 0),
-      frameAssetId: selectedStoreSku.needFrameAsset ? createForm.getFieldValue('frameAssetId') : undefined,
-      batteryAssetId: selectedStoreSku.needBatteryAsset ? createForm.getFieldValue('batteryAssetId') : undefined
-    });
-  }, [selectedStoreSku, createForm]);
-
-  useEffect(() => {
-    if (!selectedPackage) {
-      return;
-    }
-    createForm.setFieldsValue({
-      externalRentalAmount: Number(selectedPackage.rentalAmount || 0),
-      verificationAmount: Number(selectedPackage.rentalAmount || 0),
-      depositAmount: Number(selectedPackage.depositAmount || 0),
-      expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), selectedPackage)
-    });
-  }, [selectedPackage, createForm]);
-
   const storeSkuOptions = useMemo(() => {
     return storeSkus.map((item) => ({
       label: `${item.displayName}${item.storeName ? ` / ${item.storeName}` : ''}`,
@@ -159,21 +138,31 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
 
   const frameAssetOptions = useMemo(() => {
     return assets
-      .filter((item) => item.assetType !== 'BATTERY'
-        && item.status === 'IDLE'
-        && item.currentMerchantId === selectedStoreSku?.merchantId
-        && item.currentStoreId === selectedStoreSku?.storeId)
+      .filter((item) => {
+        const isCurrentAsset = item.id === editingOrder?.frameAssetId;
+        return item.assetType !== 'BATTERY'
+          && (isCurrentAsset || (
+            item.status === 'IDLE'
+            && item.currentMerchantId === selectedStoreSku?.merchantId
+            && item.currentStoreId === selectedStoreSku?.storeId
+          ));
+      })
       .map((item) => ({ label: formatAssetLabel(item), value: item.id }));
-  }, [assets, selectedStoreSku]);
+  }, [assets, editingOrder, selectedStoreSku]);
 
   const batteryAssetOptions = useMemo(() => {
     return assets
-      .filter((item) => item.assetType === 'BATTERY'
-        && item.status === 'IDLE'
-        && item.currentMerchantId === selectedStoreSku?.merchantId
-        && item.currentStoreId === selectedStoreSku?.storeId)
+      .filter((item) => {
+        const isCurrentAsset = item.id === editingOrder?.batteryAssetId;
+        return item.assetType === 'BATTERY'
+          && (isCurrentAsset || (
+            item.status === 'IDLE'
+            && item.currentMerchantId === selectedStoreSku?.merchantId
+            && item.currentStoreId === selectedStoreSku?.storeId
+          ));
+      })
       .map((item) => ({ label: formatAssetLabel(item), value: item.id }));
-  }, [assets, selectedStoreSku]);
+  }, [assets, editingOrder, selectedStoreSku]);
 
   const integratedVehicleSelected = useMemo(
     () => assets.some((item) => item.id === selectedFrameAssetId && item.assetType === 'INTEGRATED_VEHICLE'),
@@ -231,16 +220,80 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   }
 
   function openCreate() {
+    const firstStoreSku = storeSkus[0];
+    const firstPackage = firstStoreSku?.packages.find((item) => item.status === 'ENABLED') ?? firstStoreSku?.packages[0];
+    const rentStartedAt = dayjs();
     createForm.resetFields();
     createForm.setFieldsValue({
       sourcePlatform: 'OFFLINE',
-      rentStartedAt: dayjs(),
-      signFeeAmount: 0,
-      externalRentalAmount: 0,
-      verificationAmount: 0,
-      depositAmount: 0
+      storeSkuId: firstStoreSku?.id,
+      packageId: firstPackage?.packageId,
+      rentStartedAt,
+      expectedReturnAt: calculateExpectedReturnAt(rentStartedAt, firstPackage),
+      signFeeAmount: Number(firstStoreSku?.signFeeAmount || 0),
+      externalRentalAmount: Number(firstPackage?.rentalAmount || 0),
+      verificationAmount: Number(firstPackage?.rentalAmount || 0),
+      depositAmount: Number(firstPackage?.depositAmount || 0)
+    });
+    setEditingOrder(null);
+    setCreateOpen(true);
+  }
+
+  function openEdit(record: ExternalRentalOrder) {
+    setEditingOrder(record);
+    createForm.resetFields();
+    createForm.setFieldsValue({
+      sourcePlatform: record.sourcePlatform,
+      externalOrderNo: record.externalOrderNo ?? undefined,
+      storeSkuId: record.storeSkuId,
+      packageId: record.packageId,
+      customerName: record.customerName,
+      customerPhone: record.customerPhone,
+      rentStartedAt: dayjs(record.rentStartedAt),
+      expectedReturnAt: record.expectedReturnAt ? dayjs(record.expectedReturnAt) : undefined,
+      frameAssetId: record.frameAssetId ?? undefined,
+      batteryAssetId: record.batteryAssetId ?? undefined,
+      externalRentalAmount: Number(record.externalRentalAmount),
+      verificationAmount: Number(record.verificationAmount),
+      signFeeAmount: Number(record.signFeeAmount),
+      depositAmount: Number(record.depositAmount),
+      remark: record.remark ?? undefined
     });
     setCreateOpen(true);
+  }
+
+  function closeOrderForm() {
+    setCreateOpen(false);
+    setEditingOrder(null);
+    createForm.resetFields();
+  }
+
+  function handleStoreSkuChange(value: number) {
+    const nextStoreSku = storeSkus.find((item) => item.id === value);
+    const nextPackage = nextStoreSku?.packages.find((item) => item.status === 'ENABLED') ?? nextStoreSku?.packages[0];
+    createForm.setFieldsValue({
+      packageId: nextPackage?.packageId,
+      frameAssetId: undefined,
+      batteryAssetId: undefined,
+      signFeeAmount: Number(nextStoreSku?.signFeeAmount || 0),
+      externalRentalAmount: Number(nextPackage?.rentalAmount || 0),
+      verificationAmount: Number(nextPackage?.rentalAmount || 0),
+      depositAmount: Number(nextPackage?.depositAmount || 0),
+      expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), nextPackage)
+    });
+  }
+
+  function handlePackageChange(value: number) {
+    const nextPackage = selectedStoreSku?.packages.find((item) => item.packageId === value);
+    if (!nextPackage) {
+      return;
+    }
+    createForm.setFieldsValue({
+      externalRentalAmount: Number(nextPackage.rentalAmount || 0),
+      verificationAmount: Number(nextPackage.rentalAmount || 0),
+      depositAmount: Number(nextPackage.depositAmount || 0),
+      expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), nextPackage)
+    });
   }
 
   function openDetail(record: ExternalRentalOrder) {
@@ -269,13 +322,20 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   async function submitCreate(values: CreateForm) {
     setSubmitting(true);
     try {
-      await http.post(scope === 'merchant' ? '/api/merchant/external-orders' : '/api/admin/external-orders', {
+      const endpoint = scope === 'merchant' ? '/api/merchant/external-orders' : '/api/admin/external-orders';
+      const payload = {
         ...values,
         rentStartedAt: values.rentStartedAt.format('YYYY-MM-DDTHH:mm:ss'),
         expectedReturnAt: values.expectedReturnAt?.format('YYYY-MM-DDTHH:mm:ss')
-      });
-      message.success('补录订单已创建');
-      setCreateOpen(false);
+      };
+      if (editingOrder) {
+        await http.put(`${endpoint}/${editingOrder.id}`, payload);
+        message.success('补录订单已更新，分润已按最新核销金额重新计算');
+      } else {
+        await http.post(endpoint, payload);
+        message.success('补录订单已创建并计入分润');
+      }
+      closeOrderForm();
       await loadAll();
     } finally {
       setSubmitting(false);
@@ -403,17 +463,28 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             },
             { title: '租金', dataIndex: 'externalRentalAmount', width: 110, render: moneyText },
             { title: '实际核销金额', dataIndex: 'verificationAmount', width: 130, render: moneyText },
+            {
+              title: '分润结果',
+              width: 150,
+              render: (_, record) => record.settlementSnapshotId ? (
+                <div>
+                  <div>门店 {moneyText(record.storeOperationAmount)}</div>
+                  <div>出资方 {moneyText(record.investorShareAmount)}</div>
+                </div>
+              ) : <Tag color="warning">待计算</Tag>
+            },
             { title: '签单费', dataIndex: 'signFeeAmount', width: 110, render: moneyText },
             { title: '状态', dataIndex: 'orderStatus', width: 110, render: statusTag },
             { title: '起租时间', dataIndex: 'rentStartedAt', width: 170, render: dateText },
             { title: '预计归还', dataIndex: 'expectedReturnAt', width: 170, render: dateText },
             {
               title: '操作',
-              width: 220,
+              width: 280,
               fixed: 'right',
               render: (_, record) => (
                 <Space>
                   <Button size="small" onClick={() => openDetail(record)}>详情</Button>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>编辑</Button>
                   {record.orderStatus === 'ACTIVE' ? (
                     <>
                       <Button size="small" onClick={() => openComplete(record)}>完结</Button>
@@ -424,20 +495,29 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               )
             }
           ]}
-          scroll={{ x: 1700 }}
+          scroll={{ x: 1900 }}
         />
       </div>
 
       <Modal
-        title="新建补录订单"
+        title={editingOrder ? '编辑补录订单' : '新建补录订单'}
         open={createOpen}
-        onCancel={() => setCreateOpen(false)}
+        onCancel={closeOrderForm}
         onOk={() => createForm.submit()}
         confirmLoading={submitting}
         width={760}
         destroyOnHidden
       >
         <Form form={createForm} layout="vertical" onFinish={submitCreate}>
+          {editingOrder && editingOrder.orderStatus !== 'ACTIVE' ? (
+            <Alert
+              type="info"
+              showIcon
+              message="正在修正已结束补录订单"
+              description="保存后会按最新核销金额和资产归属重算分润，但不会重新占用已归还资产。"
+              style={{ marginBottom: 16 }}
+            />
+          ) : null}
           <Space size={12} style={{ width: '100%' }} align="start">
             <Form.Item name="sourcePlatform" label="来源平台" rules={[{ required: true, message: '请选择来源平台' }]} style={{ flex: 1 }}>
               <Select options={sourceOptions} />
@@ -452,15 +532,11 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
                 showSearch
                 optionFilterProp="label"
                 options={storeSkuOptions}
-                onChange={() => createForm.setFieldsValue({
-                  packageId: undefined,
-                  frameAssetId: undefined,
-                  batteryAssetId: undefined
-                })}
+                onChange={handleStoreSkuChange}
               />
             </Form.Item>
             <Form.Item name="packageId" label="SKU" rules={[{ required: true, message: '请选择 SKU' }]} style={{ flex: 1 }}>
-              <Select options={packageOptions} disabled={!selectedStoreSku} />
+              <Select options={packageOptions} disabled={!selectedStoreSku} onChange={handlePackageChange} />
             </Form.Item>
           </Space>
           <Space size={12} style={{ width: '100%' }} align="start">
@@ -667,13 +743,21 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               <Descriptions.Item label="电池资产">{selectedOrder.batteryAssetSerialNo || '-'}</Descriptions.Item>
               <Descriptions.Item label="外部订单租金">{moneyText(selectedOrder.externalRentalAmount)}</Descriptions.Item>
               <Descriptions.Item label="实际核销金额">{moneyText(selectedOrder.verificationAmount)}</Descriptions.Item>
+              <Descriptions.Item label="分润快照">{selectedOrder.settlementSnapshotNo || '-'}</Descriptions.Item>
+              <Descriptions.Item label="分润基数">{moneyText(selectedOrder.settlementBaseAmount)}</Descriptions.Item>
+              <Descriptions.Item label="渠道核销扣点">{moneyText(selectedOrder.channelFeeAmount)}</Descriptions.Item>
+              <Descriptions.Item label="平台扣点">{moneyText(selectedOrder.platformFeeAmount)}</Descriptions.Item>
+              <Descriptions.Item label="门店运营分润">{moneyText(selectedOrder.storeOperationAmount)}</Descriptions.Item>
+              <Descriptions.Item label="维修基金">{moneyText(selectedOrder.maintenanceFundAmount)}</Descriptions.Item>
+              <Descriptions.Item label="渠道引流分润">{moneyText(selectedOrder.channelReferralAmount)}</Descriptions.Item>
+              <Descriptions.Item label="出资方分润">{moneyText(selectedOrder.investorShareAmount)}</Descriptions.Item>
               <Descriptions.Item label="签单费">{moneyText(selectedOrder.signFeeAmount)}</Descriptions.Item>
               <Descriptions.Item label="押金">{moneyText(selectedOrder.depositAmount)}</Descriptions.Item>
               <Descriptions.Item label="起租时间">{dateText(selectedOrder.rentStartedAt)}</Descriptions.Item>
               <Descriptions.Item label="预计归还">{dateText(selectedOrder.expectedReturnAt)}</Descriptions.Item>
               <Descriptions.Item label="实际结束">{dateText(selectedOrder.finishedAt)}</Descriptions.Item>
               <Descriptions.Item label="归还门店">{selectedOrder.returnStoreName || '-'}</Descriptions.Item>
-              <Descriptions.Item label="终止原因">{selectedOrder.terminationReason || '-'}</Descriptions.Item>
+              <Descriptions.Item label="终止原因" span={2}>{selectedOrder.terminationReason || '-'}</Descriptions.Item>
               <Descriptions.Item label="备注" span={2}>{selectedOrder.remark || '-'}</Descriptions.Item>
             </Descriptions>
             <div>
@@ -737,6 +821,9 @@ function operationText(value?: string | null) {
   }
   if (value === 'CREATE') {
     return '创建';
+  }
+  if (value === 'EDIT') {
+    return '编辑';
   }
   if (value === 'COMPLETE') {
     return '正常完结';

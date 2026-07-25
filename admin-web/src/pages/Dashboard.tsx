@@ -3,10 +3,11 @@ import { CarOutlined, ClockCircleOutlined, ExclamationCircleOutlined, ReloadOutl
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { http } from '../services/request';
-import type { Asset, DeductRecord, OverdueCase, PaymentOrder, RentalBill, RentalOrder } from '../types/api';
+import type { Asset, DeductRecord, ExternalRentalOrder, OverdueCase, PaymentOrder, RentalBill, RentalOrder } from '../types/api';
 
 type DashboardData = {
   orders: RentalOrder[];
+  externalOrders: ExternalRentalOrder[];
   bills: RentalBill[];
   assets: Asset[];
   overdues: OverdueCase[];
@@ -16,6 +17,7 @@ type DashboardData = {
 
 const initialData: DashboardData = {
   orders: [],
+  externalOrders: [],
   bills: [],
   assets: [],
   overdues: [],
@@ -32,15 +34,16 @@ export function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      const [orders, bills, assets, overdues, payments, failedDeductions] = await Promise.all([
+      const [orders, externalOrders, bills, assets, overdues, payments, failedDeductions] = await Promise.all([
         http.get<unknown, RentalOrder[]>('/api/admin/orders'),
+        http.get<unknown, ExternalRentalOrder[]>('/api/admin/external-orders'),
         http.get<unknown, RentalBill[]>('/api/admin/bills'),
         http.get<unknown, Asset[]>('/api/admin/assets'),
         http.get<unknown, OverdueCase[]>('/api/admin/overdues?overdueStatus=OPEN'),
         http.get<unknown, PaymentOrder[]>('/api/admin/payments'),
         http.get<unknown, DeductRecord[]>('/api/admin/deductions/records?status=FAILED')
       ]);
-      setData({ orders, bills, assets, overdues, payments, failedDeductions });
+      setData({ orders, externalOrders, bills, assets, overdues, payments, failedDeductions });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '工作台数据加载失败');
     } finally {
@@ -53,16 +56,30 @@ export function Dashboard() {
   }, []);
 
   const metrics = useMemo(() => {
-    const rentingOrders = data.orders.filter((item) => item.orderStatus === 'RENTING').length;
+    const externalActiveOrders = data.externalOrders.filter((item) => item.orderStatus === 'ACTIVE').length;
+    const rentingOrders = data.orders.filter((item) => item.orderStatus === 'RENTING').length + externalActiveOrders;
     const pendingPickup = data.orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').length;
     const pendingSupplement = data.orders.filter((item) => item.orderStatus === 'PENDING_SUPPLEMENT' || item.orderStatus === 'OVERDUE').length;
     const pendingBillAmount = sum(data.bills.filter((item) => !['PAID', 'CANCELLED'].includes(item.billStatus)), 'payableAmount');
     const overdueAmount = sum(data.overdues, 'unpaidAmount');
-    const paidAmount = sum(data.payments.filter((item) => item.payStatus === 'PAID'), 'paidAmount');
+    const paidAmount = sum(data.payments.filter((item) => item.payStatus === 'PAID'), 'paidAmount')
+      + sum(data.externalOrders, 'verificationAmount');
     const idleAssets = data.assets.filter((item) => item.status === 'IDLE').length;
     const rentingAssets = data.assets.filter((item) => item.status === 'RENTING').length;
     const repairAssets = data.assets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length;
-    return { rentingOrders, pendingPickup, pendingSupplement, pendingBillAmount, overdueAmount, paidAmount, idleAssets, rentingAssets, repairAssets };
+    return {
+      rentingOrders,
+      externalActiveOrders,
+      externalOrderCount: data.externalOrders.length,
+      pendingPickup,
+      pendingSupplement,
+      pendingBillAmount,
+      overdueAmount,
+      paidAmount,
+      idleAssets,
+      rentingAssets,
+      repairAssets
+    };
   }, [data]);
 
   const pickupOrders = useMemo(() => data.orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').slice(0, 8), [data.orders]);
@@ -84,12 +101,13 @@ export function Dashboard() {
       {error ? <Alert type="error" message={error} showIcon /> : null}
 
       <Row gutter={[14, 14]}>
-        <Col xs={24} md={8} xl={6}><Metric icon={<CarOutlined />} title="租赁中订单" value={metrics.rentingOrders} tone="green" /></Col>
+        <Col xs={24} md={8} xl={6}><Metric icon={<CarOutlined />} title="租赁中订单（含补录）" value={metrics.rentingOrders} tone="green" /></Col>
         <Col xs={24} md={8} xl={6}><Metric icon={<ClockCircleOutlined />} title="待取车订单" value={metrics.pendingPickup} tone="blue" /></Col>
         <Col xs={24} md={8} xl={6}><Metric icon={<ExclamationCircleOutlined />} title="逾期/待补缴" value={metrics.pendingSupplement} tone="orange" danger /></Col>
         <Col xs={24} md={8} xl={6}><Metric icon={<WalletOutlined />} title="待收账单金额" value={formatMoney(metrics.pendingBillAmount)} tone="violet" /></Col>
         <Col xs={24} md={8} xl={6}><Metric icon={<ExclamationCircleOutlined />} title="逾期未收金额" value={formatMoney(metrics.overdueAmount)} tone="red" danger /></Col>
-        <Col xs={24} md={8} xl={6}><Metric icon={<WalletOutlined />} title="累计已支付" value={formatMoney(metrics.paidAmount)} tone="green" /></Col>
+        <Col xs={24} md={8} xl={6}><Metric icon={<WalletOutlined />} title="累计已收（含补录）" value={formatMoney(metrics.paidAmount)} tone="green" /></Col>
+        <Col xs={24} md={8} xl={6}><Metric icon={<CarOutlined />} title="外部补录订单" value={metrics.externalOrderCount} suffix={`进行中 ${metrics.externalActiveOrders}`} tone="violet" /></Col>
         <Col xs={24} md={8} xl={6}><Metric icon={<SafetyCertificateOutlined />} title="空闲资产" value={metrics.idleAssets} tone="blue" /></Col>
         <Col xs={24} md={8} xl={6}>
           <section className="metric-tile metric-tile-progress">
@@ -109,6 +127,31 @@ export function Dashboard() {
       </Row>
 
       <Row gutter={[16, 16]}>
+        <Col xs={24}>
+          <section className="dashboard-section">
+            <div className="section-head">
+              <Typography.Title level={4}>最近补录订单</Typography.Title>
+              <Tag color="purple">已计入经营统计</Tag>
+            </div>
+            <Table
+              rowKey="id"
+              size="small"
+              loading={loading}
+              pagination={false}
+              dataSource={data.externalOrders.slice(0, 8)}
+              columns={[
+                { title: '补录单号', dataIndex: 'recordNo' },
+                { title: '来源', dataIndex: 'sourcePlatform', render: externalSourceText },
+                { title: '门店', dataIndex: 'storeName', render: (value: string | null | undefined, record) => value || `门店 ${record.storeId}` },
+                { title: '客户', dataIndex: 'customerName' },
+                { title: '状态', dataIndex: 'orderStatus', render: externalOrderStatusTag },
+                { title: '实际核销金额', dataIndex: 'verificationAmount', render: formatMoney },
+                { title: '起租时间', dataIndex: 'rentStartedAt', render: formatDate },
+                { title: '预计归还', dataIndex: 'expectedReturnAt', render: formatDate }
+              ]}
+            />
+          </section>
+        </Col>
         <Col xs={24} xl={12}>
           <section className="dashboard-section">
             <div className="section-head">
@@ -249,4 +292,25 @@ function collectionTag(value: OverdueCase['collectionStatus']) {
     BAD_DEBT: '坏账'
   };
   return <Tag>{map[value]}</Tag>;
+}
+
+function externalOrderStatusTag(value: ExternalRentalOrder['orderStatus']) {
+  const map: Record<ExternalRentalOrder['orderStatus'], { text: string; color: string }> = {
+    ACTIVE: { text: '进行中', color: 'green' },
+    COMPLETED: { text: '已完成', color: 'blue' },
+    TERMINATED: { text: '已终止', color: 'default' }
+  };
+  const item = map[value];
+  return <Tag color={item.color}>{item.text}</Tag>;
+}
+
+function externalSourceText(value: ExternalRentalOrder['sourcePlatform']) {
+  const map: Record<ExternalRentalOrder['sourcePlatform'], string> = {
+    DOUYIN: '抖音',
+    MEITUAN: '美团',
+    XIANYU: '闲鱼',
+    OFFLINE: '线下',
+    OTHER: '其他'
+  };
+  return map[value];
 }

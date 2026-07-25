@@ -164,6 +164,24 @@ public class AssetService {
         return updateAssetInternal(asset, request);
     }
 
+    @Transactional
+    public void deleteAsset(Long assetId) {
+        authorizationService.requirePermission("asset.manage");
+        authorizationService.requirePlatformAccount();
+        deleteAssetInternal(ensureAssetExists(assetId));
+    }
+
+    @Transactional
+    public void deleteMerchantAsset(Long storeId, Long assetId) {
+        authorizationService.requirePermission("asset.manage");
+        var store = requireActiveAccessibleStore(storeId);
+        var asset = ensureAssetExists(assetId);
+        if (!store.merchantId().equals(asset.currentMerchantId()) || !store.id().equals(asset.currentStoreId())) {
+            throw BusinessException.forbidden("只能删除当前门店的资产");
+        }
+        deleteAssetInternal(asset);
+    }
+
     public AssetBatchImportResponse batchImportAssets(AssetBatchImportRequest request) {
         authorizationService.requirePermission("asset.import");
         authorizationService.requirePlatformAccount();
@@ -433,6 +451,16 @@ public class AssetService {
         }
         assetRepository.insertStatusLog(asset.id(), asset.status(), asset.status(), currentAccountId(), "编辑资产基础资料");
         return toResponse(updated);
+    }
+
+    private void deleteAssetInternal(AssetItem asset) {
+        if (asset.status() != AssetStatus.IDLE) {
+            throw BusinessException.badRequest("只有空闲且尚未投入业务的资产可以删除");
+        }
+        if (assetRepository.countBusinessReferences(asset.id()) > 0) {
+            throw BusinessException.badRequest("资产已有订单、履约、维修或结算记录，不能删除");
+        }
+        assetRepository.deleteAsset(asset.id());
     }
 
     private MerchantStore requireAccessibleStore(Long storeId) {

@@ -6,6 +6,9 @@ import java.time.LocalDateTime;
 public record SettlementIncomeEntry(
     Long id,
     String entryNo,
+    SnapshotSourceType sourceType,
+    Long sourceId,
+    String sourceNo,
     Long orderId,
     Long snapshotId,
     Long merchantId,
@@ -16,6 +19,7 @@ public record SettlementIncomeEntry(
     BigDecimal amount,
     IncomeEntryStatus entryStatus,
     String remark,
+    LocalDateTime occurredAt,
     LocalDateTime settledAt,
     LocalDateTime createdAt
 ) {

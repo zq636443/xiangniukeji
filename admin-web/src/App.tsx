@@ -33,6 +33,7 @@ import {
   Menu,
   Select,
   Segmented,
+  Spin,
   message,
   theme,
   Typography
@@ -225,6 +226,7 @@ export default function App() {
   const [activeMenu, setActiveMenu] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [merchantStores, setMerchantStores] = useState<Store[]>([]);
+  const [merchantStoresLoading, setMerchantStoresLoading] = useState(false);
   const [activeStoreId, setActiveStoreId] = useState<number>();
   const [loginForm] = Form.useForm<{ username: string; password: string }>();
 
@@ -297,6 +299,7 @@ export default function App() {
   useEffect(() => {
     if (!account || workspaceMode !== 'merchant') {
       setMerchantStores([]);
+      setMerchantStoresLoading(false);
       setActiveStoreId(undefined);
       return;
     }
@@ -304,6 +307,7 @@ export default function App() {
   }, [account, workspaceMode]);
 
   async function loadMerchantStores(currentAccount: CurrentAccount) {
+    setMerchantStoresLoading(true);
     try {
       const stores = await http.get<unknown, Store[]>('/api/merchant/workbench/stores');
       setMerchantStores(stores);
@@ -313,6 +317,8 @@ export default function App() {
       message.error(error instanceof Error ? error.message : '门店列表加载失败');
       setMerchantStores([]);
       setActiveStoreId(undefined);
+    } finally {
+      setMerchantStoresLoading(false);
     }
   }
 
@@ -346,6 +352,7 @@ export default function App() {
       localStorage.removeItem('xniu_admin_token');
       setAccount(null);
       setMerchantStores([]);
+      setMerchantStoresLoading(false);
       setActiveStoreId(undefined);
       setLoginMode('merchant');
       loginForm.resetFields();
@@ -520,7 +527,11 @@ export default function App() {
             </div>
           </Layout.Header>
           <Layout.Content className="content">
-            {renderPage(activeMenu, account, workspaceMode, activeStoreId, merchantStores)}
+            {workspaceMode === 'merchant' && merchantStoresLoading ? (
+              <div style={{ minHeight: 320, display: 'grid', placeItems: 'center' }}>
+                <Spin size="large" tip="正在加载门店范围" />
+              </div>
+            ) : renderPage(activeMenu, account, workspaceMode, activeStoreId, merchantStores)}
           </Layout.Content>
         </Layout>
       </Layout>

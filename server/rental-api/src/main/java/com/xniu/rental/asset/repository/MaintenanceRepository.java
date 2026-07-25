@@ -281,18 +281,22 @@ public class MaintenanceRepository {
 
     public Optional<MaintenanceRow> findMaintenance(Long id) {
         return jdbcTemplate.query("""
-            SELECT r.*, a.asset_code, a.asset_type, a.serial_no
+            SELECT r.*, a.asset_code, a.asset_type, a.serial_no,
+                   COALESCE(t.type_name, a.asset_type) AS asset_type_name
             FROM asset_maintenance_record r
             JOIN asset_item a ON a.id = r.asset_id
+            LEFT JOIN asset_type_definition t ON t.id = a.asset_type_id
             WHERE r.id = ?
             """, maintenanceMapper, id).stream().findFirst();
     }
 
     public List<MaintenanceRow> listMaintenances(Long assetId, Long orderId) {
         var sql = new StringBuilder("""
-            SELECT r.*, a.asset_code, a.asset_type, a.serial_no
+            SELECT r.*, a.asset_code, a.asset_type, a.serial_no,
+                   COALESCE(t.type_name, a.asset_type) AS asset_type_name
             FROM asset_maintenance_record r
             JOIN asset_item a ON a.id = r.asset_id
+            LEFT JOIN asset_type_definition t ON t.id = a.asset_type_id
             WHERE 1 = 1
             """);
         var params = new ArrayList<Object>();
@@ -394,6 +398,7 @@ public class MaintenanceRepository {
                 rs.getLong("asset_id"),
                 rs.getString("asset_code"),
                 rs.getString("asset_type"),
+                rs.getString("asset_type_name"),
                 rs.getString("serial_no"),
                 getNullableLong(rs, "order_id"),
                 getNullableLong(rs, "store_id"),
@@ -488,6 +493,7 @@ public class MaintenanceRepository {
         Long assetId,
         String assetCode,
         String assetType,
+        String assetTypeName,
         String serialNo,
         Long orderId,
         Long storeId,

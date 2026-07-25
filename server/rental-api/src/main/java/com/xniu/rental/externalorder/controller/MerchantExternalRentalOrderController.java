@@ -7,6 +7,7 @@ import com.xniu.rental.externalorder.dto.ExternalRentalOrderBatchImportRequest;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderBatchImportResponse;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderResponse;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderTerminateRequest;
+import com.xniu.rental.externalorder.dto.ExternalRentalOrderUpdateRequest;
 import com.xniu.rental.externalorder.service.ExternalRentalOrderService;
 import com.xniu.rental.merchant.service.MerchantService;
 import jakarta.validation.Valid;
@@ -14,6 +15,7 @@ import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -50,6 +52,14 @@ public class MerchantExternalRentalOrderController {
     @PostMapping
     public ApiResponse<ExternalRentalOrderResponse> createOrder(@Valid @RequestBody ExternalRentalOrderCreateRequest request) {
         return ApiResponse.ok(externalRentalOrderService.createOrder(request));
+    }
+
+    @PutMapping("/{id}")
+    public ApiResponse<ExternalRentalOrderResponse> updateOrder(
+        @PathVariable Long id,
+        @Valid @RequestBody ExternalRentalOrderUpdateRequest request
+    ) {
+        return ApiResponse.ok(externalRentalOrderService.updateOrder(id, request));
     }
 
     @PostMapping("/batch-import")

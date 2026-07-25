@@ -7,6 +7,13 @@ import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.auth.repository.AccountRepository;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.AuthorizationService;
+import com.xniu.rental.bill.model.BillGenerationType;
+import com.xniu.rental.bill.model.BillItemType;
+import com.xniu.rental.bill.model.BillOperationType;
+import com.xniu.rental.bill.model.BillStatus;
+import com.xniu.rental.bill.model.BillType;
+import com.xniu.rental.bill.model.RentalBill;
+import com.xniu.rental.bill.repository.BillRepository;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.merchant.model.MerchantStatus;
 import com.xniu.rental.merchant.model.StoreStatus;
@@ -21,6 +28,7 @@ import com.xniu.rental.order.dto.OrderLeaseBonusResponse;
 import com.xniu.rental.order.dto.OrderLogResponse;
 import com.xniu.rental.order.dto.OrderResponse;
 import com.xniu.rental.order.dto.OrderTransitionRequest;
+import com.xniu.rental.order.dto.OrderUpdateRequest;
 import com.xniu.rental.order.model.OrderItemType;
 import com.xniu.rental.order.model.OrderLeaseBonus;
 import com.xniu.rental.order.model.OrderLeaseBonusType;
@@ -30,14 +38,18 @@ import com.xniu.rental.order.model.RentalOrder;
 import com.xniu.rental.order.model.RentalOrderItem;
 import com.xniu.rental.order.model.RentalOrderOperationLog;
 import com.xniu.rental.order.repository.OrderRepository;
-import com.xniu.rental.product.model.StoreSkuStatus;
+import com.xniu.rental.product.model.ProductPackage;
 import com.xniu.rental.product.model.ProductStatus;
+import com.xniu.rental.product.model.StoreSku;
+import com.xniu.rental.product.model.StoreSkuPackage;
+import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
 import com.xniu.rental.settlement.service.SettlementService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -52,6 +64,7 @@ public class OrderService {
     private final MerchantRepository merchantRepository;
     private final StoreRepository storeRepository;
     private final AssetRepository assetRepository;
+    private final BillRepository billRepository;
     private final SettlementService settlementService;
     private final AuthorizationService authorizationService;
     private final OrderStateMachine stateMachine;
@@ -63,6 +76,7 @@ public class OrderService {
         MerchantRepository merchantRepository,
         StoreRepository storeRepository,
         AssetRepository assetRepository,
+        BillRepository billRepository,
         SettlementService settlementService,
         AuthorizationService authorizationService,
         OrderStateMachine stateMachine
@@ -73,6 +87,7 @@ public class OrderService {
         this.merchantRepository = merchantRepository;
         this.storeRepository = storeRepository;
         this.assetRepository = assetRepository;
+        this.billRepository = billRepository;
         this.settlementService = settlementService;
         this.authorizationService = authorizationService;
         this.stateMachine = stateMachine;
@@ -104,6 +119,19 @@ public class OrderService {
             .orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
         authorizationService.requireStoreAccess(storeSku.merchantId(), storeSku.storeId());
         return createOrderInternal(request, request.userAccountId(), true);
+    }
+
+    @Transactional
+    public OrderResponse updateOrder(Long id, OrderUpdateRequest request) {
+        authorizationService.requirePlatformAccount();
+        authorizationService.requirePermission("order.operate");
+        return updateOrderInternal(id, request);
+    }
+
+    @Transactional
+    public OrderResponse updateMerchantOrder(Long id, OrderUpdateRequest request) {
+        authorizationService.requirePermission("order.create");
+        return updateOrderInternal(id, request);
     }
 
     public List<OrderResponse> listUserOrders(String status) {
@@ -274,6 +302,265 @@ public class OrderService {
         ));
         order = orderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
         return toResponse(order);
+    }
+
+    private OrderResponse updateOrderInternal(Long id, OrderUpdateRequest request) {
+        var order = orderRepository.findByIdForUpdate(id)
+            .orElseThrow(() -> BusinessException.badRequest("订单不存在"));
+        authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
+        var bills = billRepository.listBills(null, order.id(), null);
+        assertCanEditOrder(order, bills);
+
+        var targetStoreSkuId = request.storeSkuId() == null ? order.storeSkuId() : request.storeSkuId();
+        var targetPackageId = request.packageId() == null ? order.packageId() : request.packageId();
+        var productSelectionChanged = !order.storeSkuId().equals(targetStoreSkuId)
+            || !order.packageId().equals(targetPackageId);
+        var product = resolveEditableProduct(targetStoreSkuId, targetPackageId, productSelectionChanged);
+        authorizationService.requireStoreAccess(product.storeSku().merchantId(), product.storeSku().storeId());
+        var frameAsset = validateOrderAsset(
+            request.frameAssetId(),
+            AssetType.VEHICLE_FRAME,
+            product.storeSku().merchantId(),
+            product.storeSku().storeId()
+        );
+        if (frameAsset != null && frameAsset.assetType().isIntegratedVehicle() && request.batteryAssetId() != null) {
+            throw BusinessException.badRequest("车电一体资产只需绑定主资产，无需再选择电池资产");
+        }
+        validateOrderAsset(
+            request.batteryAssetId(),
+            AssetType.BATTERY,
+            product.storeSku().merchantId(),
+            product.storeSku().storeId()
+        );
+
+        var customer = resolveCustomer(request.userAccountId(), request.customerName(), request.customerPhone());
+        var orderedAt = resolveOrderedAt(request.orderedAt() == null ? order.orderedAt() : request.orderedAt(), true);
+        var signFeeAmount = productSelectionChanged ? product.storeSku().signFeeAmount() : order.signFeeAmount();
+        var depositAmount = productSelectionChanged ? product.packagePrice().depositAmount() : order.depositAmount();
+        var verificationAmount = normalizeVerificationAmount(
+            request.verificationAmount(),
+            productSelectionChanged ? product.packagePrice().rentalAmount() : order.verificationAmount()
+        );
+        var payableAmount = verificationAmount
+            .add(signFeeAmount)
+            .add(depositAmount);
+        var updated = orderRepository.updateEditableDetails(new OrderRepository.EditableOrderRow(
+            order.id(),
+            request.userAccountId(),
+            customer.name(),
+            customer.phone(),
+            product.storeSku().merchantId(),
+            product.storeSku().storeId(),
+            product.storeSku().id(),
+            product.storeSku().skuId(),
+            product.packageTemplate().id(),
+            request.frameAssetId(),
+            request.batteryAssetId(),
+            verificationAmount,
+            verificationAmount,
+            signFeeAmount,
+            depositAmount,
+            payableAmount,
+            productSelectionChanged ? product.packageTemplate().leaseUnit().name() : order.leaseUnit(),
+            productSelectionChanged ? product.packageTemplate().leaseValue() : order.leaseValue(),
+            productSelectionChanged ? product.packageTemplate().totalPeriods() : order.totalPeriods(),
+            productSelectionChanged ? product.packageTemplate().billDayMode().name() : order.billDayMode(),
+            productSelectionChanged ? product.packageTemplate().billDay() : order.billDay(),
+            orderedAt,
+            productSelectionChanged ? product.packagePrice().autoRenewEnabled() : order.autoRenewEnabled(),
+            productSelectionChanged
+                ? product.packagePrice().renewalUnit() == null ? null : product.packagePrice().renewalUnit().name()
+                : order.renewalUnit(),
+            productSelectionChanged ? product.packagePrice().renewalValue() : order.renewalValue(),
+            productSelectionChanged ? product.packagePrice().renewalAmount() : order.renewalAmount()
+        ));
+
+        replaceEditableOrderItems(updated, frameAsset);
+        rebuildEditableOrderBills(updated);
+        var snapshot = settlementService.createOrderSnapshot(new SnapshotCreateRequest(
+            "ORDER",
+            updated.id(),
+            updated.storeSkuId(),
+            updated.frameAssetId(),
+            updated.batteryAssetId(),
+            updated.verificationAmount(),
+            "DIRECT"
+        ));
+        updated = orderRepository.updateSettlementSnapshot(updated.id(), snapshot.id());
+        orderRepository.addLog(
+            updated.id(),
+            updated.orderStatus(),
+            updated.orderStatus(),
+            OrderOperationType.EDIT,
+            currentAccountId(),
+            "编辑待支付订单资料并重建账单计划"
+        );
+        return toResponse(updated);
+    }
+
+    private EditableProductSelection resolveEditableProduct(Long storeSkuId, Long packageId, boolean requireActive) {
+        var storeSku = productRepository.findStoreSku(storeSkuId)
+            .orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
+        if (requireActive && storeSku.status() != StoreSkuStatus.ON_SHELF) {
+            throw BusinessException.badRequest("门店商品未上架");
+        }
+        var merchant = merchantRepository.findById(storeSku.merchantId())
+            .orElseThrow(() -> BusinessException.badRequest("商户不存在"));
+        if (requireActive && merchant.status() != MerchantStatus.ENABLED) {
+            throw BusinessException.badRequest("商户已停用");
+        }
+        var store = storeRepository.findById(storeSku.storeId())
+            .orElseThrow(() -> BusinessException.badRequest("门店不存在"));
+        if (requireActive && store.status() != StoreStatus.ENABLED) {
+            throw BusinessException.badRequest("门店已停用");
+        }
+        if (!store.merchantId().equals(storeSku.merchantId())) {
+            throw BusinessException.badRequest("门店商品商户关系异常");
+        }
+        var sku = productRepository.findSku(storeSku.skuId())
+            .orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
+        if (requireActive && sku.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("商品链接已停用");
+        }
+        var packagePrice = productRepository.listStoreSkuPackages(storeSku.id()).stream()
+            .filter(item -> item.packageId().equals(packageId))
+            .findFirst()
+            .orElseThrow(() -> BusinessException.badRequest("门店商品未配置该 SKU 价格"));
+        if (requireActive && packagePrice.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("门店 SKU 已停用");
+        }
+        var packageTemplate = productRepository.findPackage(packageId)
+            .orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
+        if (requireActive && packageTemplate.status() != ProductStatus.ENABLED) {
+            throw BusinessException.badRequest("SKU 已停用");
+        }
+        if (!packageTemplate.skuId().equals(storeSku.skuId())) {
+            throw BusinessException.badRequest("SKU 不属于所选商品链接");
+        }
+        return new EditableProductSelection(storeSku, packagePrice, packageTemplate);
+    }
+
+    private void assertCanEditOrder(RentalOrder order, List<RentalBill> bills) {
+        if (order.orderStatus() != OrderStatus.PENDING_PAYMENT) {
+            throw BusinessException.badRequest("只有待支付订单可以编辑；已进入履约流程的订单请使用对应业务操作");
+        }
+        if (order.paidAmount() != null && order.paidAmount().signum() > 0) {
+            throw BusinessException.badRequest("订单已产生付款，不能直接编辑");
+        }
+        if (billRepository.hasFinancialActivity(order.id())) {
+            throw BusinessException.badRequest("订单已发起支付、代扣或核销，不能直接编辑");
+        }
+        var unsafeBill = bills.stream().anyMatch(bill ->
+            bill.billStatus() != BillStatus.PENDING_PAYMENT
+                || bill.paidAmount().signum() > 0
+                || (bill.billType() != BillType.INITIAL && bill.billType() != BillType.PERIODIC)
+        );
+        if (unsafeBill) {
+            throw BusinessException.badRequest("订单账单已进入支付或异常流程，不能直接编辑");
+        }
+    }
+
+    private void replaceEditableOrderItems(RentalOrder order, AssetItem frameAsset) {
+        var storeSku = productRepository.findStoreSku(order.storeSkuId())
+            .orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
+        orderRepository.deleteItems(order.id());
+        orderRepository.addItem(order.id(), OrderItemType.SKU, storeSku.id(), storeSku.displayName(), 1, order.verificationAmount(), order.verificationAmount());
+        orderRepository.addItem(order.id(), OrderItemType.SIGN_FEE, null, "签单费", 1, order.signFeeAmount(), order.signFeeAmount());
+        if (order.depositAmount().signum() > 0) {
+            orderRepository.addItem(order.id(), OrderItemType.DEPOSIT, null, "押金", 1, order.depositAmount(), order.depositAmount());
+        }
+        if (order.frameAssetId() != null) {
+            orderRepository.addItem(order.id(), OrderItemType.ASSET_FRAME, order.frameAssetId(), frameAsset.assetTypeName() + "资产", 1, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+        if (order.batteryAssetId() != null) {
+            orderRepository.addItem(order.id(), OrderItemType.ASSET_BATTERY, order.batteryAssetId(), "电池资产", 1, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+    }
+
+    private void rebuildEditableOrderBills(RentalOrder order) {
+        billRepository.deleteEditablePlan(order.id());
+        var totalPeriods = Math.max(order.totalPeriods() == null ? 1 : order.totalPeriods(), 1);
+        var batchNo = nextBillBatchNo();
+        for (var periodNo = 1; periodNo <= totalPeriods; periodNo++) {
+            var billType = periodNo == 1 ? BillType.INITIAL : BillType.PERIODIC;
+            var rentAmount = editablePeriodRentAmount(order, periodNo);
+            var payableAmount = billType == BillType.INITIAL
+                ? rentAmount.add(order.signFeeAmount()).add(order.depositAmount()).setScale(2, RoundingMode.HALF_UP)
+                : rentAmount;
+            var dueAt = billType == BillType.INITIAL
+                ? order.orderedAt()
+                : editablePeriodDueAt(order, periodNo);
+            var bill = billRepository.createBill(new BillRepository.BillCreateRow(
+                nextBillNo(),
+                order.id(),
+                order.userAccountId(),
+                order.merchantId(),
+                order.storeId(),
+                billType,
+                periodNo,
+                BillStatus.PENDING_PAYMENT,
+                dueAt,
+                payableAmount,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                "订单编辑后重建账单计划",
+                batchNo
+            ));
+            billRepository.addItem(
+                bill.id(),
+                BillItemType.RENT,
+                billType == BillType.INITIAL ? "首期租金" : "第 " + periodNo + " 期租金",
+                rentAmount
+            );
+            if (billType == BillType.INITIAL && order.signFeeAmount().signum() > 0) {
+                billRepository.addItem(bill.id(), BillItemType.SIGN_FEE, "签单费", order.signFeeAmount());
+            }
+            if (billType == BillType.INITIAL && order.depositAmount().signum() > 0) {
+                billRepository.addItem(bill.id(), BillItemType.DEPOSIT, "押金", order.depositAmount());
+            }
+            billRepository.addLog(
+                bill.id(),
+                null,
+                BillStatus.PENDING_PAYMENT,
+                BillOperationType.EDIT,
+                currentAccountId(),
+                "订单编辑后重建第 " + periodNo + " 期账单"
+            );
+        }
+        billRepository.createBatch(
+            batchNo,
+            BillGenerationType.PLAN,
+            order.id(),
+            totalPeriods,
+            "订单编辑后重建账单计划"
+        );
+    }
+
+    private BigDecimal editablePeriodRentAmount(RentalOrder order, int periodNo) {
+        var totalPeriods = Math.max(order.totalPeriods() == null ? 1 : order.totalPeriods(), 1);
+        var base = order.rentalAmount().divide(BigDecimal.valueOf(totalPeriods), 2, RoundingMode.DOWN);
+        if (periodNo == totalPeriods) {
+            return order.rentalAmount().subtract(base.multiply(BigDecimal.valueOf(totalPeriods - 1))).setScale(2, RoundingMode.HALF_UP);
+        }
+        return base.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private LocalDateTime editablePeriodDueAt(RentalOrder order, int periodNo) {
+        var base = order.expectedPickupAt();
+        if (base == null) {
+            base = order.orderedAt() != null ? order.orderedAt() : order.createdAt();
+        }
+        if ("MONTH".equals(order.leaseUnit())) {
+            var target = base.plusMonths(periodNo - 1L);
+            if ("FIXED_DAY".equals(order.billDayMode()) && order.billDay() != null) {
+                var yearMonth = YearMonth.from(target);
+                target = target.withDayOfMonth(Math.min(order.billDay(), yearMonth.lengthOfMonth()));
+            }
+            return target;
+        }
+        var totalPeriods = Math.max(order.totalPeriods() == null ? 1 : order.totalPeriods(), 1);
+        var stepDays = Math.max(1, order.leaseValue() / totalPeriods);
+        return base.plusDays((long) stepDays * (periodNo - 1L));
     }
 
     @Transactional
@@ -548,6 +835,13 @@ public class OrderService {
     private record CustomerSnapshot(String name, String phone) {
     }
 
+    private record EditableProductSelection(
+        StoreSku storeSku,
+        StoreSkuPackage packagePrice,
+        ProductPackage packageTemplate
+    ) {
+    }
+
     private OrderItemResponse toItemResponse(RentalOrderItem item) {
         return new OrderItemResponse(item.id(), item.itemType().name(), item.refId(), item.itemName(), item.quantity(), item.unitAmount(), item.totalAmount());
     }
@@ -584,5 +878,13 @@ public class OrderService {
 
     private String nextOrderNo() {
         return "ORD-" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private String nextBillNo() {
+        return "BIL-" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private String nextBillBatchNo() {
+        return "BGB-" + UUID.randomUUID().toString().substring(0, 8);
     }
 }

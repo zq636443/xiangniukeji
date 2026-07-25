@@ -4,6 +4,7 @@ import com.xniu.rental.settlement.model.IncomeBeneficiaryType;
 import com.xniu.rental.settlement.model.IncomeEntryStatus;
 import com.xniu.rental.settlement.model.IncomeLineType;
 import com.xniu.rental.settlement.model.SettlementIncomeEntry;
+import com.xniu.rental.settlement.model.SnapshotSourceType;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -59,6 +60,23 @@ public class SettlementIncomeRepository {
         return list.stream().findFirst();
     }
 
+    public List<SettlementIncomeEntry> listBySource(SnapshotSourceType sourceType, Long sourceId) {
+        return jdbcTemplate.query("""
+            SELECT *
+            FROM settlement_income_entry
+            WHERE source_type = ? AND source_id = ?
+            ORDER BY id DESC
+            """, mapper, sourceType.name(), sourceId);
+    }
+
+    public void deleteBySource(SnapshotSourceType sourceType, Long sourceId) {
+        jdbcTemplate.update(
+            "DELETE FROM settlement_income_entry WHERE source_type = ? AND source_id = ?",
+            sourceType.name(),
+            sourceId
+        );
+    }
+
     public boolean exists(Long snapshotId, IncomeBeneficiaryType beneficiaryType, Long beneficiaryId, IncomeLineType lineType) {
         var count = jdbcTemplate.queryForObject("""
             SELECT COUNT(1) FROM settlement_income_entry
@@ -75,20 +93,24 @@ public class SettlementIncomeRepository {
         jdbcTemplate.update(connection -> {
             var statement = connection.prepareStatement("""
                 INSERT INTO settlement_income_entry
-                (entry_no, order_id, snapshot_id, merchant_id, store_id, beneficiary_type, beneficiary_id,
-                 line_type, amount, entry_status, remark)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+                (entry_no, source_type, source_id, source_no, order_id, snapshot_id, merchant_id, store_id,
+                 beneficiary_type, beneficiary_id, line_type, amount, entry_status, remark, occurred_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.entryNo());
-            statement.setLong(2, row.orderId());
-            statement.setLong(3, row.snapshotId());
-            statement.setLong(4, row.merchantId());
-            statement.setLong(5, row.storeId());
-            statement.setString(6, row.beneficiaryType().name());
-            statement.setLong(7, row.beneficiaryId());
-            statement.setString(8, row.lineType().name());
-            statement.setBigDecimal(9, row.amount());
-            statement.setString(10, row.remark());
+            statement.setString(2, row.sourceType().name());
+            statement.setLong(3, row.sourceId());
+            statement.setString(4, row.sourceNo());
+            setNullableLong(statement, 5, row.orderId());
+            statement.setLong(6, row.snapshotId());
+            statement.setLong(7, row.merchantId());
+            statement.setLong(8, row.storeId());
+            statement.setString(9, row.beneficiaryType().name());
+            setNullableLong(statement, 10, row.beneficiaryId());
+            statement.setString(11, row.lineType().name());
+            statement.setBigDecimal(12, row.amount());
+            statement.setString(13, row.remark());
+            statement.setObject(14, row.occurredAt());
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue());
@@ -106,6 +128,9 @@ public class SettlementIncomeRepository {
 
     public record CreateRow(
         String entryNo,
+        SnapshotSourceType sourceType,
+        Long sourceId,
+        String sourceNo,
         Long orderId,
         Long snapshotId,
         Long merchantId,
@@ -114,8 +139,22 @@ public class SettlementIncomeRepository {
         Long beneficiaryId,
         IncomeLineType lineType,
         BigDecimal amount,
-        String remark
+        String remark,
+        LocalDateTime occurredAt
     ) {
+    }
+
+    private static void setNullableLong(java.sql.PreparedStatement statement, int index, Long value) throws SQLException {
+        if (value == null) {
+            statement.setObject(index, null);
+        } else {
+            statement.setLong(index, value);
+        }
+    }
+
+    private static Long getNullableLong(ResultSet rs, String column) throws SQLException {
+        var value = rs.getLong(column);
+        return rs.wasNull() ? null : value;
     }
 
     private static class EntryMapper implements RowMapper<SettlementIncomeEntry> {
@@ -124,7 +163,10 @@ public class SettlementIncomeRepository {
             return new SettlementIncomeEntry(
                 rs.getLong("id"),
                 rs.getString("entry_no"),
-                rs.getLong("order_id"),
+                SnapshotSourceType.valueOf(rs.getString("source_type")),
+                rs.getLong("source_id"),
+                rs.getString("source_no"),
+                getNullableLong(rs, "order_id"),
                 rs.getLong("snapshot_id"),
                 rs.getLong("merchant_id"),
                 rs.getLong("store_id"),
@@ -134,6 +176,7 @@ public class SettlementIncomeRepository {
                 rs.getBigDecimal("amount"),
                 IncomeEntryStatus.valueOf(rs.getString("entry_status")),
                 rs.getString("remark"),
+                rs.getObject("occurred_at", LocalDateTime.class),
                 rs.getObject("settled_at", LocalDateTime.class),
                 rs.getObject("created_at", LocalDateTime.class)
             );

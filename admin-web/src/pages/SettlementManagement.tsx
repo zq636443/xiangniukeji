@@ -587,13 +587,15 @@ export function SettlementManagement() {
           pagination={{ pageSize: 10 }}
           columns={[
             { title: '收益单号', dataIndex: 'entryNo' },
-            { title: '订单', dataIndex: 'orderId' },
+            { title: '来源', dataIndex: 'sourceType', render: (value) => value === 'EXTERNAL_ORDER' ? <Tag color="purple">补录订单</Tag> : <Tag color="blue">正式订单</Tag> },
+            { title: '业务单号', render: (_, record) => record.sourceNo || record.sourceId },
             { title: '收益方', dataIndex: 'beneficiaryType', render: beneficiaryText },
             { title: '收益方 ID', dataIndex: 'beneficiaryId', render: (value) => value ?? '-' },
             { title: '类型', dataIndex: 'lineType', render: lineTypeText },
             { title: '金额', dataIndex: 'amount', render: money },
             { title: '状态', dataIndex: 'entryStatus', render: incomeStatusTag },
             { title: '备注', dataIndex: 'remark', render: (value) => value || '-' },
+            { title: '计入时间', dataIndex: 'occurredAt', render: (value) => value || '-' },
             { title: '结算时间', dataIndex: 'settledAt', render: (value) => value || '-' },
             {
               title: '操作',
@@ -713,6 +715,8 @@ export function SettlementManagement() {
           columns={[
             { title: '明细号', dataIndex: 'lineNo' },
             { title: '类型', dataIndex: 'lineType', render: statementLineText },
+            { title: '来源', dataIndex: 'sourceType', render: (value) => value === 'EXTERNAL_ORDER' ? <Tag color="purple">补录订单</Tag> : <Tag color="blue">正式订单/账单</Tag> },
+            { title: '来源ID', dataIndex: 'sourceId' },
             { title: '订单', dataIndex: 'orderId', render: (value) => value ?? '-' },
             { title: '账单', dataIndex: 'billId', render: (value) => value ?? '-' },
             { title: '资产', dataIndex: 'assetId', render: (value) => value ?? '-' },

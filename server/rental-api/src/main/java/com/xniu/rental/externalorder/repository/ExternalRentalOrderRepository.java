@@ -97,6 +97,20 @@ public class ExternalRentalOrderRepository {
         return list.stream().findFirst();
     }
 
+    public Optional<ExternalRentalOrder> findByIdForUpdate(Long id) {
+        var list = jdbcTemplate.query("SELECT * FROM external_rental_order WHERE id = ? FOR UPDATE", orderMapper, id);
+        return list.stream().findFirst();
+    }
+
+    public List<Long> listIdsWithoutSettlementSnapshot() {
+        return jdbcTemplate.queryForList("""
+            SELECT id
+            FROM external_rental_order
+            WHERE settlement_snapshot_id IS NULL
+            ORDER BY id
+            """, Long.class);
+    }
+
     public Optional<ExternalRentalOrderView> findViewById(Long id) {
         var list = jdbcTemplate.query("""
             SELECT eo.*,
@@ -214,6 +228,51 @@ public class ExternalRentalOrderRepository {
         return findById(id).orElseThrow();
     }
 
+    public ExternalRentalOrder update(UpdateRow row) {
+        jdbcTemplate.update("""
+            UPDATE external_rental_order
+            SET source_platform = ?,
+                external_order_no = ?,
+                merchant_id = ?,
+                store_id = ?,
+                store_sku_id = ?,
+                sku_id = ?,
+                package_id = ?,
+                customer_name = ?,
+                customer_phone = ?,
+                frame_asset_id = ?,
+                battery_asset_id = ?,
+                external_rental_amount = ?,
+                verification_amount = ?,
+                sign_fee_amount = ?,
+                deposit_amount = ?,
+                lease_unit = ?,
+                lease_value = ?,
+                total_periods = ?,
+                rent_started_at = ?,
+                expected_return_at = ?,
+                remark = ?,
+                updated_by_account_id = ?
+            WHERE id = ?
+            """,
+            row.sourcePlatform().name(), row.externalOrderNo(), row.merchantId(), row.storeId(), row.storeSkuId(),
+            row.skuId(), row.packageId(), row.customerName(), row.customerPhone(), row.frameAssetId(), row.batteryAssetId(),
+            row.externalRentalAmount(), row.verificationAmount(), row.signFeeAmount(), row.depositAmount(), row.leaseUnit(),
+            row.leaseValue(), row.totalPeriods(), row.rentStartedAt(), row.expectedReturnAt(), row.remark(),
+            row.updatedByAccountId(), row.id()
+        );
+        return findById(row.id()).orElseThrow();
+    }
+
+    public ExternalRentalOrder updateSettlementSnapshot(Long id, Long settlementSnapshotId) {
+        jdbcTemplate.update(
+            "UPDATE external_rental_order SET settlement_snapshot_id = ? WHERE id = ?",
+            settlementSnapshotId,
+            id
+        );
+        return findById(id).orElseThrow();
+    }
+
     public List<ExternalRentalOrderLog> listLogs(Long externalOrderId) {
         return jdbcTemplate.query("""
             SELECT *
@@ -264,6 +323,7 @@ public class ExternalRentalOrderRepository {
                 ExternalRentalOrderStatus.valueOf(rs.getString("order_status")),
                 rs.getBigDecimal("external_rental_amount"),
                 rs.getBigDecimal("verification_amount"),
+                getNullableLong(rs, "settlement_snapshot_id"),
                 rs.getBigDecimal("sign_fee_amount"),
                 rs.getBigDecimal("deposit_amount"),
                 rs.getString("lease_unit"),
@@ -342,6 +402,33 @@ public class ExternalRentalOrderRepository {
         LocalDateTime expectedReturnAt,
         String remark,
         Long createdByAccountId,
+        Long updatedByAccountId
+    ) {
+    }
+
+    public record UpdateRow(
+        Long id,
+        ExternalOrderSourcePlatform sourcePlatform,
+        String externalOrderNo,
+        Long merchantId,
+        Long storeId,
+        Long storeSkuId,
+        Long skuId,
+        Long packageId,
+        String customerName,
+        String customerPhone,
+        Long frameAssetId,
+        Long batteryAssetId,
+        BigDecimal externalRentalAmount,
+        BigDecimal verificationAmount,
+        BigDecimal signFeeAmount,
+        BigDecimal depositAmount,
+        String leaseUnit,
+        Integer leaseValue,
+        Integer totalPeriods,
+        LocalDateTime rentStartedAt,
+        LocalDateTime expectedReturnAt,
+        String remark,
         Long updatedByAccountId
     ) {
     }

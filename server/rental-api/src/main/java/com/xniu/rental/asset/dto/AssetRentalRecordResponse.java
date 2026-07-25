@@ -18,6 +18,7 @@ public record AssetRentalRecordResponse(
     Long frameAssetId,
     Long batteryAssetId,
     BigDecimal rentalAmount,
+    BigDecimal verificationAmount,
     BigDecimal signFeeAmount,
     BigDecimal paidAmount,
     String leaseUnit,

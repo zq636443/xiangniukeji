@@ -10,6 +10,7 @@ public record AssetMaintenanceResponse(
     Long assetId,
     String assetCode,
     String assetType,
+    String assetTypeName,
     String serialNo,
     Long orderId,
     Long storeId,

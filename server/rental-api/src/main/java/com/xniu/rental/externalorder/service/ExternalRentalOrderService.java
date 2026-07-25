@@ -16,6 +16,7 @@ import com.xniu.rental.externalorder.dto.ExternalRentalOrderImportRowResultRespo
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderLogResponse;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderResponse;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderTerminateRequest;
+import com.xniu.rental.externalorder.dto.ExternalRentalOrderUpdateRequest;
 import com.xniu.rental.externalorder.model.ExternalOrderOperationType;
 import com.xniu.rental.externalorder.model.ExternalOrderSourcePlatform;
 import com.xniu.rental.externalorder.model.ExternalRentalOrder;
@@ -35,17 +36,25 @@ import com.xniu.rental.product.model.StoreSku;
 import com.xniu.rental.product.model.StoreSkuPackage;
 import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
+import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
+import com.xniu.rental.settlement.repository.SettlementRepository;
+import com.xniu.rental.settlement.service.SettlementIncomeService;
+import com.xniu.rental.settlement.service.SettlementService;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class ExternalRentalOrderService {
+
+    private static final Logger log = LoggerFactory.getLogger(ExternalRentalOrderService.class);
 
     private final ExternalRentalOrderRepository externalRentalOrderRepository;
     private final ProductRepository productRepository;
@@ -54,6 +63,9 @@ public class ExternalRentalOrderService {
     private final StoreRepository storeRepository;
     private final MerchantRepository merchantRepository;
     private final AuthorizationService authorizationService;
+    private final SettlementService settlementService;
+    private final SettlementIncomeService settlementIncomeService;
+    private final SettlementRepository settlementRepository;
     private final TransactionTemplate transactionTemplate;
 
     public ExternalRentalOrderService(
@@ -64,6 +76,9 @@ public class ExternalRentalOrderService {
         StoreRepository storeRepository,
         MerchantRepository merchantRepository,
         AuthorizationService authorizationService,
+        SettlementService settlementService,
+        SettlementIncomeService settlementIncomeService,
+        SettlementRepository settlementRepository,
         TransactionTemplate transactionTemplate
     ) {
         this.externalRentalOrderRepository = externalRentalOrderRepository;
@@ -73,6 +88,9 @@ public class ExternalRentalOrderService {
         this.storeRepository = storeRepository;
         this.merchantRepository = merchantRepository;
         this.authorizationService = authorizationService;
+        this.settlementService = settlementService;
+        this.settlementIncomeService = settlementIncomeService;
+        this.settlementRepository = settlementRepository;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -120,6 +138,77 @@ public class ExternalRentalOrderService {
         return createOrderInternal(request);
     }
 
+    @Transactional
+    public ExternalRentalOrderResponse updateOrder(Long id, ExternalRentalOrderUpdateRequest request) {
+        authorizationService.requirePermission("order.operate");
+        var order = externalRentalOrderRepository.findByIdForUpdate(id)
+            .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
+        authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
+
+        var storeSku = ensureStoreSku(request.storeSkuId());
+        authorizationService.requireStoreAccess(storeSku.merchantId(), storeSku.storeId());
+        var sku = ensureSku(storeSku.skuId());
+        var packageTemplate = ensureStoreSkuPackage(storeSku, request.packageId());
+        var packagePricing = storeSkuPackageAmount(storeSku.id(), request.packageId());
+        validateRequestAssets(request.frameAssetId(), request.batteryAssetId(), sku);
+        var expectedReturnAt = request.expectedReturnAt() == null
+            ? calculateExpectedReturnAt(request.rentStartedAt(), packageTemplate)
+            : request.expectedReturnAt();
+        if (expectedReturnAt != null && expectedReturnAt.isBefore(request.rentStartedAt())) {
+            throw BusinessException.badRequest("预计归还时间不能早于起租时间");
+        }
+
+        if (order.orderStatus() == ExternalRentalOrderStatus.ACTIVE) {
+            validateEditableAsset(request.frameAssetId(), order.frameAssetId(), AssetType.VEHICLE_FRAME, storeSku, order);
+            validateEditableAsset(request.batteryAssetId(), order.batteryAssetId(), AssetType.BATTERY, storeSku, order);
+            releaseEditedAsset(order.frameAssetId(), request.frameAssetId(), "补录订单编辑释放原主资产");
+            releaseEditedAsset(order.batteryAssetId(), request.batteryAssetId(), "补录订单编辑释放原电池");
+            occupyEditedAsset(request.frameAssetId(), order.frameAssetId(), "补录订单编辑绑定主资产");
+            occupyEditedAsset(request.batteryAssetId(), order.batteryAssetId(), "补录订单编辑绑定电池");
+        } else {
+            validateHistoricalEditableAsset(request.frameAssetId(), order.frameAssetId(), AssetType.VEHICLE_FRAME, storeSku);
+            validateHistoricalEditableAsset(request.batteryAssetId(), order.batteryAssetId(), AssetType.BATTERY, storeSku);
+        }
+
+        var externalRentalAmount = normalizeMoney(request.externalRentalAmount(), packagePricing.rentalAmount());
+        var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), externalRentalAmount);
+        var updated = externalRentalOrderRepository.update(new ExternalRentalOrderRepository.UpdateRow(
+            order.id(),
+            parseSource(request.sourcePlatform()),
+            blankToNull(request.externalOrderNo()),
+            storeSku.merchantId(),
+            storeSku.storeId(),
+            storeSku.id(),
+            storeSku.skuId(),
+            packageTemplate.id(),
+            request.customerName().trim(),
+            request.customerPhone().trim(),
+            request.frameAssetId(),
+            request.batteryAssetId(),
+            externalRentalAmount,
+            verificationAmount,
+            normalizeMoney(request.signFeeAmount(), storeSku.signFeeAmount()),
+            normalizeMoney(request.depositAmount(), packagePricing.depositAmount()),
+            packageTemplate.leaseUnit().name(),
+            packageTemplate.leaseValue(),
+            packageTemplate.totalPeriods(),
+            request.rentStartedAt(),
+            expectedReturnAt,
+            blankToNull(request.remark()),
+            currentAccountId()
+        ));
+        updated = createAndSyncSettlement(updated);
+        externalRentalOrderRepository.addLog(
+            updated.id(),
+            updated.orderStatus(),
+            updated.orderStatus(),
+            ExternalOrderOperationType.EDIT,
+            currentAccountId(),
+            "编辑补录订单资料"
+        );
+        return toResponse(ensureView(updated.id()));
+    }
+
     public ExternalRentalOrderBatchImportResponse batchImport(ExternalRentalOrderBatchImportRequest request) {
         authorizationService.requirePermission("order.operate");
         var results = new ArrayList<ExternalRentalOrderImportRowResultResponse>();
@@ -162,7 +251,7 @@ public class ExternalRentalOrderService {
         var sku = ensureSku(storeSku.skuId());
         var packageTemplate = ensureStoreSkuPackage(storeSku, request.packageId());
         var packagePricing = storeSkuPackageAmount(storeSku.id(), request.packageId());
-        validateRequestAssets(request, sku);
+        validateRequestAssets(request.frameAssetId(), request.batteryAssetId(), sku);
         var expectedReturnAt = request.expectedReturnAt() == null ? calculateExpectedReturnAt(request.rentStartedAt(), packageTemplate) : request.expectedReturnAt();
         if (expectedReturnAt != null && expectedReturnAt.isBefore(request.rentStartedAt())) {
             throw BusinessException.badRequest("预计归还时间不能早于起租时间");
@@ -198,6 +287,7 @@ public class ExternalRentalOrderService {
             currentAccountId(),
             currentAccountId()
         ));
+        order = createAndSyncSettlement(order);
         externalRentalOrderRepository.addLog(
             order.id(),
             null,
@@ -276,30 +366,156 @@ public class ExternalRentalOrderService {
         return toResponse(ensureView(finished.id()));
     }
 
-    private void validateRequestAssets(ExternalRentalOrderCreateRequest request, ProductSku sku) {
-        var frameAsset = request.frameAssetId() == null ? null : ensureAsset(request.frameAssetId());
+    private void validateRequestAssets(Long frameAssetId, Long batteryAssetId, ProductSku sku) {
+        var frameAsset = frameAssetId == null ? null : ensureAsset(frameAssetId);
         if (frameAsset != null && !frameAsset.assetType().canBindAs(AssetType.VEHICLE_FRAME)) {
             throw BusinessException.badRequest("请选择主资产或自定义资产");
         }
         var integratedVehicle = frameAsset != null && frameAsset.assetType().isIntegratedVehicle();
-        if (Boolean.TRUE.equals(sku.needFrameAsset()) && request.frameAssetId() == null) {
+        if (Boolean.TRUE.equals(sku.needFrameAsset()) && frameAssetId == null) {
             throw BusinessException.badRequest("当前商品链接必须绑定主资产");
         }
-        if (Boolean.TRUE.equals(sku.needBatteryAsset()) && request.batteryAssetId() == null && !integratedVehicle) {
+        if (Boolean.TRUE.equals(sku.needBatteryAsset()) && batteryAssetId == null && !integratedVehicle) {
             throw BusinessException.badRequest("当前商品链接必须绑定电池资产");
         }
-        if (!Boolean.TRUE.equals(sku.needFrameAsset()) && request.frameAssetId() != null) {
+        if (!Boolean.TRUE.equals(sku.needFrameAsset()) && frameAssetId != null) {
             throw BusinessException.badRequest("当前商品链接不需要绑定主资产");
         }
-        if (!Boolean.TRUE.equals(sku.needBatteryAsset()) && request.batteryAssetId() != null) {
+        if (!Boolean.TRUE.equals(sku.needBatteryAsset()) && batteryAssetId != null) {
             throw BusinessException.badRequest("当前商品链接不需要绑定电池资产");
         }
-        if (integratedVehicle && request.batteryAssetId() != null) {
+        if (integratedVehicle && batteryAssetId != null) {
             throw BusinessException.badRequest("车电一体资产只需绑定车架号，无需再选择电池资产");
         }
-        if (request.frameAssetId() != null && request.frameAssetId().equals(request.batteryAssetId())) {
+        if (frameAssetId != null && frameAssetId.equals(batteryAssetId)) {
             throw BusinessException.badRequest("车架和电池不能选择同一条资产");
         }
+    }
+
+    private void validateEditableAsset(
+        Long assetId,
+        Long currentAssetId,
+        AssetType expectedType,
+        StoreSku storeSku,
+        ExternalRentalOrder order
+    ) {
+        if (assetId == null) {
+            return;
+        }
+        var asset = ensureAsset(assetId);
+        if (!asset.assetType().canBindAs(expectedType)) {
+            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择主资产或自定义资产" : "请选择电池资产");
+        }
+        if (!storeSku.merchantId().equals(asset.currentMerchantId()) || !storeSku.storeId().equals(asset.currentStoreId())) {
+            throw BusinessException.badRequest("所选资产不属于当前下单门店");
+        }
+        if (assetId.equals(currentAssetId)) {
+            var activeOrder = externalRentalOrderRepository.findActiveByAsset(assetId).orElse(null);
+            if (asset.status() != AssetStatus.RENTING || activeOrder == null || !activeOrder.id().equals(order.id())) {
+                throw BusinessException.badRequest("订单当前绑定资产状态异常，暂不能编辑");
+            }
+            return;
+        }
+        if (asset.status() != AssetStatus.IDLE) {
+            throw BusinessException.badRequest("所选资产不是空闲状态");
+        }
+        if (externalRentalOrderRepository.findActiveByAsset(assetId).isPresent()) {
+            throw BusinessException.badRequest("所选资产已被其他补录订单占用");
+        }
+        var formalOrderOccupied = orderRepository.listByAsset(assetId).stream()
+            .anyMatch(item -> item.orderStatus() != OrderStatus.COMPLETED && item.orderStatus() != OrderStatus.CANCELLED);
+        if (formalOrderOccupied) {
+            throw BusinessException.badRequest("所选资产已被正式订单占用");
+        }
+    }
+
+    private void validateHistoricalEditableAsset(
+        Long assetId,
+        Long currentAssetId,
+        AssetType expectedType,
+        StoreSku storeSku
+    ) {
+        if (assetId == null) {
+            return;
+        }
+        var asset = ensureAsset(assetId);
+        if (!asset.assetType().canBindAs(expectedType)) {
+            throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择主资产或自定义资产" : "请选择电池资产");
+        }
+        if (assetId.equals(currentAssetId)) {
+            return;
+        }
+        if (!storeSku.merchantId().equals(asset.currentMerchantId()) || !storeSku.storeId().equals(asset.currentStoreId())) {
+            throw BusinessException.badRequest("所选资产不属于当前下单门店");
+        }
+        if (asset.status() != AssetStatus.IDLE) {
+            throw BusinessException.badRequest("已结束订单只能改绑当前门店的空闲资产");
+        }
+        if (externalRentalOrderRepository.findActiveByAsset(assetId).isPresent()) {
+            throw BusinessException.badRequest("所选资产已被其他补录订单占用");
+        }
+        var formalOrderOccupied = orderRepository.listByAsset(assetId).stream()
+            .anyMatch(item -> item.orderStatus() != OrderStatus.COMPLETED && item.orderStatus() != OrderStatus.CANCELLED);
+        if (formalOrderOccupied) {
+            throw BusinessException.badRequest("所选资产已被正式订单占用");
+        }
+    }
+
+    private ExternalRentalOrder createAndSyncSettlement(ExternalRentalOrder order) {
+        var snapshot = settlementService.createOrderSnapshot(new SnapshotCreateRequest(
+            "EXTERNAL_ORDER",
+            order.id(),
+            order.storeSkuId(),
+            order.frameAssetId(),
+            order.batteryAssetId(),
+            order.verificationAmount(),
+            order.sourcePlatform().name()
+        ));
+        var updated = externalRentalOrderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
+        settlementIncomeService.syncExternalOrder(updated);
+        return updated;
+    }
+
+    public int backfillMissingSettlements() {
+        var completed = 0;
+        for (var id : externalRentalOrderRepository.listIdsWithoutSettlementSnapshot()) {
+            try {
+                var updated = transactionTemplate.execute(status -> {
+                    var order = externalRentalOrderRepository.findByIdForUpdate(id).orElse(null);
+                    if (order == null || order.settlementSnapshotId() != null) {
+                        return false;
+                    }
+                    createAndSyncSettlement(order);
+                    return true;
+                });
+                if (Boolean.TRUE.equals(updated)) {
+                    completed++;
+                }
+            } catch (RuntimeException exception) {
+                log.warn("补录订单 {} 自动补建分润失败: {}", id, exception.getMessage());
+            }
+        }
+        return completed;
+    }
+
+    private void releaseEditedAsset(Long currentAssetId, Long nextAssetId, String remark) {
+        if (currentAssetId == null || currentAssetId.equals(nextAssetId)) {
+            return;
+        }
+        var asset = ensureAsset(currentAssetId);
+        if (asset.status() != AssetStatus.IDLE) {
+            assetRepository.updateStatus(asset.id(), AssetStatus.IDLE, LocalDateTime.now());
+            assetRepository.insertStatusLog(asset.id(), asset.status(), AssetStatus.IDLE, currentAccountId(), remark);
+        }
+    }
+
+    private void occupyEditedAsset(Long nextAssetId, Long currentAssetId, String remark) {
+        if (nextAssetId == null || nextAssetId.equals(currentAssetId)) {
+            return;
+        }
+        var asset = ensureAsset(nextAssetId);
+        assetRepository.updateStatus(asset.id(), AssetStatus.RENTING, LocalDateTime.now());
+        assetRepository.insertStatusLog(asset.id(), asset.status(), AssetStatus.RENTING, currentAccountId(), remark);
     }
 
     private AssetItem occupyAsset(Long assetId, AssetType expectedType, StoreSku storeSku, String remark) {
@@ -380,6 +596,9 @@ public class ExternalRentalOrderService {
 
     private ExternalRentalOrderResponse toResponse(ExternalRentalOrderRepository.ExternalRentalOrderView view) {
         var order = view.order();
+        var snapshot = order.settlementSnapshotId() == null
+            ? null
+            : settlementRepository.findSnapshot(order.settlementSnapshotId()).orElse(null);
         return new ExternalRentalOrderResponse(
             order.id(),
             order.recordNo(),
@@ -404,6 +623,15 @@ public class ExternalRentalOrderService {
             order.orderStatus().name(),
             order.externalRentalAmount(),
             order.verificationAmount(),
+            order.settlementSnapshotId(),
+            snapshot == null ? null : snapshot.snapshotNo(),
+            snapshot == null ? null : snapshot.settlementBaseAmount(),
+            snapshot == null ? null : snapshot.channelFeeAmount(),
+            snapshot == null ? null : snapshot.platformFeeAmount(),
+            snapshot == null ? null : snapshot.storeOperationAmount(),
+            snapshot == null ? null : snapshot.maintenanceFundAmount(),
+            snapshot == null ? null : snapshot.channelReferralAmount(),
+            snapshot == null ? null : snapshot.investorShareAmount(),
             order.signFeeAmount(),
             order.depositAmount(),
             order.leaseUnit(),
@@ -450,8 +678,9 @@ public class ExternalRentalOrderService {
             order.frameAssetId(),
             order.batteryAssetId(),
             order.externalRentalAmount(),
+            order.verificationAmount(),
             order.signFeeAmount(),
-            BigDecimal.ZERO,
+            order.verificationAmount(),
             order.leaseUnit(),
             order.leaseValue(),
             order.totalPeriods(),
@@ -486,7 +715,7 @@ public class ExternalRentalOrderService {
 
     private void ensureActive(ExternalRentalOrder order) {
         if (order.orderStatus() != ExternalRentalOrderStatus.ACTIVE) {
-            throw BusinessException.badRequest("只有进行中的补录订单才可以操作结束");
+            throw BusinessException.badRequest("只有进行中的补录订单才可以结束");
         }
     }
 

@@ -12,9 +12,11 @@ import com.xniu.rental.externalorder.dto.ExternalRentalOrderBatchImportRequest;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderImportRowRequest;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderCreateRequest;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderTerminateRequest;
+import com.xniu.rental.externalorder.dto.ExternalRentalOrderUpdateRequest;
 import com.xniu.rental.externalorder.service.ExternalRentalOrderService;
 import com.xniu.rental.merchant.dto.StoreRequest;
 import com.xniu.rental.merchant.service.MerchantService;
+import com.xniu.rental.settlement.service.SettlementStatementService;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -40,6 +42,9 @@ class ExternalRentalOrderIntegrationTests {
 
     @Autowired
     private MaintenanceService maintenanceService;
+
+    @Autowired
+    private SettlementStatementService settlementStatementService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -145,6 +150,39 @@ class ExternalRentalOrderIntegrationTests {
         assertThat(created.batteryAssetId()).isEqualTo(batteryAssetId);
         assertThat(created.externalRentalAmount()).isEqualByComparingTo("399.00");
         assertThat(created.verificationAmount()).isEqualByComparingTo("368.50");
+        assertThat(created.settlementSnapshotId()).isNotNull();
+        assertThat(created.settlementBaseAmount()).isEqualByComparingTo("368.50");
+        assertThat(created.investorShareAmount()).isPositive();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, Integer.class, created.id())).isGreaterThan(0);
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT amount
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER'
+              AND source_id = ?
+              AND beneficiary_type = 'INVESTOR'
+              AND beneficiary_id = 1
+            """, BigDecimal.class, created.id())).isEqualByComparingTo(created.investorShareAmount());
+
+        jdbcTemplate.update(
+            "UPDATE external_rental_order SET created_at = '2099-01-15 10:00:00' WHERE id = ?",
+            created.id()
+        );
+        var generated = settlementStatementService.generateMonth("2099-01");
+        assertThat(generated.merchantStatementCount()).isEqualTo(1);
+        assertThat(generated.investorStatementCount()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement_line l
+            JOIN settlement_statement s ON s.id = l.statement_id
+            WHERE l.source_type = 'EXTERNAL_ORDER'
+              AND l.source_id = ?
+              AND s.beneficiary_type = 'INVESTOR'
+              AND s.beneficiary_id = 1
+            """, Integer.class, created.id())).isEqualTo(1);
         assertThat(assetStatus(frameAssetId)).isEqualTo("RENTING");
         assertThat(assetStatus(batteryAssetId)).isEqualTo("RENTING");
 
@@ -372,6 +410,144 @@ class ExternalRentalOrderIntegrationTests {
 
         assertThat(assetStatus(customAssetId)).isEqualTo("IDLE");
         assertThat(assetStatus(batteryAssetId)).isEqualTo("IDLE");
+    }
+
+    @Test
+    void editingActiveExternalOrderShouldReleaseOldAssetsAndOccupyNewAssets() {
+        var suffix = String.valueOf(System.nanoTime());
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES
+            (?, 'VEHICLE_FRAME', (SELECT id FROM asset_type_definition WHERE type_code = 'VEHICLE_FRAME'), ?, 1, 1, 1, 'IDLE', 2600.00, 0.00, NULL, CURRENT_DATE),
+            (?, 'BATTERY', (SELECT id FROM asset_type_definition WHERE type_code = 'BATTERY'), ?, 1, 1, 1, 'IDLE', 1800.00, 0.00, NULL, CURRENT_DATE),
+            (?, 'VEHICLE_FRAME', (SELECT id FROM asset_type_definition WHERE type_code = 'VEHICLE_FRAME'), ?, 1, 1, 1, 'IDLE', 2600.00, 0.00, NULL, CURRENT_DATE),
+            (?, 'BATTERY', (SELECT id FROM asset_type_definition WHERE type_code = 'BATTERY'), ?, 1, 1, 1, 'IDLE', 1800.00, 0.00, NULL, CURRENT_DATE)
+            """,
+            "A-edit-old-frame-" + suffix, "EDIT-OLD-FRAME-" + suffix,
+            "A-edit-old-battery-" + suffix, "EDIT-OLD-BATTERY-" + suffix,
+            "A-edit-new-frame-" + suffix, "EDIT-NEW-FRAME-" + suffix,
+            "A-edit-new-battery-" + suffix, "EDIT-NEW-BATTERY-" + suffix
+        );
+        var oldFrameId = jdbcTemplate.queryForObject("SELECT id FROM asset_item WHERE asset_code = ?", Long.class, "A-edit-old-frame-" + suffix);
+        var oldBatteryId = jdbcTemplate.queryForObject("SELECT id FROM asset_item WHERE asset_code = ?", Long.class, "A-edit-old-battery-" + suffix);
+        var newFrameId = jdbcTemplate.queryForObject("SELECT id FROM asset_item WHERE asset_code = ?", Long.class, "A-edit-new-frame-" + suffix);
+        var newBatteryId = jdbcTemplate.queryForObject("SELECT id FROM asset_item WHERE asset_code = ?", Long.class, "A-edit-new-battery-" + suffix);
+
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "EDIT-BEFORE-" + suffix,
+            1L,
+            2L,
+            "补录错误客户",
+            "13800132221",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            oldFrameId,
+            oldBatteryId,
+            new BigDecimal("399.00"),
+            new BigDecimal("368.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            "修改前"
+        ));
+
+        var sameAssetsUpdated = externalRentalOrderService.updateOrder(created.id(), new ExternalRentalOrderUpdateRequest(
+            "OFFLINE",
+            "EDIT-TEXT-ONLY-" + suffix,
+            1L,
+            2L,
+            "仅更正客户资料",
+            "13800132220",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            oldFrameId,
+            oldBatteryId,
+            new BigDecimal("399.00"),
+            new BigDecimal("378.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            "只改文字"
+        ));
+
+        assertThat(sameAssetsUpdated.customerName()).isEqualTo("仅更正客户资料");
+        assertThat(assetStatus(oldFrameId)).isEqualTo("RENTING");
+        assertThat(assetStatus(oldBatteryId)).isEqualTo("RENTING");
+
+        var updated = externalRentalOrderService.updateOrder(sameAssetsUpdated.id(), new ExternalRentalOrderUpdateRequest(
+            "MEITUAN",
+            "EDIT-AFTER-" + suffix,
+            1L,
+            2L,
+            "补录已更正客户",
+            "13800132222",
+            LocalDateTime.of(2026, 7, 18, 9, 0),
+            LocalDateTime.of(2026, 8, 18, 9, 0),
+            newFrameId,
+            newBatteryId,
+            new BigDecimal("420.00"),
+            new BigDecimal("388.88"),
+            new BigDecimal("35.00"),
+            new BigDecimal("50.00"),
+            "修改后"
+        ));
+
+        assertThat(updated.sourcePlatform()).isEqualTo("MEITUAN");
+        assertThat(updated.externalOrderNo()).isEqualTo("EDIT-AFTER-" + suffix);
+        assertThat(updated.customerName()).isEqualTo("补录已更正客户");
+        assertThat(updated.verificationAmount()).isEqualByComparingTo("388.88");
+        assertThat(updated.frameAssetId()).isEqualTo(newFrameId);
+        assertThat(updated.batteryAssetId()).isEqualTo(newBatteryId);
+        assertThat(updated.logs()).extracting("operationType").contains("CREATE", "EDIT");
+        assertThat(assetStatus(oldFrameId)).isEqualTo("IDLE");
+        assertThat(assetStatus(oldBatteryId)).isEqualTo("IDLE");
+        assertThat(assetStatus(newFrameId)).isEqualTo("RENTING");
+        assertThat(assetStatus(newBatteryId)).isEqualTo("RENTING");
+
+        var terminated = externalRentalOrderService.terminate(updated.id(), new ExternalRentalOrderTerminateRequest(
+            1L,
+            "IDLE",
+            "IDLE",
+            "编辑测试结束",
+            null
+        ));
+
+        var closedUpdated = externalRentalOrderService.updateOrder(updated.id(), new ExternalRentalOrderUpdateRequest(
+            "OFFLINE",
+            "EDIT-CLOSED-" + suffix,
+            1L,
+            2L,
+            "已结束订单",
+            "13800132223",
+            LocalDateTime.of(2026, 7, 18, 9, 0),
+            null,
+            newFrameId,
+            newBatteryId,
+            new BigDecimal("420.00"),
+            new BigDecimal("399.99"),
+            new BigDecimal("35.00"),
+            new BigDecimal("50.00"),
+            "已结束后修正"
+        ));
+
+        assertThat(closedUpdated.orderStatus()).isEqualTo("TERMINATED");
+        assertThat(closedUpdated.customerName()).isEqualTo("已结束订单");
+        assertThat(closedUpdated.verificationAmount()).isEqualByComparingTo("399.99");
+        assertThat(closedUpdated.settlementSnapshotId()).isNotEqualTo(terminated.settlementSnapshotId());
+        assertThat(closedUpdated.settlementBaseAmount()).isEqualByComparingTo("399.99");
+        assertThat(assetStatus(newFrameId)).isEqualTo("IDLE");
+        assertThat(assetStatus(newBatteryId)).isEqualTo("IDLE");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(DISTINCT snapshot_id)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, Integer.class, updated.id())).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT MAX(snapshot_id)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, Long.class, updated.id())).isEqualTo(closedUpdated.settlementSnapshotId());
     }
 
     @Test

@@ -25,21 +25,21 @@ public class AccountRepository {
 
     public Optional<Account> findByUsername(String username) {
         var accounts = jdbcTemplate.query("""
-            SELECT * FROM sys_account WHERE username = ?
+            SELECT * FROM sys_account WHERE username = ? AND deleted_at IS NULL
             """, mapper, username);
         return accounts.stream().findFirst();
     }
 
     public Optional<Account> findById(Long id) {
         var accounts = jdbcTemplate.query("""
-            SELECT * FROM sys_account WHERE id = ?
+            SELECT * FROM sys_account WHERE id = ? AND deleted_at IS NULL
             """, mapper, id);
         return accounts.stream().findFirst();
     }
 
     public Optional<Account> findByAlipayUserId(String alipayUserId) {
         var accounts = jdbcTemplate.query("""
-            SELECT * FROM sys_account WHERE alipay_user_id = ?
+            SELECT * FROM sys_account WHERE alipay_user_id = ? AND deleted_at IS NULL
             """, mapper, alipayUserId);
         return accounts.stream().findFirst();
     }

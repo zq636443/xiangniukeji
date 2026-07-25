@@ -9,11 +9,13 @@ import com.xniu.rental.auth.dto.SystemAccountScopeUpdateRequest;
 import com.xniu.rental.auth.dto.SystemAccountUpdateRequest;
 import com.xniu.rental.auth.dto.SystemPermissionResponse;
 import com.xniu.rental.auth.dto.SystemRoleResponse;
+import com.xniu.rental.auth.dto.SystemRoleUpdateRequest;
 import com.xniu.rental.auth.service.SystemManagementService;
 import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.ApiResponse;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -70,10 +72,33 @@ public class AdminSystemManagementController {
         return ApiResponse.ok(systemManagementService.updateAccount(accountId, request));
     }
 
+    @DeleteMapping("/accounts/{accountId}")
+    public ApiResponse<Void> deleteAccount(@PathVariable Long accountId) {
+        authorizationService.requirePermission("auth.account.write");
+        systemManagementService.deleteAccount(accountId);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/roles")
     public ApiResponse<List<SystemRoleResponse>> listRoles(@RequestParam(required = false) String status) {
         authorizationService.requirePermission("auth.role.read");
         return ApiResponse.ok(systemManagementService.listRoles(status));
+    }
+
+    @PutMapping("/roles/{roleId}")
+    public ApiResponse<SystemRoleResponse> updateRole(
+        @PathVariable Long roleId,
+        @Valid @RequestBody SystemRoleUpdateRequest request
+    ) {
+        authorizationService.requirePermission("auth.role.write");
+        return ApiResponse.ok(systemManagementService.updateRole(roleId, request));
+    }
+
+    @DeleteMapping("/roles/{roleId}")
+    public ApiResponse<Void> deleteRole(@PathVariable Long roleId) {
+        authorizationService.requirePermission("auth.role.write");
+        systemManagementService.deleteRole(roleId);
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/permissions")

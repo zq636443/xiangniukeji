@@ -10,12 +10,14 @@ import com.xniu.rental.auth.dto.SystemAccountScopeUpdateRequest;
 import com.xniu.rental.auth.dto.SystemAccountUpdateRequest;
 import com.xniu.rental.auth.dto.SystemPermissionResponse;
 import com.xniu.rental.auth.dto.SystemRoleResponse;
+import com.xniu.rental.auth.dto.SystemRoleUpdateRequest;
 import com.xniu.rental.auth.model.AccountStatus;
 import com.xniu.rental.auth.model.AccountType;
 import com.xniu.rental.auth.repository.AccountRepository;
 import com.xniu.rental.auth.repository.AuthQueryRepository;
 import com.xniu.rental.auth.repository.SystemManagementRepository;
 import com.xniu.rental.auth.repository.SystemManagementRepository.AccountRow;
+import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.investor.repository.InvestorRepository;
 import com.xniu.rental.merchant.model.MerchantStatus;
@@ -70,15 +72,7 @@ public class SystemManagementService {
 
     public List<SystemRoleResponse> listRoles(String status) {
         return systemManagementRepository.listRoles(status).stream()
-            .map(role -> new SystemRoleResponse(
-                role.id(),
-                role.roleCode(),
-                role.roleName(),
-                role.roleScope(),
-                role.status(),
-                role.createdAt(),
-                systemManagementRepository.findPermissionCodesByRole(role.id())
-            ))
+            .map(this::toRoleResponse)
             .toList();
     }
 
@@ -142,6 +136,59 @@ public class SystemManagementService {
         }
         accountRepository.updateBasicInfo(accountId, username, phone, displayName);
         return toAccountResponse(ensureAccount(accountId));
+    }
+
+    @Transactional
+    public void deleteAccount(Long accountId) {
+        var account = ensureAccount(accountId);
+        var current = AuthContext.get();
+        if (current != null && current.account().id().equals(accountId)) {
+            throw BusinessException.badRequest("不能删除当前登录账号");
+        }
+        var roleCodes = authQueryRepository.findRoleCodes(accountId);
+        if (roleCodes.contains("PLATFORM_ADMIN")
+            && account.status() == AccountStatus.ENABLED
+            && systemManagementRepository.countEnabledAccountsByRoleCode("PLATFORM_ADMIN") <= 1) {
+            throw BusinessException.badRequest("系统必须保留至少一个启用的平台管理员账号");
+        }
+        systemManagementRepository.softDeleteAccount(accountId);
+    }
+
+    @Transactional
+    public SystemRoleResponse updateRole(Long roleId, SystemRoleUpdateRequest request) {
+        var role = ensureRole(roleId);
+        var status = normalizeRoleStatus(request.status());
+        var permissionCodes = request.permissionCodes().stream()
+            .filter(code -> code != null && !code.isBlank())
+            .map(String::trim)
+            .distinct()
+            .toList();
+        if (systemManagementRepository.countPermissions(permissionCodes) != permissionCodes.size()) {
+            throw BusinessException.badRequest("角色包含不存在的权限点");
+        }
+        if ("PLATFORM_ADMIN".equals(role.roleCode())) {
+            status = "ENABLED";
+            if (!permissionCodes.contains("system.admin")) {
+                permissionCodes = java.util.stream.Stream.concat(permissionCodes.stream(), java.util.stream.Stream.of("system.admin"))
+                    .distinct()
+                    .toList();
+            }
+        }
+        var updated = systemManagementRepository.updateRole(roleId, request.roleName().trim(), status);
+        systemManagementRepository.replaceRolePermissions(roleId, permissionCodes);
+        return toRoleResponse(updated);
+    }
+
+    @Transactional
+    public void deleteRole(Long roleId) {
+        var role = ensureRole(roleId);
+        if ("PLATFORM_ADMIN".equals(role.roleCode())) {
+            throw BusinessException.badRequest("平台管理员角色不能删除");
+        }
+        if (systemManagementRepository.countAccountsByRole(roleId) > 0) {
+            throw BusinessException.badRequest("角色已分配给账号，请先调整相关账号角色");
+        }
+        systemManagementRepository.deleteRole(roleId);
     }
 
     @Transactional
@@ -342,9 +389,34 @@ public class SystemManagementService {
         );
     }
 
+    private SystemRoleResponse toRoleResponse(SystemManagementRepository.RoleRow role) {
+        return new SystemRoleResponse(
+            role.id(),
+            role.roleCode(),
+            role.roleName(),
+            role.roleScope(),
+            role.status(),
+            role.createdAt(),
+            systemManagementRepository.findPermissionCodesByRole(role.id())
+        );
+    }
+
     private AccountRow ensureAccount(Long accountId) {
         return systemManagementRepository.findAccount(accountId)
             .orElseThrow(() -> BusinessException.badRequest("账号不存在"));
+    }
+
+    private SystemManagementRepository.RoleRow ensureRole(Long roleId) {
+        return systemManagementRepository.findRoleById(roleId)
+            .orElseThrow(() -> BusinessException.badRequest("角色不存在"));
+    }
+
+    private String normalizeRoleStatus(String value) {
+        var status = value == null ? "" : value.trim().toUpperCase();
+        if (!Set.of("ENABLED", "DISABLED").contains(status)) {
+            throw BusinessException.badRequest("不支持的角色状态");
+        }
+        return status;
     }
 
     private AccountType parseAccountTypeNullable(String value) {

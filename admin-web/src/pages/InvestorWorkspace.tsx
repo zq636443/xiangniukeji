@@ -92,11 +92,12 @@ export function InvestorDashboard({ account }: InvestorPageProps) {
           pagination={false}
           columns={[
             { title: '收益单号', dataIndex: 'entryNo' },
-            { title: '订单', dataIndex: 'orderId' },
+            { title: '来源', dataIndex: 'sourceType', render: incomeSourceTag },
+            { title: '业务单号', render: (_, record) => record.sourceNo || record.sourceId },
             { title: '收益类型', dataIndex: 'lineType', render: lineTypeText },
             { title: '金额', dataIndex: 'amount', render: money },
             { title: '状态', dataIndex: 'entryStatus', render: incomeStatusTag },
-            { title: '时间', dataIndex: 'createdAt', render: dateText }
+            { title: '计入时间', dataIndex: 'occurredAt', render: dateText }
           ]}
         />
       </div>
@@ -187,13 +188,14 @@ export function InvestorIncomePage() {
           locale={{ emptyText: <Empty description="暂无收益记录" /> }}
           columns={[
             { title: '收益单号', dataIndex: 'entryNo' },
-            { title: '订单', dataIndex: 'orderId' },
+            { title: '来源', dataIndex: 'sourceType', render: incomeSourceTag },
+            { title: '业务单号', render: (_, record) => record.sourceNo || record.sourceId },
             { title: '收益类型', dataIndex: 'lineType', render: lineTypeText },
             { title: '金额', dataIndex: 'amount', render: money },
             { title: '状态', dataIndex: 'entryStatus', render: incomeStatusTag },
             { title: '备注', dataIndex: 'remark', render: (value?: string | null) => value || '-' },
             { title: '结算时间', dataIndex: 'settledAt', render: dateText },
-            { title: '创建时间', dataIndex: 'createdAt', render: dateText }
+            { title: '计入时间', dataIndex: 'occurredAt', render: dateText }
           ]}
         />
       </div>
@@ -244,6 +246,8 @@ export function InvestorIncomePage() {
           pagination={false}
           columns={[
             { title: '类型', dataIndex: 'lineType', render: statementLineText },
+            { title: '来源', dataIndex: 'sourceType', render: (value) => value === 'EXTERNAL_ORDER' ? <Tag color="purple">补录订单</Tag> : <Tag color="blue">正式订单/账单</Tag> },
+            { title: '来源ID', dataIndex: 'sourceId' },
             { title: '订单', dataIndex: 'orderId', render: (value) => value ?? '-' },
             { title: '账单', dataIndex: 'billId', render: (value) => value ?? '-' },
             { title: '资产', dataIndex: 'assetId', render: (value) => value ?? '-' },
@@ -355,6 +359,7 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
                   { title: '外部单号', dataIndex: 'externalOrderNo', render: (value?: string | null) => value || '-' },
                   { title: '客户', render: (_, record) => record.customerName ? `${record.customerName} / ${record.customerPhone || '-'}` : '-' },
                   { title: '租金', dataIndex: 'rentalAmount', render: money },
+                  { title: '实际核销', dataIndex: 'verificationAmount', render: money },
                   { title: '签单费', dataIndex: 'signFeeAmount', render: money },
                   { title: '已收', dataIndex: 'paidAmount', render: money },
                   { title: '租期', render: (_, record) => `${record.leaseValue}${record.leaseUnit === 'MONTH' ? '个月' : '天'} / ${record.totalPeriods}期` },
@@ -444,6 +449,12 @@ function incomeStatusTag(value: SettlementIncomeEntry['entryStatus']) {
   };
   const item = map[value];
   return <Tag color={item.color}>{item.label}</Tag>;
+}
+
+function incomeSourceTag(value: SettlementIncomeEntry['sourceType']) {
+  return value === 'EXTERNAL_ORDER'
+    ? <Tag color="purple">补录订单</Tag>
+    : <Tag color="blue">正式订单</Tag>;
 }
 
 function statementStatusTag(value: SettlementStatement['status']) {

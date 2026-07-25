@@ -34,7 +34,7 @@ public class SystemManagementRepository {
             LEFT JOIN merchant m ON m.id = a.merchant_id
             LEFT JOIN merchant_store s ON s.id = a.store_id
             LEFT JOIN investor i ON i.id = a.investor_id
-            WHERE 1 = 1
+            WHERE a.deleted_at IS NULL
             """);
         var params = new ArrayList<Object>();
         if (accountType != null) {
@@ -70,7 +70,7 @@ public class SystemManagementRepository {
             LEFT JOIN merchant m ON m.id = a.merchant_id
             LEFT JOIN merchant_store s ON s.id = a.store_id
             LEFT JOIN investor i ON i.id = a.investor_id
-            WHERE a.id = ?
+            WHERE a.id = ? AND a.deleted_at IS NULL
             """, accountMapper, accountId).stream().findFirst();
     }
 
@@ -87,6 +87,10 @@ public class SystemManagementRepository {
 
     public Optional<RoleRow> findRoleByCode(String roleCode) {
         return jdbcTemplate.query("SELECT * FROM auth_role WHERE role_code = ?", roleMapper, roleCode).stream().findFirst();
+    }
+
+    public Optional<RoleRow> findRoleById(Long roleId) {
+        return jdbcTemplate.query("SELECT * FROM auth_role WHERE id = ?", roleMapper, roleId).stream().findFirst();
     }
 
     public List<PermissionRow> listPermissions(String moduleCode) {
@@ -128,6 +132,84 @@ public class SystemManagementRepository {
                 SELECT ?, id FROM auth_permission WHERE permission_code = ?
                 """, accountId, permissionCode);
         }
+    }
+
+    public int countPermissions(List<String> permissionCodes) {
+        if (permissionCodes.isEmpty()) {
+            return 0;
+        }
+        var placeholders = String.join(",", java.util.Collections.nCopies(permissionCodes.size(), "?"));
+        return jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM auth_permission WHERE permission_code IN (" + placeholders + ")",
+            Integer.class,
+            permissionCodes.toArray()
+        );
+    }
+
+    public RoleRow updateRole(Long roleId, String roleName, String status) {
+        jdbcTemplate.update("UPDATE auth_role SET role_name = ?, status = ? WHERE id = ?", roleName, status, roleId);
+        return findRoleById(roleId).orElseThrow();
+    }
+
+    public void replaceRolePermissions(Long roleId, List<String> permissionCodes) {
+        jdbcTemplate.update("DELETE FROM auth_role_permission WHERE role_id = ?", roleId);
+        for (var permissionCode : permissionCodes) {
+            jdbcTemplate.update("""
+                INSERT INTO auth_role_permission (role_id, permission_id)
+                SELECT ?, id FROM auth_permission WHERE permission_code = ?
+                """, roleId, permissionCode);
+        }
+    }
+
+    public int countAccountsByRole(Long roleId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(*)
+            FROM auth_account_role ar
+            JOIN sys_account a ON a.id = ar.account_id
+            WHERE ar.role_id = ? AND a.deleted_at IS NULL
+            """, Integer.class, roleId);
+        return count == null ? 0 : count;
+    }
+
+    public int countEnabledAccountsByRoleCode(String roleCode) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(*)
+            FROM auth_account_role ar
+            JOIN auth_role r ON r.id = ar.role_id
+            JOIN sys_account a ON a.id = ar.account_id
+            WHERE r.role_code = ? AND a.status = 'ENABLED' AND a.deleted_at IS NULL
+            """, Integer.class, roleCode);
+        return count == null ? 0 : count;
+    }
+
+    public void deleteRole(Long roleId) {
+        jdbcTemplate.update("DELETE FROM auth_role_permission WHERE role_id = ?", roleId);
+        jdbcTemplate.update("DELETE FROM auth_role WHERE id = ?", roleId);
+    }
+
+    public void softDeleteAccount(Long accountId) {
+        jdbcTemplate.update("DELETE FROM auth_account_permission WHERE account_id = ?", accountId);
+        jdbcTemplate.update("DELETE FROM auth_account_store_scope WHERE account_id = ?", accountId);
+        jdbcTemplate.update("DELETE FROM auth_account_role WHERE account_id = ?", accountId);
+        jdbcTemplate.update("""
+            UPDATE auth_session
+            SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+            WHERE account_id = ?
+            """, accountId);
+        jdbcTemplate.update("""
+            UPDATE sys_account
+            SET username = NULL,
+                phone = NULL,
+                alipay_user_id = NULL,
+                display_name = CONCAT('已删除账号#', id),
+                password_hash = NULL,
+                merchant_id = NULL,
+                store_id = NULL,
+                investor_id = NULL,
+                status = 'DISABLED',
+                deleted_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND deleted_at IS NULL
+            """, accountId);
     }
 
     public void replaceAccountRole(Long accountId, String roleCode) {

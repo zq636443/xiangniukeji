@@ -1,6 +1,7 @@
 package com.xniu.rental;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -130,5 +131,46 @@ class AuthWorkspaceLoginIntegrationTests {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.code").value(0))
             .andExpect(jsonPath("$.data.account.accountType").value("PLATFORM_ADMIN"));
+    }
+
+    @Test
+    void merchantWorkspaceAccountCannotAccessAdminApiNamespace() throws Exception {
+        var password = "store-manager-admin-boundary-test";
+        var accountId = jdbcTemplate.queryForObject(
+            "SELECT id FROM sys_account WHERE username = ?",
+            Long.class,
+            "store_demo"
+        );
+        jdbcTemplate.update(
+            "UPDATE sys_account SET account_type = 'STORE_MANAGER', password_hash = ? WHERE id = ?",
+            passwordHasher.encode(password),
+            accountId
+        );
+        jdbcTemplate.update("DELETE FROM auth_account_role WHERE account_id = ?", accountId);
+        jdbcTemplate.update("""
+            INSERT INTO auth_account_role (account_id, role_id)
+            SELECT ?, id FROM auth_role WHERE role_code = 'STORE_MANAGER'
+            """, accountId);
+
+        var login = authService.workspaceLogin(new PasswordLoginRequest("store_demo", password));
+        var authorization = "Bearer " + login.token();
+
+        mockMvc.perform(get("/api/merchant/workbench/stores").header("Authorization", authorization))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(0))
+            .andExpect(jsonPath("$.data[0].id").value(1));
+
+        mockMvc.perform(get("/api/admin/orders").header("Authorization", authorization))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.message").value("当前账号不能访问总部管理接口"));
+    }
+
+    @Test
+    void platformAdministratorCanAccessAdminApiNamespace() throws Exception {
+        var login = authService.workspaceLogin(new PasswordLoginRequest("admin", "123456"));
+
+        mockMvc.perform(get("/api/admin/orders").header("Authorization", "Bearer " + login.token()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(0));
     }
 }

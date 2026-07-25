@@ -70,7 +70,7 @@ export type ExternalRentalOrderLog = {
   externalOrderId: number;
   fromStatus?: ExternalRentalOrderStatus | null;
   toStatus: ExternalRentalOrderStatus;
-  operationType: 'CREATE' | 'COMPLETE' | 'TERMINATE';
+  operationType: 'CREATE' | 'EDIT' | 'COMPLETE' | 'TERMINATE';
   operatorAccountId?: number | null;
   remark?: string | null;
   createdAt: string;
@@ -100,6 +100,15 @@ export type ExternalRentalOrder = {
   orderStatus: ExternalRentalOrderStatus;
   externalRentalAmount: number;
   verificationAmount: number;
+  settlementSnapshotId?: number | null;
+  settlementSnapshotNo?: string | null;
+  settlementBaseAmount?: number | null;
+  channelFeeAmount?: number | null;
+  platformFeeAmount?: number | null;
+  storeOperationAmount?: number | null;
+  maintenanceFundAmount?: number | null;
+  channelReferralAmount?: number | null;
+  investorShareAmount?: number | null;
   signFeeAmount: number;
   depositAmount: number;
   leaseUnit: 'DAY' | 'MONTH';
@@ -216,7 +225,6 @@ export type Investor = {
   investorName: string;
   contactName: string;
   contactPhone: string;
-  operationFeeRate: number;
   status: 'ENABLED' | 'DISABLED';
 };
 
@@ -376,6 +384,7 @@ export type AssetMaintenance = {
   assetId: number;
   assetCode: string;
   assetType: AssetType;
+  assetTypeName?: string | null;
   serialNo: string;
   orderId?: number | null;
   storeId?: number | null;
@@ -425,6 +434,7 @@ export type AssetRentalRecord = {
   frameAssetId?: number | null;
   batteryAssetId?: number | null;
   rentalAmount: number;
+  verificationAmount: number;
   signFeeAmount: number;
   paidAmount: number;
   leaseUnit: 'DAY' | 'MONTH';
@@ -560,7 +570,7 @@ export type ProfitRule = {
 export type SettlementSnapshot = {
   id?: number | null;
   snapshotNo: string;
-  sourceType: 'PREVIEW' | 'ORDER';
+  sourceType: 'PREVIEW' | 'ORDER' | 'EXTERNAL_ORDER';
   sourceId?: number | null;
   calculationVersion: 'LEGACY_V1' | 'PROFIT_V2';
   sourceChannel: string;
@@ -605,7 +615,10 @@ export type SettlementSnapshot = {
 export type SettlementIncomeEntry = {
   id: number;
   entryNo: string;
-  orderId: number;
+  sourceType: 'ORDER' | 'EXTERNAL_ORDER';
+  sourceId: number;
+  sourceNo?: string | null;
+  orderId?: number | null;
   snapshotId: number;
   merchantId: number;
   storeId: number;
@@ -627,6 +640,7 @@ export type SettlementIncomeEntry = {
   amount: number;
   entryStatus: 'PENDING' | 'SETTLED' | 'FROZEN';
   remark?: string | null;
+  occurredAt: string;
   settledAt?: string | null;
   createdAt: string;
 };

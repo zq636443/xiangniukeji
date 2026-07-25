@@ -14,6 +14,7 @@ import com.xniu.rental.asset.service.MaintenanceService;
 import com.xniu.rental.common.ApiResponse;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -66,6 +67,12 @@ public class MerchantAssetController {
         @Valid @RequestBody AssetUpdateRequest request
     ) {
         return ApiResponse.ok(assetService.updateMerchantAsset(storeId, id, request));
+    }
+
+    @DeleteMapping("/stores/{storeId}/{id}")
+    public ApiResponse<Void> deleteStoreAsset(@PathVariable Long storeId, @PathVariable Long id) {
+        assetService.deleteMerchantAsset(storeId, id);
+        return ApiResponse.ok(null);
     }
 
     @PostMapping("/stores/{storeId}/batch-import")

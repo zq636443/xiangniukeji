@@ -2,6 +2,7 @@ package com.xniu.rental.bill.model;
 
 public enum BillOperationType {
     GENERATE,
+    EDIT,
     CANCEL,
     MARK_OVERDUE,
     PAYMENT_SUCCESS,

@@ -6,8 +6,7 @@ import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.BusinessException;
-import com.xniu.rental.investor.model.Investor;
-import com.xniu.rental.investor.repository.InvestorRepository;
+import com.xniu.rental.externalorder.model.ExternalRentalOrder;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.order.repository.OrderRepository;
 import com.xniu.rental.settlement.dto.SettlementEntryGenerateResponse;
@@ -18,10 +17,12 @@ import com.xniu.rental.settlement.model.IncomeLineType;
 import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.model.SettlementIncomeEntry;
 import com.xniu.rental.settlement.model.SettlementRuleSnapshot;
+import com.xniu.rental.settlement.model.SnapshotSourceType;
 import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,7 +40,6 @@ public class SettlementIncomeService {
     private final OrderRepository orderRepository;
     private final AssetRepository assetRepository;
     private final AssetFulfillmentRepository assetFulfillmentRepository;
-    private final InvestorRepository investorRepository;
     private final StoreRepository storeRepository;
     private final AuthorizationService authorizationService;
 
@@ -49,7 +49,6 @@ public class SettlementIncomeService {
         OrderRepository orderRepository,
         AssetRepository assetRepository,
         AssetFulfillmentRepository assetFulfillmentRepository,
-        InvestorRepository investorRepository,
         StoreRepository storeRepository,
         AuthorizationService authorizationService
     ) {
@@ -58,7 +57,6 @@ public class SettlementIncomeService {
         this.orderRepository = orderRepository;
         this.assetRepository = assetRepository;
         this.assetFulfillmentRepository = assetFulfillmentRepository;
-        this.investorRepository = investorRepository;
         this.storeRepository = storeRepository;
         this.authorizationService = authorizationService;
     }
@@ -99,9 +97,37 @@ public class SettlementIncomeService {
             throw BusinessException.badRequest("订单暂无分润快照");
         }
         var snapshot = settlementRepository.findSnapshot(order.settlementSnapshotId()).orElseThrow(() -> BusinessException.badRequest("分润快照不存在"));
-        var created = createEntries(snapshot);
+        var created = createEntries(snapshot, new IncomeSource(
+            SnapshotSourceType.ORDER,
+            order.id(),
+            order.orderNo(),
+            order.id(),
+            order.orderedAt() == null ? order.createdAt() : order.orderedAt(),
+            BigDecimal.ZERO
+        ));
         var all = incomeRepository.list(null, null, null, orderId, null);
         return new SettlementEntryGenerateResponse(orderId, snapshot.id(), created.size(), all.stream().map(this::toResponse).toList());
+    }
+
+    @Transactional
+    public int syncExternalOrder(ExternalRentalOrder order) {
+        if (order.settlementSnapshotId() == null) {
+            throw BusinessException.badRequest("补录订单暂无分润快照");
+        }
+        var snapshot = settlementRepository.findSnapshot(order.settlementSnapshotId())
+            .orElseThrow(() -> BusinessException.badRequest("补录订单分润快照不存在"));
+        if (snapshot.sourceType() != SnapshotSourceType.EXTERNAL_ORDER || !order.id().equals(snapshot.sourceId())) {
+            throw BusinessException.badRequest("补录订单与分润快照不匹配");
+        }
+        incomeRepository.deleteBySource(SnapshotSourceType.EXTERNAL_ORDER, order.id());
+        return createEntries(snapshot, new IncomeSource(
+            SnapshotSourceType.EXTERNAL_ORDER,
+            order.id(),
+            order.recordNo(),
+            null,
+            order.createdAt() == null ? LocalDateTime.now() : order.createdAt(),
+            order.signFeeAmount()
+        )).size();
     }
 
     @Transactional
@@ -110,44 +136,46 @@ public class SettlementIncomeService {
         return toResponse(incomeRepository.updateStatus(id, parseStatus(status)));
     }
 
-    private List<SettlementIncomeEntry> createEntries(SettlementRuleSnapshot snapshot) {
+    private List<SettlementIncomeEntry> createEntries(SettlementRuleSnapshot snapshot, IncomeSource source) {
         if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2) {
-            return createProfitV2Entries(snapshot);
+            return createProfitV2Entries(snapshot, source);
         }
-        return createLegacyEntries(snapshot);
+        return createLegacyEntries(snapshot, source);
     }
 
-    private List<SettlementIncomeEntry> createProfitV2Entries(SettlementRuleSnapshot snapshot) {
+    private List<SettlementIncomeEntry> createProfitV2Entries(SettlementRuleSnapshot snapshot, IncomeSource source) {
         var created = new ArrayList<SettlementIncomeEntry>();
-        add(created, snapshot, IncomeBeneficiaryType.CHANNEL, PLATFORM_BENEFICIARY_ID, IncomeLineType.CHANNEL_VERIFICATION_FEE, snapshot.channelFeeAmount(), snapshot.sourceChannel() + "渠道核销扣点");
-        add(created, snapshot, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.PLATFORM_SERVICE_FEE, snapshot.platformFeeAmount(), "租赁平台扣点");
-        add(created, snapshot, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.STORE_OPERATION_SHARE, snapshot.storeOperationAmount(), "门店运营分润");
-        add(created, snapshot, IncomeBeneficiaryType.MAINTENANCE_FUND, PLATFORM_BENEFICIARY_ID, IncomeLineType.MAINTENANCE_FUND_SHARE, snapshot.maintenanceFundAmount(), "维修基金计提");
-        add(created, snapshot, IncomeBeneficiaryType.CHANNEL, PLATFORM_BENEFICIARY_ID, IncomeLineType.CHANNEL_REFERRAL_SHARE, snapshot.channelReferralAmount(), snapshot.sourceChannel() + "渠道引流分润");
-        addV2InvestorEntries(created, snapshot);
+        add(created, snapshot, source, IncomeBeneficiaryType.CHANNEL, PLATFORM_BENEFICIARY_ID, IncomeLineType.CHANNEL_VERIFICATION_FEE, snapshot.channelFeeAmount(), snapshot.sourceChannel() + "渠道核销扣点");
+        add(created, snapshot, source, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.PLATFORM_SERVICE_FEE, snapshot.platformFeeAmount(), "租赁平台扣点");
+        add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.STORE_OPERATION_SHARE, snapshot.storeOperationAmount(), "门店运营分润");
+        add(created, snapshot, source, IncomeBeneficiaryType.MAINTENANCE_FUND, PLATFORM_BENEFICIARY_ID, IncomeLineType.MAINTENANCE_FUND_SHARE, snapshot.maintenanceFundAmount(), "维修基金计提");
+        add(created, snapshot, source, IncomeBeneficiaryType.CHANNEL, PLATFORM_BENEFICIARY_ID, IncomeLineType.CHANNEL_REFERRAL_SHARE, snapshot.channelReferralAmount(), snapshot.sourceChannel() + "渠道引流分润");
+        addV2InvestorEntries(created, snapshot, source);
+        if (source.sourceType() == SnapshotSourceType.EXTERNAL_ORDER) {
+            add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MERCHANT_ORDER_FEE, source.signFeeAmount(), "补录订单签单费");
+        }
         return created;
     }
 
-    private List<SettlementIncomeEntry> createLegacyEntries(SettlementRuleSnapshot snapshot) {
+    private List<SettlementIncomeEntry> createLegacyEntries(SettlementRuleSnapshot snapshot, IncomeSource source) {
         var created = new ArrayList<SettlementIncomeEntry>();
-        add(created, snapshot, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MERCHANT_ORDER_FEE, snapshot.merchantOrderFeeAmount(), "门店办单费");
-        add(created, snapshot, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MERCHANT_RENT_SHARE, snapshot.merchantRentShareAmount(), "门店租金分成");
-        add(created, snapshot, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.PLATFORM_RENT_SHARE, snapshot.platformRentShareAmount(), "平台租金分成");
+        add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MERCHANT_ORDER_FEE, source.sourceType() == SnapshotSourceType.EXTERNAL_ORDER ? source.signFeeAmount() : snapshot.merchantOrderFeeAmount(), "门店办单费");
+        add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MERCHANT_RENT_SHARE, snapshot.merchantRentShareAmount(), "门店租金分成");
+        add(created, snapshot, source, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.PLATFORM_RENT_SHARE, snapshot.platformRentShareAmount(), "平台租金分成");
         var allocations = buildInvestorAllocations(snapshot);
-        add(created, snapshot, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.PLATFORM_OPERATION_FEE, totalOperationFee(allocations, snapshot), "出资方运营手续费");
-        add(created, snapshot, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.MAINTENANCE_FEE, totalMaintenanceFee(allocations, snapshot), "资产维保费用");
-        addInvestorEntries(created, snapshot, allocations);
+        add(created, snapshot, source, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.MAINTENANCE_FEE, totalMaintenanceFee(allocations, snapshot), "资产维保费用");
+        addInvestorEntries(created, snapshot, source, allocations);
         return created;
     }
 
-    private void addV2InvestorEntries(List<SettlementIncomeEntry> created, SettlementRuleSnapshot snapshot) {
+    private void addV2InvestorEntries(List<SettlementIncomeEntry> created, SettlementRuleSnapshot snapshot, IncomeSource source) {
         var allocations = buildV2InvestorAllocations(snapshot);
         if (allocations.isEmpty()) {
-            add(created, snapshot, IncomeBeneficiaryType.INVESTOR, PLATFORM_BENEFICIARY_ID, IncomeLineType.INVESTOR_SHARE, snapshot.investorShareAmount(), "出资方分润（待绑定资产）");
+            add(created, snapshot, source, IncomeBeneficiaryType.INVESTOR, PLATFORM_BENEFICIARY_ID, IncomeLineType.INVESTOR_SHARE, snapshot.investorShareAmount(), "出资方分润（待绑定资产）");
             return;
         }
         for (var allocation : allocations) {
-            add(created, snapshot, IncomeBeneficiaryType.INVESTOR, allocation.investorId(), IncomeLineType.INVESTOR_SHARE, allocation.amount(), "出资方分润");
+            add(created, snapshot, source, IncomeBeneficiaryType.INVESTOR, allocation.investorId(), IncomeLineType.INVESTOR_SHARE, allocation.amount(), "出资方分润");
         }
     }
 
@@ -170,13 +198,13 @@ public class SettlementIncomeService {
             .toList();
     }
 
-    private void addInvestorEntries(List<SettlementIncomeEntry> created, SettlementRuleSnapshot snapshot, List<InvestorIncomeAllocation> allocations) {
+    private void addInvestorEntries(List<SettlementIncomeEntry> created, SettlementRuleSnapshot snapshot, IncomeSource source, List<InvestorIncomeAllocation> allocations) {
         if (allocations.isEmpty()) {
-            add(created, snapshot, IncomeBeneficiaryType.INVESTOR, PLATFORM_BENEFICIARY_ID, IncomeLineType.INVESTOR_NET_RENT, snapshot.investorNetShareAmount(), "出资方净收益（待绑定资产）");
+            add(created, snapshot, source, IncomeBeneficiaryType.INVESTOR, PLATFORM_BENEFICIARY_ID, IncomeLineType.INVESTOR_NET_RENT, snapshot.investorNetShareAmount(), "出资方净收益（待绑定资产）");
             return;
         }
         for (var allocation : allocations) {
-            add(created, snapshot, IncomeBeneficiaryType.INVESTOR, allocation.investorId(), IncomeLineType.INVESTOR_NET_RENT, allocation.netAmount(), "出资方净收益");
+            add(created, snapshot, source, IncomeBeneficiaryType.INVESTOR, allocation.investorId(), IncomeLineType.INVESTOR_NET_RENT, allocation.netAmount(), "出资方净收益");
         }
     }
 
@@ -205,34 +233,28 @@ public class SettlementIncomeService {
         return grossByInvestor.entrySet().stream().map(entry -> {
             var investorId = entry.getKey();
             var gross = money(entry.getValue());
-            var operationFee = multiply(gross, investorRepository.findById(investorId).map(Investor::operationFeeRate).orElse(BigDecimal.ZERO));
             var maintenanceFee = money(maintenanceByInvestor.get(investorId));
-            var net = gross.subtract(operationFee).subtract(maintenanceFee).setScale(2, RoundingMode.HALF_UP);
+            var net = gross.subtract(maintenanceFee).setScale(2, RoundingMode.HALF_UP);
             if (net.signum() < 0) {
                 net = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
             }
-            return new InvestorIncomeAllocation(investorId, gross, operationFee, maintenanceFee, net);
+            return new InvestorIncomeAllocation(investorId, gross, maintenanceFee, net);
         }).toList();
     }
 
     private List<AssetItem> actualUsageAssets(SettlementRuleSnapshot snapshot) {
-        var usageAssets = assetFulfillmentRepository.listUsageByOrder(snapshot.sourceId()).stream()
-            .map(usage -> assetRepository.findById(usage.assetId()).orElse(null))
-            .filter(java.util.Objects::nonNull)
-            .toList();
-        if (!usageAssets.isEmpty()) {
-            return usageAssets;
+        if (snapshot.sourceType() == SnapshotSourceType.ORDER) {
+            var usageAssets = assetFulfillmentRepository.listUsageByOrder(snapshot.sourceId()).stream()
+                .map(usage -> assetRepository.findById(usage.assetId()).orElse(null))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+            if (!usageAssets.isEmpty()) {
+                return usageAssets;
+            }
         }
         return java.util.stream.Stream.of(findAsset(snapshot.frameAssetId()), findAsset(snapshot.batteryAssetId()))
             .flatMap(java.util.Optional::stream)
             .toList();
-    }
-
-    private BigDecimal totalOperationFee(List<InvestorIncomeAllocation> allocations, SettlementRuleSnapshot snapshot) {
-        if (allocations.isEmpty()) {
-            return snapshot.investorOperationFeeAmount();
-        }
-        return allocations.stream().map(InvestorIncomeAllocation::operationFeeAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private BigDecimal totalMaintenanceFee(List<InvestorIncomeAllocation> allocations, SettlementRuleSnapshot snapshot) {
@@ -242,18 +264,17 @@ public class SettlementIncomeService {
         return allocations.stream().map(InvestorIncomeAllocation::maintenanceFeeAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    private BigDecimal multiply(BigDecimal amount, BigDecimal rate) {
-        return money(amount).multiply(rate == null ? BigDecimal.ZERO : rate).setScale(2, RoundingMode.HALF_UP);
-    }
-
     private BigDecimal money(BigDecimal value) {
         return (value == null ? BigDecimal.ZERO : value).setScale(2, RoundingMode.HALF_UP);
     }
 
-    private void add(List<SettlementIncomeEntry> created, SettlementRuleSnapshot snapshot, IncomeBeneficiaryType beneficiaryType, Long beneficiaryId, IncomeLineType lineType, BigDecimal amount, String remark) {
+    private void add(List<SettlementIncomeEntry> created, SettlementRuleSnapshot snapshot, IncomeSource source, IncomeBeneficiaryType beneficiaryType, Long beneficiaryId, IncomeLineType lineType, BigDecimal amount, String remark) {
         incomeRepository.create(new SettlementIncomeRepository.CreateRow(
             "INC-" + UUID.randomUUID().toString().substring(0, 8),
-            snapshot.sourceId(),
+            source.sourceType(),
+            source.sourceId(),
+            source.sourceNo(),
+            source.orderId(),
             snapshot.id(),
             snapshot.merchantId(),
             snapshot.storeId(),
@@ -261,7 +282,8 @@ public class SettlementIncomeService {
             beneficiaryId,
             lineType,
             amount == null ? BigDecimal.ZERO : amount.setScale(2, RoundingMode.HALF_UP),
-            remark
+            remark,
+            source.occurredAt() == null ? LocalDateTime.now() : source.occurredAt()
         )).ifPresent(created::add);
     }
 
@@ -289,13 +311,41 @@ public class SettlementIncomeService {
     }
 
     private SettlementIncomeEntryResponse toResponse(SettlementIncomeEntry entry) {
-        return new SettlementIncomeEntryResponse(entry.id(), entry.entryNo(), entry.orderId(), entry.snapshotId(), entry.merchantId(), entry.storeId(), entry.beneficiaryType().name(), entry.beneficiaryId(), entry.lineType().name(), entry.amount(), entry.entryStatus().name(), entry.remark(), entry.settledAt(), entry.createdAt());
+        return new SettlementIncomeEntryResponse(
+            entry.id(),
+            entry.entryNo(),
+            entry.sourceType().name(),
+            entry.sourceId(),
+            entry.sourceNo(),
+            entry.orderId(),
+            entry.snapshotId(),
+            entry.merchantId(),
+            entry.storeId(),
+            entry.beneficiaryType().name(),
+            entry.beneficiaryId(),
+            entry.lineType().name(),
+            entry.amount(),
+            entry.entryStatus().name(),
+            entry.remark(),
+            entry.occurredAt(),
+            entry.settledAt(),
+            entry.createdAt()
+        );
+    }
+
+    private record IncomeSource(
+        SnapshotSourceType sourceType,
+        Long sourceId,
+        String sourceNo,
+        Long orderId,
+        LocalDateTime occurredAt,
+        BigDecimal signFeeAmount
+    ) {
     }
 
     private record InvestorIncomeAllocation(
         Long investorId,
         BigDecimal grossAmount,
-        BigDecimal operationFeeAmount,
         BigDecimal maintenanceFeeAmount,
         BigDecimal netAmount
     ) {

@@ -1,4 +1,5 @@
-import { Button, Descriptions, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
+import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { Button, Descriptions, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
 import type {
@@ -19,6 +20,12 @@ type RoleForm = {
 
 type ScopeForm = {
   storeIds: number[];
+};
+
+type RoleEditForm = {
+  roleName: string;
+  status: 'ENABLED' | 'DISABLED';
+  permissionCodes: string[];
 };
 
 type CreateForm = SystemAccountCreatePayload;
@@ -57,12 +64,14 @@ export function SystemManagement({ mode }: SystemManagementProps) {
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<SystemAccount | null>(null);
+  const [editingRole, setEditingRole] = useState<SystemRole | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [roleOpen, setRoleOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
+  const [roleEditOpen, setRoleEditOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [permissionUpdatingAccountId, setPermissionUpdatingAccountId] = useState<number>();
   const [createForm] = Form.useForm<CreateForm>();
@@ -70,6 +79,7 @@ export function SystemManagement({ mode }: SystemManagementProps) {
   const [passwordForm] = Form.useForm<ResetPasswordForm>();
   const [roleForm] = Form.useForm<RoleForm>();
   const [scopeForm] = Form.useForm<ScopeForm>();
+  const [roleEditForm] = Form.useForm<RoleEditForm>();
   const createRoleCode = Form.useWatch('roleCode', createForm);
   const createMerchantId = Form.useWatch('merchantId', createForm);
 
@@ -107,6 +117,13 @@ export function SystemManagement({ mode }: SystemManagementProps) {
   const createMerchantScoped = Boolean(createRoleCode && merchantRoleOptions.some((item) => item.value === createRoleCode));
   const createInvestorScoped = createRoleCode === 'INVESTOR';
   const createNonOwnerMerchant = createMerchantScoped && createRoleCode !== 'MERCHANT_OWNER';
+  const createRoleOptions = useMemo(() => roles
+    .filter((role) => role.status === 'ENABLED' && role.roleCode !== 'CONSUMER')
+    .map((role) => ({ label: role.roleName, value: role.roleCode as SystemAccountCreatePayload['roleCode'] })), [roles]);
+  const permissionOptions = useMemo(() => permissions.map((permission) => ({
+    label: `${permission.permissionName} / ${permission.permissionCode}`,
+    value: permission.permissionCode
+  })), [permissions]);
 
   async function loadAll() {
     setLoading(true);
@@ -174,6 +191,16 @@ export function SystemManagement({ mode }: SystemManagementProps) {
     setScopeOpen(true);
   }
 
+  function openRoleEdit(record: SystemRole) {
+    setEditingRole(record);
+    roleEditForm.setFieldsValue({
+      roleName: record.roleName,
+      status: record.status,
+      permissionCodes: record.permissions
+    });
+    setRoleEditOpen(true);
+  }
+
   async function submitRole(values: RoleForm) {
     if (!selectedAccount) {
       return;
@@ -194,10 +221,32 @@ export function SystemManagement({ mode }: SystemManagementProps) {
     await loadAll();
   }
 
+  async function submitRoleEdit(values: RoleEditForm) {
+    if (!editingRole) return;
+    await http.put(`/api/admin/system/roles/${editingRole.id}`, values);
+    message.success('角色已更新');
+    roleEditForm.resetFields();
+    setEditingRole(null);
+    setRoleEditOpen(false);
+    await loadAll();
+  }
+
+  async function deleteRole(record: SystemRole) {
+    await http.delete(`/api/admin/system/roles/${record.id}`);
+    message.success('角色已删除');
+    await loadAll();
+  }
+
   async function toggleStatus(record: SystemAccount) {
     const status = record.status === 'ENABLED' ? 'DISABLED' : 'ENABLED';
     await http.put(`/api/admin/system/accounts/${record.id}/status`, null, { params: { status } });
     message.success(record.status === 'ENABLED' ? '账号已停用' : '账号已启用');
+    await loadAll();
+  }
+
+  async function deleteAccount(record: SystemAccount) {
+    await http.delete(`/api/admin/system/accounts/${record.id}`);
+    message.success('账号已删除');
     await loadAll();
   }
 
@@ -318,6 +367,16 @@ export function SystemManagement({ mode }: SystemManagementProps) {
                       <Button size="small" onClick={() => openScopes(record)}>范围</Button>
                     ) : null}
                     <Button size="small" onClick={() => toggleStatus(record)}>{record.status === 'ENABLED' ? '停用' : '启用'}</Button>
+                    <Popconfirm
+                      title="删除账号"
+                      description="删除后账号将立即退出登录并从账号列表移除，历史业务记录仍会保留。"
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => deleteAccount(record)}
+                    >
+                      <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                    </Popconfirm>
                   </Space>
                 )
               }
@@ -337,7 +396,26 @@ export function SystemManagement({ mode }: SystemManagementProps) {
               { title: '角色名称', dataIndex: 'roleName' },
               { title: '作用域', dataIndex: 'roleScope' },
               { title: '状态', dataIndex: 'status', render: statusTag },
-              { title: '权限点', dataIndex: 'permissions', render: (value: string[]) => value.length ? value.map((item) => <Tag key={item}>{item}</Tag>) : '-' }
+              { title: '权限点', dataIndex: 'permissions', render: (value: string[]) => value.length ? value.map((item) => <Tag key={item}>{item}</Tag>) : '-' },
+              {
+                title: '操作',
+                render: (_, record) => (
+                  <Space>
+                    <Button size="small" icon={<EditOutlined />} onClick={() => openRoleEdit(record)}>编辑</Button>
+                    <Popconfirm
+                      title="删除角色"
+                      description={record.roleCode === 'PLATFORM_ADMIN' ? '平台管理员角色不能删除。' : '仅未分配给任何账号的角色可以删除。'}
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                      disabled={record.roleCode === 'PLATFORM_ADMIN'}
+                      onConfirm={() => deleteRole(record)}
+                    >
+                      <Button size="small" danger icon={<DeleteOutlined />} disabled={record.roleCode === 'PLATFORM_ADMIN'}>删除</Button>
+                    </Popconfirm>
+                  </Space>
+                )
+              }
             ]}
           />
         ) : null}
@@ -396,8 +474,51 @@ export function SystemManagement({ mode }: SystemManagementProps) {
             <Typography.Text>{selectedAccount?.displayName || '-'}</Typography.Text>
           </Form.Item>
           <Form.Item name="roleCode" label="角色" rules={[{ required: true, message: '请选择角色' }]}>
-            <Select options={roleOptions(selectedAccount)} />
+            <Select options={roleOptions(selectedAccount, roles)} />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="编辑角色"
+        open={roleEditOpen}
+        onCancel={() => {
+          roleEditForm.resetFields();
+          setEditingRole(null);
+          setRoleEditOpen(false);
+        }}
+        onOk={() => roleEditForm.submit()}
+        destroyOnHidden
+        width={680}
+      >
+        <Form form={roleEditForm} layout="vertical" onFinish={submitRoleEdit}>
+          <Form.Item label="角色编码">
+            <Input disabled value={editingRole?.roleCode} />
+          </Form.Item>
+          <Form.Item name="roleName" label="角色名称" rules={[{ required: true, message: '请输入角色名称' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="status" label="角色状态" rules={[{ required: true, message: '请选择角色状态' }]}>
+            <Select
+              disabled={editingRole?.roleCode === 'PLATFORM_ADMIN'}
+              options={[
+                { label: '启用', value: 'ENABLED' },
+                { label: '停用', value: 'DISABLED' }
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="permissionCodes" label="角色权限">
+            <Select
+              mode="multiple"
+              showSearch
+              optionFilterProp="label"
+              options={permissionOptions}
+              placeholder="选择该角色默认拥有的权限"
+            />
+          </Form.Item>
+          {editingRole?.roleCode === 'PLATFORM_ADMIN' ? (
+            <Typography.Text type="secondary">平台管理员角色始终保持启用，并保留系统管理权限。</Typography.Text>
+          ) : null}
         </Form>
       </Modal>
 
@@ -548,7 +669,14 @@ export function SystemManagement({ mode }: SystemManagementProps) {
           onFinish={submitCreate}
           onValuesChange={(changedValues) => {
             if ('roleCode' in changedValues) {
-              createForm.setFieldsValue({ merchantId: undefined, investorId: undefined, storeIds: undefined });
+              const roleCode = changedValues.roleCode as SystemAccountCreatePayload['roleCode'];
+              const merchantScoped = merchantRoleOptions.some((item) => item.value === roleCode);
+              createForm.setFieldValue('investorId', undefined);
+              if (!merchantScoped) {
+                createForm.setFieldsValue({ merchantId: undefined, storeIds: undefined });
+              } else if (roleCode === 'MERCHANT_OWNER') {
+                createForm.setFieldValue('storeIds', undefined);
+              }
             }
             if ('merchantId' in changedValues) {
               createForm.setFieldValue('storeIds', undefined);
@@ -556,7 +684,7 @@ export function SystemManagement({ mode }: SystemManagementProps) {
           }}
         >
           <Form.Item name="roleCode" label="账号角色" rules={[{ required: true, message: '请选择账号角色' }]}>
-            <Select options={[...platformRoleOptions, ...merchantRoleOptions, ...investorRoleOptions]} />
+            <Select options={createRoleOptions} />
           </Form.Item>
           <Form.Item name="username" label="登录账号" rules={[{ required: true, message: '请输入登录账号' }]}>
             <Input />
@@ -619,20 +747,23 @@ const pageMetaMap: Record<SystemManagementMode, { title: string; description: st
   }
 };
 
-function roleOptions(account: SystemAccount | null) {
+function roleOptions(account: SystemAccount | null, roles: SystemRole[]) {
   if (!account) {
     return [];
   }
+  let allowedCodes: string[];
   if (account.merchantId) {
-    return merchantRoleOptions;
+    allowedCodes = merchantRoleOptions.map((item) => item.value);
+  } else if (account.investorId) {
+    allowedCodes = investorRoleOptions.map((item) => item.value);
+  } else if (!account.username) {
+    allowedCodes = ['CONSUMER'];
+  } else {
+    allowedCodes = platformRoleOptions.map((item) => item.value);
   }
-  if (account.investorId) {
-    return investorRoleOptions;
-  }
-  if (!account.username) {
-    return [{ label: '消费者', value: 'CONSUMER' }];
-  }
-  return platformRoleOptions;
+  return roles
+    .filter((role) => allowedCodes.includes(role.roleCode) && (role.status === 'ENABLED' || account.roles.includes(role.roleCode)))
+    .map((role) => ({ label: role.roleName, value: role.roleCode }));
 }
 
 function statusTag(status: 'ENABLED' | 'DISABLED') {

@@ -1,4 +1,4 @@
-import { CarOutlined, ExportOutlined, GiftOutlined, PlusOutlined, RollbackOutlined, SearchOutlined, SwapOutlined, UploadOutlined } from '@ant-design/icons';
+import { CarOutlined, EditOutlined, ExportOutlined, GiftOutlined, PlusOutlined, RollbackOutlined, SearchOutlined, SwapOutlined, UploadOutlined } from '@ant-design/icons';
 import { Button, DatePicker, Descriptions, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
@@ -101,6 +101,7 @@ export function OrderManagement() {
   const [stores, setStores] = useState<Store[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<RentalOrder | null>(null);
+  const [editingOrder, setEditingOrder] = useState<RentalOrder | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [transitionOpen, setTransitionOpen] = useState(false);
@@ -132,11 +133,11 @@ export function OrderManagement() {
   }, []);
 
   const storeSkuOptions = useMemo(() => storeSkus
-    .filter((item) => item.status === 'ON_SHELF')
+    .filter((item) => item.status === 'ON_SHELF' || item.id === editingOrder?.storeSkuId)
     .map((item) => ({
     label: `${item.displayName} / ${item.storeName}`,
     value: item.id
-  })), [storeSkus]);
+  })), [editingOrder, storeSkus]);
 
   const activeStoreSkus = useMemo(() => storeSkus.filter((item) => item.status === 'ON_SHELF'), [storeSkus]);
 
@@ -156,25 +157,25 @@ export function OrderManagement() {
   );
 
   const packageOptions = useMemo(() => (selectedStoreSku?.packages ?? [])
-    .filter((item) => item.status === 'ENABLED')
+    .filter((item) => item.status === 'ENABLED' || item.packageId === editingOrder?.packageId)
     .map((pkg) => ({
       label: `${pkg.packageName} / ${moneyText(pkg.rentalAmount)}`,
       value: pkg.packageId
-    })), [selectedStoreSku]);
+    })), [editingOrder, selectedStoreSku]);
 
   const frameAssetOptions = useMemo(() => assets.filter((item) => item.assetType !== 'BATTERY'
-    && item.status === 'IDLE'
+    && (item.status === 'IDLE' || item.id === editingOrder?.frameAssetId)
     && item.currentStoreId === selectedStoreSku?.storeId).map((item) => ({
     label: `${item.serialNo} / ${item.assetCode} / ${item.assetTypeName || primaryAssetTypeText(item)}`,
     value: item.id
-  })), [assets, selectedStoreSku]);
+  })), [assets, editingOrder, selectedStoreSku]);
 
   const batteryAssetOptions = useMemo(() => assets.filter((item) => item.assetType === 'BATTERY'
-    && item.status === 'IDLE'
+    && (item.status === 'IDLE' || item.id === editingOrder?.batteryAssetId)
     && item.currentStoreId === selectedStoreSku?.storeId).map((item) => ({
     label: `${item.serialNo} / ${item.assetCode}`,
     value: item.id
-  })), [assets, selectedStoreSku]);
+  })), [assets, editingOrder, selectedStoreSku]);
 
   const integratedVehicleSelected = useMemo(
     () => assets.some((item) => item.id === selectedFrameAssetId && item.assetType === 'INTEGRATED_VEHICLE'),
@@ -319,17 +320,53 @@ export function OrderManagement() {
       verificationAmount: firstPackage ? Number(firstPackage.rentalAmount) : undefined,
       orderedAt: dayjs()
     });
+    setEditingOrder(null);
     setCreateOpen(true);
   }
 
-  async function createOrder(values: CreateForm) {
-    await http.post('/api/admin/orders', {
-      ...values,
-      orderedAt: values.orderedAt.format('YYYY-MM-DDTHH:mm:ss')
-    });
-    setCreateOpen(false);
+  function openEditOrder(order: RentalOrder) {
+    setEditingOrder(order);
     createForm.resetFields();
-    message.success('订单已创建，账单计划已生成');
+    createForm.setFieldsValue({
+      userAccountId: order.userAccountId ?? undefined,
+      customerName: order.customerName || '',
+      customerPhone: order.customerPhone || '',
+      storeSkuId: order.storeSkuId,
+      packageId: order.packageId,
+      verificationAmount: Number(order.verificationAmount),
+      frameAssetId: order.frameAssetId ?? undefined,
+      batteryAssetId: order.batteryAssetId ?? undefined,
+      orderedAt: dayjs(order.orderedAt)
+    });
+    setCreateOpen(true);
+  }
+
+  function closeOrderForm() {
+    setCreateOpen(false);
+    setEditingOrder(null);
+    createForm.resetFields();
+  }
+
+  async function submitOrder(values: CreateForm) {
+    const editablePayload = {
+      userAccountId: values.userAccountId,
+      customerName: values.customerName,
+      customerPhone: values.customerPhone,
+      storeSkuId: values.storeSkuId,
+      packageId: values.packageId,
+      verificationAmount: values.verificationAmount,
+      frameAssetId: values.frameAssetId,
+      batteryAssetId: values.batteryAssetId,
+      orderedAt: values.orderedAt.format('YYYY-MM-DDTHH:mm:ss')
+    };
+    if (editingOrder) {
+      await http.put(`/api/admin/orders/${editingOrder.id}`, editablePayload);
+      message.success('订单资料、账单和分润快照已同步更新');
+    } else {
+      await http.post('/api/admin/orders', editablePayload);
+      message.success('订单已创建，账单计划已生成');
+    }
+    closeOrderForm();
     await loadAll();
   }
 
@@ -590,10 +627,13 @@ export function OrderManagement() {
             { title: '下单时间', dataIndex: 'orderedAt', width: 170, render: dateText },
             {
               title: '操作',
-              width: 320,
+              width: 360,
               fixed: 'right',
               render: (_, record) => (
                 <Space wrap>
+                  {canEditOrder(record) ? (
+                    <Button size="small" icon={<EditOutlined />} onClick={() => openEditOrder(record)}>编辑</Button>
+                  ) : null}
                   {transitionOptionsFor(record.orderStatus).length ? (
                     <Button size="small" onClick={() => openTransition(record)}>流转</Button>
                   ) : null}
@@ -625,8 +665,8 @@ export function OrderManagement() {
         />
       </div>
 
-      <Modal title="新建订单" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => createForm.submit()} destroyOnHidden>
-        <Form form={createForm} layout="vertical" onFinish={createOrder}>
+      <Modal title={editingOrder ? '编辑订单' : '新建订单'} open={createOpen} onCancel={closeOrderForm} onOk={() => createForm.submit()} destroyOnHidden>
+        <Form form={createForm} layout="vertical" onFinish={submitOrder}>
           <Form.Item name="userAccountId" label="用户账号 ID"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="customerName" label="客户姓名" rules={[{ required: true, message: '请输入客户姓名' }]}><Input /></Form.Item>
           <Form.Item name="customerPhone" label="联系电话" rules={[{ required: true, message: '请输入联系电话' }]}><Input /></Form.Item>
@@ -866,6 +906,10 @@ function renewalText(order: RentalOrder) {
 
 function canGrantLeaseBonus(order: RentalOrder) {
   return !['OVERDUE', 'PENDING_SUPPLEMENT', 'COMPLETED', 'CANCELLED', 'EXCEPTION'].includes(order.orderStatus);
+}
+
+function canEditOrder(order: RentalOrder) {
+  return order.orderStatus === 'PENDING_PAYMENT' && Number(order.paidAmount || 0) === 0;
 }
 
 function transitionOptionsFor(status: OrderStatus) {

@@ -195,6 +195,39 @@ public class AssetRepository {
         return findById(id).orElseThrow();
     }
 
+    public int countBusinessReferences(Long assetId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT
+                (SELECT COUNT(*) FROM rental_order WHERE frame_asset_id = ? OR battery_asset_id = ?)
+              + (SELECT COUNT(*) FROM external_rental_order WHERE frame_asset_id = ? OR battery_asset_id = ?)
+              + (SELECT COUNT(*) FROM rental_order_item WHERE ref_id = ? AND item_type IN ('ASSET_FRAME', 'ASSET_BATTERY'))
+              + (SELECT COUNT(*) FROM rental_asset_handover WHERE frame_asset_id = ? OR battery_asset_id = ?)
+              + (SELECT COUNT(*) FROM rental_asset_change WHERE old_asset_id = ? OR new_asset_id = ?)
+              + (SELECT COUNT(*) FROM order_asset_usage WHERE asset_id = ?)
+              + (SELECT COUNT(*) FROM asset_maintenance_record WHERE asset_id = ?)
+              + (SELECT COUNT(*) FROM settlement_rule_snapshot WHERE frame_asset_id = ? OR battery_asset_id = ?)
+              + (SELECT COUNT(*) FROM settlement_statement_line WHERE asset_id = ?)
+            """, Integer.class,
+            assetId, assetId,
+            assetId, assetId,
+            assetId,
+            assetId, assetId,
+            assetId, assetId,
+            assetId,
+            assetId,
+            assetId, assetId,
+            assetId
+        );
+        return count == null ? 0 : count;
+    }
+
+    public void deleteAsset(Long assetId) {
+        jdbcTemplate.update("DELETE FROM asset_status_log WHERE asset_id = ?", assetId);
+        jdbcTemplate.update("DELETE FROM asset_location_history WHERE asset_id = ?", assetId);
+        jdbcTemplate.update("DELETE FROM asset_ownership_history WHERE asset_id = ?", assetId);
+        jdbcTemplate.update("DELETE FROM asset_item WHERE id = ?", assetId);
+    }
+
     public void insertOwnership(Long assetId, Long investorId, String reason) {
         jdbcTemplate.update("""
             INSERT INTO asset_ownership_history (asset_id, investor_id, change_reason)

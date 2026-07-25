@@ -1,5 +1,5 @@
-import { DownloadOutlined, EditOutlined, ExportOutlined, PlusOutlined, SearchOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
-import { Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
+import { DeleteOutlined, DownloadOutlined, EditOutlined, ExportOutlined, PlusOutlined, SearchOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
+import { Button, Checkbox, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { AssetBatchImportModal, downloadAssetImportTemplate } from '../components/AssetBatchImportModal';
 import { http } from '../services/request';
@@ -27,7 +27,6 @@ type InvestorForm = {
   investorName: string;
   contactName: string;
   contactPhone: string;
-  operationFeeRate: number;
   createAccount?: boolean;
   username?: string;
   displayName?: string;
@@ -250,7 +249,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   function openCreateInvestor() {
     setEditingInvestor(null);
     investorForm.resetFields();
-    investorForm.setFieldsValue({ operationFeeRate: 0.08, createAccount: true, password: 'Xniu@2026' });
+    investorForm.setFieldsValue({ createAccount: true, password: 'Xniu@2026' });
     setInvestorOpen(true);
   }
 
@@ -380,6 +379,12 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
     await loadAll();
   }
 
+  async function deleteInvestor(record: Investor) {
+    await http.delete(`/api/admin/investors/${record.id}`);
+    message.success('出资方已删除');
+    await loadAll();
+  }
+
   async function submitAsset(values: AssetForm) {
     const details = {
       assetTypeId: values.assetTypeId,
@@ -403,6 +408,12 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
     setAssetOpen(false);
     setEditingAsset(null);
     assetForm.resetFields();
+    await loadAll();
+  }
+
+  async function deleteAsset(record: Asset) {
+    await http.delete(`/api/admin/assets/${record.id}`);
+    message.success('资产已删除');
     await loadAll();
   }
 
@@ -497,7 +508,6 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
             { title: '名称', dataIndex: 'investorName' },
             { title: '联系人', dataIndex: 'contactName' },
             { title: '电话', dataIndex: 'contactPhone' },
-            { title: '运营手续费', dataIndex: 'operationFeeRate', render: (rate: number) => `${(rate * 100).toFixed(2)}%` },
             { title: '状态', dataIndex: 'status', render: enabledTag },
             {
               title: '操作',
@@ -505,6 +515,16 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
                 <Space>
                   <Button size="small" onClick={() => openEditInvestor(record)}>编辑</Button>
                   <Button size="small" onClick={() => toggleInvestorStatus(record)}>{record.status === 'ENABLED' ? '停用' : '启用'}</Button>
+                  <Popconfirm
+                    title="删除出资方"
+                    description="仅未关联账号、资产和结算数据的出资方可以删除。"
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => deleteInvestor(record)}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                  </Popconfirm>
                 </Space>
               )
             }
@@ -582,6 +602,18 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
                     <Button size="small" onClick={() => openMaintenance(record)}>维修</Button>
                   ) : null}
                   <Button size="small" onClick={() => openLogs(record)}>日志</Button>
+                  {canManageAssets ? (
+                    <Popconfirm
+                      title="删除资产"
+                      description="仅空闲且没有订单、履约、维修或结算记录的资产可以删除。"
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => deleteAsset(record)}
+                    >
+                      <Button size="small" danger icon={<DeleteOutlined />} disabled={record.status !== 'IDLE'}>删除</Button>
+                    </Popconfirm>
+                  ) : null}
                 </Space>
               )
             }
@@ -618,9 +650,6 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           <Form.Item name="investorName" label="出资方名称" rules={[{ required: true, message: '请输入出资方名称' }]}><Input /></Form.Item>
           <Form.Item name="contactName" label="联系人" rules={[{ required: true, message: '请输入联系人' }]}><Input /></Form.Item>
           <Form.Item name="contactPhone" label="联系电话" rules={[{ required: true, message: '请输入联系电话' }]}><Input /></Form.Item>
-          <Form.Item name="operationFeeRate" label="运营手续费比例" rules={[{ required: true, message: '请输入运营手续费比例' }]}>
-            <InputNumber min={0} max={1} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
           {!editingInvestor ? (
             <>
               <Form.Item name="createAccount" valuePropName="checked">
@@ -834,6 +863,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
                 { title: '外部单号', dataIndex: 'externalOrderNo', render: (value) => value || '-' },
                 { title: '客户', render: (_, record) => record.customerName ? `${record.customerName} / ${record.customerPhone || '-'}` : '-' },
                 { title: '租金', dataIndex: 'rentalAmount', render: money },
+                { title: '实际核销', dataIndex: 'verificationAmount', render: money },
                 { title: '签单费', dataIndex: 'signFeeAmount', render: money },
                 { title: '已收', dataIndex: 'paidAmount', render: money },
                 { title: '租期', render: (_, record) => `${record.leaseValue}${record.leaseUnit === 'MONTH' ? '个月' : '天'} / ${record.totalPeriods}期` },

@@ -44,13 +44,11 @@ public class InvestorService {
     @Transactional
     public InvestorResponse createInvestor(InvestorRequest request) {
         authorizationService.requirePermission("investor.write");
-        validateRate(request);
         var investor = investorRepository.create(
             nextCode(),
             request.investorName(),
             request.contactName(),
-            request.contactPhone(),
-            request.operationFeeRate()
+            request.contactPhone()
         );
         if (Boolean.TRUE.equals(request.createAccount())) {
             validateAccountRequest(request);
@@ -62,14 +60,12 @@ public class InvestorService {
     @Transactional
     public InvestorResponse updateInvestor(Long id, InvestorRequest request) {
         authorizationService.requirePermission("investor.write");
-        validateRate(request);
         ensureInvestorExists(id);
         return toResponse(investorRepository.update(
             id,
             request.investorName(),
             request.contactName(),
-            request.contactPhone(),
-            request.operationFeeRate()
+            request.contactPhone()
         ));
     }
 
@@ -80,14 +76,18 @@ public class InvestorService {
         return toResponse(investorRepository.updateStatus(id, status));
     }
 
-    public Investor ensureInvestorExists(Long id) {
-        return investorRepository.findById(id).orElseThrow(() -> BusinessException.badRequest("出资方不存在"));
+    @Transactional
+    public void deleteInvestor(Long id) {
+        authorizationService.requirePermission("investor.write");
+        ensureInvestorExists(id);
+        if (investorRepository.countReferences(id) > 0) {
+            throw BusinessException.badRequest("出资方已关联账号、资产或结算数据，不能删除");
+        }
+        investorRepository.delete(id);
     }
 
-    private void validateRate(InvestorRequest request) {
-        if (request.operationFeeRate().signum() < 0 || request.operationFeeRate().compareTo(java.math.BigDecimal.ONE) > 0) {
-            throw BusinessException.badRequest("运营手续费比例必须在 0 到 1 之间");
-        }
+    public Investor ensureInvestorExists(Long id) {
+        return investorRepository.findById(id).orElseThrow(() -> BusinessException.badRequest("出资方不存在"));
     }
 
     private void validateAccountRequest(InvestorRequest request) {
@@ -130,7 +130,6 @@ public class InvestorService {
             investor.investorName(),
             investor.contactName(),
             investor.contactPhone(),
-            investor.operationFeeRate(),
             investor.status().name()
         );
     }

@@ -1,4 +1,4 @@
-import { DownloadOutlined, EditOutlined, ExportOutlined, GiftOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, EditOutlined, ExportOutlined, GiftOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
 import {
   Alert,
   Button,
@@ -9,6 +9,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Statistic,
@@ -34,6 +35,7 @@ import type {
   AssetTypeDefinition,
   CollectionStatus,
   CurrentAccount,
+  ExternalRentalOrder,
   OrderStatus,
   OverdueCase,
   RentalBill,
@@ -94,7 +96,6 @@ type CreateOrderForm = {
   frameAssetId?: number;
   batteryAssetId?: number;
   orderedAt: Dayjs;
-  expectedPickupAt?: Dayjs;
 };
 
 type SparePartTransferForm = {
@@ -112,6 +113,19 @@ type MerchantAssetForm = {
   purchaseAmount: number;
   residualValue?: number;
   purchasedAt?: string;
+};
+
+type MerchantMaintenanceForm = {
+  orderId?: number;
+  maintenanceType: string;
+  maintenanceStatus?: string;
+  responsibilityType: 'ROUTINE_MAINTENANCE' | 'CUSTOMER_DAMAGE' | 'MERCHANT_RESPONSIBILITY' | 'PLATFORM_SUBSIDY';
+  costBearerType: 'USER' | 'INVESTOR' | 'MERCHANT' | 'PLATFORM';
+  costBearerId?: number;
+  laborCost?: number;
+  externalCost?: number;
+  remark?: string;
+  parts?: { partId?: number; quantity?: number; unitPrice?: number; remark?: string }[];
 };
 
 const orderStatusOptions: { label: string; value: OrderStatus }[] = [
@@ -154,6 +168,7 @@ const collectionStatusOptions: { label: string; value: CollectionStatus; color: 
 
 export function MerchantDashboard({ account, storeId, stores }: MerchantPageProps) {
   const [orders, setOrders] = useState<RentalOrder[]>([]);
+  const [externalOrders, setExternalOrders] = useState<ExternalRentalOrder[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [overdues, setOverdues] = useState<OverdueCase[]>([]);
   const [incomeEntries, setIncomeEntries] = useState<SettlementIncomeEntry[]>([]);
@@ -165,6 +180,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
   async function loadData() {
     if (!storeId) {
       setOrders([]);
+      setExternalOrders([]);
       setAssets([]);
       setOverdues([]);
       setIncomeEntries([]);
@@ -174,8 +190,9 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     setLoading(true);
     setError('');
     try {
-      const [orderData, assetData, overdueData, incomeData, statementData] = await Promise.all([
+      const [orderData, externalOrderData, assetData, overdueData, incomeData, statementData] = await Promise.all([
         http.get<unknown, RentalOrder[]>('/api/merchant/orders', { params: { storeId } }),
+        http.get<unknown, ExternalRentalOrder[]>('/api/merchant/external-orders', { params: { storeId } }),
         http.get<unknown, Asset[]>(`/api/merchant/assets/stores/${storeId}`),
         http.get<unknown, OverdueCase[]>('/api/merchant/overdues', { params: { storeId, overdueStatus: 'OPEN' } }),
         canReadSettlement
@@ -186,6 +203,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
           : Promise.resolve([])
       ]);
       setOrders(orderData);
+      setExternalOrders(externalOrderData);
       setAssets(assetData);
       setOverdues(overdueData);
       setIncomeEntries(incomeData);
@@ -203,13 +221,16 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
 
   const metrics = useMemo(() => ({
     pendingPickup: orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').length,
-    renting: orders.filter((item) => item.orderStatus === 'RENTING').length,
+    renting: orders.filter((item) => item.orderStatus === 'RENTING').length
+      + externalOrders.filter((item) => item.orderStatus === 'ACTIVE').length,
+    externalCount: externalOrders.length,
+    externalCollected: externalOrders.reduce((sum, item) => sum + Number(item.verificationAmount || 0), 0),
     overdue: overdues.length,
     idleAssets: assets.filter((item) => item.status === 'IDLE').length,
     exceptionAssets: assets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length,
     pendingIncome: incomeEntries.filter((item) => item.entryStatus === 'PENDING').reduce((sum, item) => sum + Number(item.amount || 0), 0),
     latestStatementIncome: Number(statements[0]?.payableAmount || 0)
-  }), [orders, assets, overdues, incomeEntries, statements]);
+  }), [orders, externalOrders, assets, overdues, incomeEntries, statements]);
 
   const currentStore = stores.find((item) => item.id === storeId);
 
@@ -236,13 +257,34 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
 
       <Space size={16} wrap>
         <Metric title="待取车订单" value={metrics.pendingPickup} />
-        <Metric title="租赁中订单" value={metrics.renting} />
+        <Metric title="租赁中订单（含补录）" value={metrics.renting} />
+        <Metric title="补录订单" value={metrics.externalCount} />
+        <Metric title="补录核销金额" value={money(metrics.externalCollected)} />
         <Metric title="逾期订单" value={metrics.overdue} />
         <Metric title="空闲资产" value={metrics.idleAssets} />
         <Metric title="异常/维修资产" value={metrics.exceptionAssets} />
         {canReadSettlement ? <Metric title="待结算收益" value={money(metrics.pendingIncome)} /> : null}
         {canReadSettlement ? <Metric title="最近月结金额" value={money(metrics.latestStatementIncome)} /> : null}
       </Space>
+
+      <div className="section">
+        <Typography.Title level={5}>最近补录订单</Typography.Title>
+        <Table
+          rowKey="id"
+          size="small"
+          loading={loading}
+          dataSource={externalOrders.slice(0, 8)}
+          pagination={false}
+          columns={[
+            { title: '补录单号', dataIndex: 'recordNo' },
+            { title: '客户', dataIndex: 'customerName' },
+            { title: '状态', dataIndex: 'orderStatus', render: externalOrderStatusTag },
+            { title: '实际核销金额', dataIndex: 'verificationAmount', render: money },
+            { title: '起租时间', dataIndex: 'rentStartedAt', render: dateText },
+            { title: '预计归还', dataIndex: 'expectedReturnAt', render: dateText }
+          ]}
+        />
+      </div>
 
       <div className="section">
         <Typography.Title level={5}>待处理订单</Typography.Title>
@@ -339,6 +381,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
   const [orderStatus, setOrderStatus] = useState<OrderStatus | undefined>();
   const [orderKeyword, setOrderKeyword] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<RentalOrder | null>(null);
+  const [editingOrder, setEditingOrder] = useState<RentalOrder | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -372,27 +415,31 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
     [selectedPackageId, selectedStoreSku]
   );
 
-  const storeSkuOptions = useMemo(() => storeSkus.map((item) => ({
+  const storeSkuOptions = useMemo(() => storeSkus
+    .filter((item) => item.status === 'ON_SHELF' || item.id === editingOrder?.storeSkuId)
+    .map((item) => ({
     label: item.displayName,
     value: item.id
-  })), [storeSkus]);
+  })), [editingOrder, storeSkus]);
 
   const packageOptions = useMemo(() => (selectedStoreSku?.packages ?? [])
-    .filter((item) => item.status === 'ENABLED')
+    .filter((item) => item.status === 'ENABLED' || item.packageId === editingOrder?.packageId)
     .map((item) => ({
       label: `${item.packageName} / ${money(item.rentalAmount)}`,
       value: item.packageId
-    })), [selectedStoreSku]);
+    })), [editingOrder, selectedStoreSku]);
 
   const frameOptions = useMemo(() => assets
     .filter((item) => item.assetType !== 'BATTERY'
-      && item.status === 'IDLE'
+      && (item.status === 'IDLE' || item.id === editingOrder?.frameAssetId)
       && item.currentStoreId === storeId)
-    .map((item) => ({ label: assetSelectLabel(item), value: item.id })), [assets, storeId]);
+    .map((item) => ({ label: assetSelectLabel(item), value: item.id })), [assets, editingOrder, storeId]);
 
   const batteryOptions = useMemo(() => assets
-    .filter((item) => item.assetType === 'BATTERY' && item.status === 'IDLE' && item.currentStoreId === storeId)
-    .map((item) => ({ label: assetSelectLabel(item), value: item.id })), [assets, storeId]);
+    .filter((item) => item.assetType === 'BATTERY'
+      && (item.status === 'IDLE' || item.id === editingOrder?.batteryAssetId)
+      && item.currentStoreId === storeId)
+    .map((item) => ({ label: assetSelectLabel(item), value: item.id })), [assets, editingOrder, storeId]);
 
   const replaceAssetOptions = useMemo(() => {
     return assets
@@ -499,20 +546,55 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       verificationAmount: firstPackage ? Number(firstPackage.rentalAmount) : undefined,
       orderedAt: dayjs()
     });
+    setEditingOrder(null);
     setCreateOpen(true);
+  }
+
+  function openEditOrder(order: RentalOrder) {
+    setEditingOrder(order);
+    createForm.resetFields();
+    createForm.setFieldsValue({
+      userAccountId: order.userAccountId ?? undefined,
+      customerName: order.customerName || '',
+      customerPhone: order.customerPhone || '',
+      storeSkuId: order.storeSkuId,
+      packageId: order.packageId,
+      verificationAmount: Number(order.verificationAmount),
+      frameAssetId: order.frameAssetId ?? undefined,
+      batteryAssetId: order.batteryAssetId ?? undefined,
+      orderedAt: dayjs(order.orderedAt)
+    });
+    setCreateOpen(true);
+  }
+
+  function closeOrderForm() {
+    setCreateOpen(false);
+    setEditingOrder(null);
+    createForm.resetFields();
   }
 
   async function submitCreateOrder(values: CreateOrderForm) {
     setActionLoading(true);
     try {
-      await http.post('/api/merchant/orders', {
-        ...values,
-        orderedAt: values.orderedAt.format('YYYY-MM-DDTHH:mm:ss'),
-        expectedPickupAt: values.expectedPickupAt?.format('YYYY-MM-DDTHH:mm:ss')
-      });
-      message.success('订单已创建，账单计划已生成');
-      setCreateOpen(false);
-      createForm.resetFields();
+      const editablePayload = {
+        userAccountId: values.userAccountId,
+        customerName: values.customerName,
+        customerPhone: values.customerPhone,
+        storeSkuId: values.storeSkuId,
+        packageId: values.packageId,
+        verificationAmount: values.verificationAmount,
+        frameAssetId: values.frameAssetId,
+        batteryAssetId: values.batteryAssetId,
+        orderedAt: values.orderedAt.format('YYYY-MM-DDTHH:mm:ss')
+      };
+      if (editingOrder) {
+        await http.put(`/api/merchant/orders/${editingOrder.id}`, editablePayload);
+        message.success('订单资料、账单和分润快照已同步更新');
+      } else {
+        await http.post('/api/merchant/orders', editablePayload);
+        message.success('订单已创建，账单计划已生成');
+      }
+      closeOrderForm();
       await loadAll();
     } finally {
       setActionLoading(false);
@@ -710,9 +792,14 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
             { title: '下单时间', dataIndex: 'orderedAt', render: dateText },
             {
               title: '操作',
+              width: 360,
+              fixed: 'right',
               render: (_, record) => (
                 <Space wrap>
                   <Button size="small" onClick={() => openDetail(record)}>详情</Button>
+                  {canCreateOrder && canEditOrder(record) ? (
+                    <Button size="small" icon={<EditOutlined />} onClick={() => openEditOrder(record)}>编辑</Button>
+                  ) : null}
                   {canOperateOrder && canGrantLeaseBonus(record) ? (
                     <Button size="small" icon={<GiftOutlined />} onClick={() => openLeaseBonus(record)}>
                       赠送租期
@@ -746,9 +833,9 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       </div>
 
       <Modal
-        title="新建订单"
+        title={editingOrder ? '编辑订单' : '新建订单'}
         open={createOpen}
-        onCancel={() => setCreateOpen(false)}
+        onCancel={closeOrderForm}
         onOk={() => createForm.submit()}
         confirmLoading={actionLoading}
         destroyOnHidden
@@ -823,9 +910,6 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
               disabledDate={(current) => current.isAfter(dayjs(), 'day')}
               style={{ width: '100%' }}
             />
-          </Form.Item>
-          <Form.Item name="expectedPickupAt" label="预计取车时间">
-            <DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
           </Form.Item>
         </Form>
       </Modal>
@@ -1063,18 +1147,24 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
   const [assetTypeFilter, setAssetTypeFilter] = useState<number>();
   const [assetStatusFilter, setAssetStatusFilter] = useState<AssetStatus>();
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
+  const [maintenanceAsset, setMaintenanceAsset] = useState<Asset | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<AssetDetail | null>(null);
+  const [maintenanceStocks, setMaintenanceStocks] = useState<StoreSparePartStock[]>([]);
   const [assetOpen, setAssetOpen] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [maintenanceSaving, setMaintenanceSaving] = useState(false);
   const [assetForm] = Form.useForm<MerchantAssetForm>();
+  const [maintenanceForm] = Form.useForm<MerchantMaintenanceForm>();
   const selectedAssetTypeId = Form.useWatch('assetTypeId', assetForm);
   const currentStore = stores.find((item) => item.id === storeId);
   const canImportAssets = account.permissions.includes('asset.import') || account.permissions.includes('system.admin');
   const canManageAssets = account.permissions.includes('asset.manage') || account.permissions.includes('system.admin');
+  const canOperateMaintenance = account.permissions.includes('maintenance.operate') || account.permissions.includes('system.admin');
   const assetTypeFilterOptions = useMemo(() => assetTypes.map((type) => ({
     label: `${type.typeName}${type.status === 'DISABLED' ? '（已停用）' : ''}`,
     value: type.id
@@ -1091,6 +1181,10 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     label: `${investor.investorName} / ${investor.investorCode}`,
     value: investor.id
   })), [investorOptions]);
+  const maintenancePartOptions = useMemo(() => maintenanceStocks.map((stock) => ({
+    label: `${stock.partName} / 库存 ${stock.stockQuantity}`,
+    value: stock.partId
+  })), [maintenanceStocks]);
   const selectedAssetType = useMemo(
     () => assetTypes.find((type) => type.id === selectedAssetTypeId),
     [assetTypes, selectedAssetTypeId]
@@ -1111,20 +1205,25 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
   async function loadAssets() {
     if (!storeId) {
       setAssets([]);
+      setMaintenanceStocks([]);
       return;
     }
     setLoading(true);
     try {
-      const [assetData, typeData, investorData] = await Promise.all([
+      const [assetData, typeData, investorData, stockData] = await Promise.all([
         http.get<unknown, Asset[]>(`/api/merchant/assets/stores/${storeId}`),
         http.get<unknown, AssetTypeDefinition[]>('/api/merchant/assets/types'),
         canManageAssets
           ? http.get<unknown, AssetInvestorOption[]>('/api/merchant/assets/investors')
-          : Promise.resolve<AssetInvestorOption[]>([])
+          : Promise.resolve<AssetInvestorOption[]>([]),
+        canOperateMaintenance
+          ? http.get<unknown, StoreSparePartStock[]>('/api/merchant/spare-parts/store-stocks', { params: { storeId } })
+          : Promise.resolve<StoreSparePartStock[]>([])
       ]);
       setAssets(assetData);
       setAssetTypes(typeData);
       setInvestorOptions(investorData);
+      setMaintenanceStocks(stockData);
     } finally {
       setLoading(false);
     }
@@ -1167,6 +1266,21 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     setAssetOpen(true);
   }
 
+  function openMaintenance(record: Asset) {
+    setMaintenanceAsset(record);
+    maintenanceForm.resetFields();
+    maintenanceForm.setFieldsValue({
+      maintenanceType: 'REPAIR',
+      maintenanceStatus: 'COMPLETED',
+      responsibilityType: 'ROUTINE_MAINTENANCE',
+      costBearerType: 'INVESTOR',
+      laborCost: 0,
+      externalCost: 0,
+      parts: []
+    });
+    setMaintenanceOpen(true);
+  }
+
   async function submitAsset(values: MerchantAssetForm) {
     if (!storeId) return;
     setSaving(true);
@@ -1184,6 +1298,33 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
       await loadAssets();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deleteAsset(record: Asset) {
+    if (!storeId) return;
+    await http.delete(`/api/merchant/assets/stores/${storeId}/${record.id}`);
+    message.success('资产已删除');
+    await loadAssets();
+  }
+
+  async function submitMaintenance(values: MerchantMaintenanceForm) {
+    if (!storeId || !maintenanceAsset) return;
+    setMaintenanceSaving(true);
+    try {
+      await http.post('/api/merchant/maintenances', {
+        ...values,
+        assetId: maintenanceAsset.id,
+        storeId,
+        parts: (values.parts || []).filter((item) => item.partId && item.quantity)
+      });
+      message.success('维修记录已登记');
+      setMaintenanceOpen(false);
+      setMaintenanceAsset(null);
+      maintenanceForm.resetFields();
+      await loadAssets();
+    } finally {
+      setMaintenanceSaving(false);
     }
   }
 
@@ -1273,6 +1414,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           loading={loading}
           dataSource={filteredAssets}
           pagination={false}
+          scroll={{ x: 1100 }}
           columns={[
             { title: '序号', width: 70, render: (_value, _record, index) => index + 1 },
             { title: '资产编码', dataIndex: 'assetCode' },
@@ -1284,6 +1426,8 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
             { title: '残值', dataIndex: 'residualValue', render: optionalMoney },
             {
               title: '操作',
+              width: 230,
+              fixed: 'right',
               render: (_, record) => (
                 <Space>
                   {canManageAssets ? (
@@ -1298,6 +1442,19 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
                     </Button>
                   ) : null}
                   <Button size="small" onClick={() => openDetail(record)}>详情</Button>
+                  {canOperateMaintenance ? <Button size="small" onClick={() => openMaintenance(record)}>维修</Button> : null}
+                  {canManageAssets ? (
+                    <Popconfirm
+                      title="删除资产"
+                      description="仅空闲且没有订单、履约、维修或结算记录的资产可以删除。"
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => deleteAsset(record)}
+                    >
+                      <Button size="small" danger icon={<DeleteOutlined />} disabled={record.status !== 'IDLE'}>删除</Button>
+                    </Popconfirm>
+                  ) : null}
                 </Space>
               )
             }
@@ -1347,6 +1504,101 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           <Form.Item name="purchasedAt" label="采购日期">
             <Input placeholder="2026-07-22" />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={maintenanceAsset ? `${maintenanceAsset.assetCode} / 登记维修` : '登记维修'}
+        open={maintenanceOpen}
+        onCancel={() => {
+          maintenanceForm.resetFields();
+          setMaintenanceAsset(null);
+          setMaintenanceOpen(false);
+        }}
+        onOk={() => maintenanceForm.submit()}
+        confirmLoading={maintenanceSaving}
+        width={860}
+        destroyOnHidden
+      >
+        <Form form={maintenanceForm} layout="vertical" onFinish={submitMaintenance}>
+          <Form.Item name="orderId" label="关联订单 ID">
+            <InputNumber min={1} placeholder="需要绑定租赁订单时填写" style={{ width: '100%' }} />
+          </Form.Item>
+          <Space style={{ width: '100%' }} size={12} align="start">
+            <Form.Item name="maintenanceType" label="维修类型" rules={[{ required: true, message: '请选择维修类型' }]} style={{ flex: 1 }}>
+              <Select options={[
+                { label: '维修', value: 'REPAIR' },
+                { label: '保养', value: 'MAINTENANCE' },
+                { label: '换件', value: 'REPLACE_PART' },
+                { label: '检测', value: 'INSPECTION' }
+              ]} />
+            </Form.Item>
+            <Form.Item name="responsibilityType" label="责任归因" rules={[{ required: true, message: '请选择责任归因' }]} style={{ flex: 1 }}>
+              <Select options={[
+                { label: '日常资产维护', value: 'ROUTINE_MAINTENANCE' },
+                { label: '客户损坏', value: 'CUSTOMER_DAMAGE' },
+                { label: '门店责任', value: 'MERCHANT_RESPONSIBILITY' },
+                { label: '平台兜底', value: 'PLATFORM_SUBSIDY' }
+              ]} />
+            </Form.Item>
+            <Form.Item name="maintenanceStatus" label="状态" style={{ flex: 1 }}>
+              <Select options={[
+                { label: '已完成', value: 'COMPLETED' },
+                { label: '处理中', value: 'PROCESSING' },
+                { label: '待处理', value: 'PENDING' }
+              ]} />
+            </Form.Item>
+          </Space>
+          <Space style={{ width: '100%' }} size={12} align="start">
+            <Form.Item name="costBearerType" label="成本承担方" rules={[{ required: true, message: '请选择成本承担方' }]} style={{ flex: 1 }}>
+              <Select options={[
+                { label: '出资方', value: 'INVESTOR' },
+                { label: '商户', value: 'MERCHANT' },
+                { label: '用户', value: 'USER' },
+                { label: '平台', value: 'PLATFORM' }
+              ]} />
+            </Form.Item>
+            <Form.Item name="costBearerId" label="承担方 ID" style={{ flex: 1 }}>
+              <InputNumber min={0} placeholder="默认按资产或订单归属" style={{ width: '100%' }} />
+            </Form.Item>
+          </Space>
+          <Space style={{ width: '100%' }} size={12} align="start">
+            <Form.Item name="laborCost" label="人工费" style={{ flex: 1 }}>
+              <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="externalCost" label="外协费" style={{ flex: 1 }}>
+              <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+            </Form.Item>
+          </Space>
+          <Form.List name="parts">
+            {(fields, { add, remove }) => (
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Space align="center" className="toolbar">
+                  <Typography.Title level={5}>消耗配件</Typography.Title>
+                  <Button size="small" disabled={!maintenancePartOptions.length} onClick={() => add({ quantity: 1 })}>添加配件</Button>
+                  {!maintenancePartOptions.length ? <Typography.Text type="secondary">当前门店暂无配件库存</Typography.Text> : null}
+                </Space>
+                {fields.map((field) => (
+                  <Space key={field.key} align="start" style={{ width: '100%' }}>
+                    <Form.Item name={[field.name, 'partId']} rules={[{ required: true, message: '请选择配件' }]} style={{ width: 260 }}>
+                      <Select placeholder="配件" options={maintenancePartOptions} />
+                    </Form.Item>
+                    <Form.Item name={[field.name, 'quantity']} rules={[{ required: true, message: '请输入数量' }]} style={{ width: 120 }}>
+                      <InputNumber min={1} placeholder="数量" style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item name={[field.name, 'unitPrice']} style={{ width: 140 }}>
+                      <InputNumber min={0} precision={2} placeholder="单价可空" style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item name={[field.name, 'remark']} style={{ flex: 1 }}>
+                      <Input placeholder="备注" />
+                    </Form.Item>
+                    <Button danger onClick={() => remove(field.name)}>删除</Button>
+                  </Space>
+                ))}
+              </Space>
+            )}
+          </Form.List>
+          <Form.Item name="remark" label="维修说明"><Input.TextArea rows={3} /></Form.Item>
         </Form>
       </Modal>
 
@@ -1897,12 +2149,13 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
           pagination={false}
           columns={[
             { title: '收益单号', dataIndex: 'entryNo' },
-            { title: '订单', dataIndex: 'orderId' },
+            { title: '来源', dataIndex: 'sourceType', render: (value) => value === 'EXTERNAL_ORDER' ? <Tag color="purple">补录订单</Tag> : <Tag color="blue">正式订单</Tag> },
+            { title: '业务单号', render: (_, record) => record.sourceNo || record.sourceId },
             { title: '收益类型', dataIndex: 'lineType', render: incomeLineText },
             { title: '金额', dataIndex: 'amount', render: money },
             { title: '状态', dataIndex: 'entryStatus', render: incomeStatusTag },
             { title: '备注', dataIndex: 'remark', render: (value?: string | null) => value || '-' },
-            { title: '时间', dataIndex: 'createdAt', render: dateText }
+            { title: '计入时间', dataIndex: 'occurredAt', render: dateText }
           ]}
         />
       </div>
@@ -1953,6 +2206,8 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
           pagination={false}
           columns={[
             { title: '类型', dataIndex: 'lineType', render: statementLineText },
+            { title: '来源', dataIndex: 'sourceType', render: (value) => value === 'EXTERNAL_ORDER' ? <Tag color="purple">补录订单</Tag> : <Tag color="blue">正式订单/账单</Tag> },
+            { title: '来源ID', dataIndex: 'sourceId' },
             { title: '订单', dataIndex: 'orderId', render: (value) => value ?? '-' },
             { title: '账单', dataIndex: 'billId', render: (value) => value ?? '-' },
             { title: '资产', dataIndex: 'assetId', render: (value) => value ?? '-' },
@@ -1997,6 +2252,10 @@ function canGrantLeaseBonus(order: RentalOrder) {
   return !['OVERDUE', 'PENDING_SUPPLEMENT', 'COMPLETED', 'CANCELLED', 'EXCEPTION'].includes(order.orderStatus);
 }
 
+function canEditOrder(order: RentalOrder) {
+  return order.orderStatus === 'PENDING_PAYMENT' && Number(order.paidAmount || 0) === 0;
+}
+
 function canReplaceOrderAsset(order: RentalOrder) {
   return ['RENTING', 'PENDING_RETURN', 'PENDING_SUPPLEMENT'].includes(order.orderStatus);
 }
@@ -2024,6 +2283,16 @@ function orderStatusTag(value: OrderStatus) {
   };
   const label = orderStatusOptions.find((item) => item.value === value)?.label ?? value;
   return <Tag color={colorMap[value]}>{label}</Tag>;
+}
+
+function externalOrderStatusTag(value: ExternalRentalOrder['orderStatus']) {
+  const map: Record<ExternalRentalOrder['orderStatus'], { text: string; color: string }> = {
+    ACTIVE: { text: '进行中', color: 'green' },
+    COMPLETED: { text: '已完成', color: 'blue' },
+    TERMINATED: { text: '已终止', color: 'default' }
+  };
+  const item = map[value];
+  return <Tag color={item.color}>{item.text}</Tag>;
 }
 
 function rentalRecordTypeTag(value: AssetRentalRecord['recordType']) {
@@ -2122,7 +2391,7 @@ function maintenanceColumns() {
   return [
     { title: '维修单号', dataIndex: 'maintenanceNo' },
     { title: '资产编码', dataIndex: 'assetCode' },
-    { title: '资产类型', dataIndex: 'assetType', render: assetTypeText },
+    { title: '资产类型', render: (_value: unknown, record: AssetMaintenance) => record.assetTypeName || assetTypeText(record.assetType) },
     { title: '维修类型', dataIndex: 'maintenanceType' },
     { title: '归因', dataIndex: 'responsibilityType', render: responsibilityText },
     { title: '配件成本', dataIndex: 'partsCost', render: money },

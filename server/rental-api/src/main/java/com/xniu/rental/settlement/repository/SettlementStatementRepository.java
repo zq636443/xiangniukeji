@@ -259,6 +259,40 @@ public class SettlementStatementRepository {
         ), startAt, endAt);
     }
 
+    public List<ExternalOrderItemRow> listExternalOrderItems(LocalDateTime startAt, LocalDateTime endAt) {
+        return jdbcTemplate.query("""
+            SELECT
+              eo.id AS external_order_id,
+              eo.record_no,
+              eo.source_platform,
+              eo.merchant_id,
+              eo.store_id,
+              eo.frame_asset_id,
+              eo.battery_asset_id,
+              eo.verification_amount,
+              eo.sign_fee_amount,
+              eo.settlement_snapshot_id,
+              eo.created_at
+            FROM external_rental_order eo
+            WHERE eo.settlement_snapshot_id IS NOT NULL
+              AND eo.created_at >= ?
+              AND eo.created_at < ?
+            ORDER BY eo.created_at, eo.id
+            """, (rs, rowNum) -> new ExternalOrderItemRow(
+            rs.getLong("external_order_id"),
+            rs.getString("record_no"),
+            rs.getString("source_platform"),
+            rs.getLong("merchant_id"),
+            rs.getLong("store_id"),
+            getNullableLong(rs, "frame_asset_id"),
+            getNullableLong(rs, "battery_asset_id"),
+            rs.getBigDecimal("verification_amount"),
+            rs.getBigDecimal("sign_fee_amount"),
+            rs.getLong("settlement_snapshot_id"),
+            rs.getObject("created_at", LocalDateTime.class)
+        ), startAt, endAt);
+    }
+
     public List<MaintenanceCostRow> listMaintenanceCosts(LocalDateTime startAt, LocalDateTime endAt) {
         return jdbcTemplate.query("""
             SELECT
@@ -360,6 +394,21 @@ public class SettlementStatementRepository {
         Long settlementSnapshotId,
         String itemType,
         BigDecimal amount
+    ) {
+    }
+
+    public record ExternalOrderItemRow(
+        Long externalOrderId,
+        String recordNo,
+        String sourcePlatform,
+        Long merchantId,
+        Long storeId,
+        Long frameAssetId,
+        Long batteryAssetId,
+        BigDecimal verificationAmount,
+        BigDecimal signFeeAmount,
+        Long settlementSnapshotId,
+        LocalDateTime createdAt
     ) {
     }
 

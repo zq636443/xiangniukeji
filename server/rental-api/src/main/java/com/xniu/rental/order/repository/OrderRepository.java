@@ -192,6 +192,10 @@ public class OrderRepository {
             """, orderId, itemType.name(), refId, itemName, quantity, unitAmount, totalAmount);
     }
 
+    public void deleteItems(Long orderId) {
+        jdbcTemplate.update("DELETE FROM rental_order_item WHERE order_id = ?", orderId);
+    }
+
     public List<RentalOrderItem> listItems(Long orderId) {
         return jdbcTemplate.query("SELECT * FROM rental_order_item WHERE order_id = ? ORDER BY id", itemMapper, orderId);
     }
@@ -262,6 +266,66 @@ public class OrderRepository {
     public RentalOrder updateSettlementSnapshot(Long id, Long settlementSnapshotId) {
         jdbcTemplate.update("UPDATE rental_order SET settlement_snapshot_id = ? WHERE id = ?", settlementSnapshotId, id);
         return findById(id).orElseThrow();
+    }
+
+    public RentalOrder updateEditableDetails(EditableOrderRow row) {
+        jdbcTemplate.update("""
+            UPDATE rental_order
+            SET user_account_id = ?,
+                customer_name = ?,
+                customer_phone = ?,
+                merchant_id = ?,
+                store_id = ?,
+                store_sku_id = ?,
+                sku_id = ?,
+                package_id = ?,
+                frame_asset_id = ?,
+                battery_asset_id = ?,
+                rental_amount = ?,
+                verification_amount = ?,
+                sign_fee_amount = ?,
+                deposit_amount = ?,
+                payable_amount = ?,
+                lease_unit = ?,
+                lease_value = ?,
+                total_periods = ?,
+                bill_day_mode = ?,
+                bill_day = ?,
+                ordered_at = ?,
+                auto_renew_enabled = ?,
+                renewal_unit = ?,
+                renewal_value = ?,
+                renewal_amount = ?
+            WHERE id = ?
+            """,
+            row.userAccountId(),
+            row.customerName(),
+            row.customerPhone(),
+            row.merchantId(),
+            row.storeId(),
+            row.storeSkuId(),
+            row.skuId(),
+            row.packageId(),
+            row.frameAssetId(),
+            row.batteryAssetId(),
+            row.rentalAmount(),
+            row.verificationAmount(),
+            row.signFeeAmount(),
+            row.depositAmount(),
+            row.payableAmount(),
+            row.leaseUnit(),
+            row.leaseValue(),
+            row.totalPeriods(),
+            row.billDayMode(),
+            row.billDay(),
+            row.orderedAt(),
+            row.autoRenewEnabled(),
+            row.renewalUnit(),
+            row.renewalValue(),
+            row.renewalAmount(),
+            row.id()
+        );
+        return findById(row.id()).orElseThrow();
     }
 
     public RentalOrder updateLeaseBonusDeadline(Long id, LocalDateTime expectedReturnAt, OrderStatus targetStatus) {
@@ -405,6 +469,36 @@ public class OrderRepository {
         Integer renewalValue,
         BigDecimal renewalAmount,
         LocalDateTime expectedPickupAt
+    ) {
+    }
+
+    public record EditableOrderRow(
+        Long id,
+        Long userAccountId,
+        String customerName,
+        String customerPhone,
+        Long merchantId,
+        Long storeId,
+        Long storeSkuId,
+        Long skuId,
+        Long packageId,
+        Long frameAssetId,
+        Long batteryAssetId,
+        BigDecimal rentalAmount,
+        BigDecimal verificationAmount,
+        BigDecimal signFeeAmount,
+        BigDecimal depositAmount,
+        BigDecimal payableAmount,
+        String leaseUnit,
+        Integer leaseValue,
+        Integer totalPeriods,
+        String billDayMode,
+        Integer billDay,
+        LocalDateTime orderedAt,
+        Boolean autoRenewEnabled,
+        String renewalUnit,
+        Integer renewalValue,
+        BigDecimal renewalAmount
     ) {
     }
 

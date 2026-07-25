@@ -103,6 +103,16 @@ public class BillRepository {
         return count != null && count > 0;
     }
 
+    public boolean hasFinancialActivity(Long orderId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT
+                (SELECT COUNT(*) FROM rental_payment_order WHERE order_id = ?)
+              + (SELECT COUNT(*) FROM rental_deduct_record WHERE order_id = ?)
+              + (SELECT COUNT(*) FROM voucher_verification WHERE order_id = ?)
+            """, Long.class, orderId, orderId, orderId);
+        return count != null && count > 0;
+    }
+
     public Optional<Integer> findMaxPeriodNo(Long orderId, BillType billType) {
         var value = jdbcTemplate.queryForObject("""
             SELECT MAX(period_no) FROM rental_bill WHERE order_id = ? AND bill_type = ?
@@ -143,6 +153,43 @@ public class BillRepository {
             INSERT INTO rental_bill_item (bill_id, item_type, item_name, amount)
             VALUES (?, ?, ?, ?)
             """, billId, itemType.name(), itemName, amount);
+    }
+
+    public void deleteItems(Long billId) {
+        jdbcTemplate.update("DELETE FROM rental_bill_item WHERE bill_id = ?", billId);
+    }
+
+    public void deleteEditablePlan(Long orderId) {
+        jdbcTemplate.update("""
+            DELETE FROM rental_bill_item
+            WHERE bill_id IN (
+                SELECT id FROM rental_bill
+                WHERE order_id = ? AND bill_type IN ('INITIAL', 'PERIODIC')
+            )
+            """, orderId);
+        jdbcTemplate.update("""
+            DELETE FROM rental_bill_operation_log
+            WHERE bill_id IN (
+                SELECT id FROM rental_bill
+                WHERE order_id = ? AND bill_type IN ('INITIAL', 'PERIODIC')
+            )
+            """, orderId);
+        jdbcTemplate.update("""
+            DELETE FROM rental_bill
+            WHERE order_id = ? AND bill_type IN ('INITIAL', 'PERIODIC')
+            """, orderId);
+    }
+
+    public RentalBill updateEditablePlanBill(Long id, Long userAccountId, LocalDateTime dueAt, BigDecimal payableAmount) {
+        jdbcTemplate.update("""
+            UPDATE rental_bill
+            SET user_account_id = ?,
+                due_at = ?,
+                payable_amount = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """, userAccountId, dueAt, payableAmount, id);
+        return findBill(id).orElseThrow();
     }
 
     public List<RentalBillItem> listItems(Long billId) {

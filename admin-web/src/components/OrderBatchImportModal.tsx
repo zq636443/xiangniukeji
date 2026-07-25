@@ -15,7 +15,6 @@ type OrderImportRow = {
   frameSerialNo: string;
   batterySerialNo: string;
   orderedAt: string;
-  expectedPickupAt: string;
 };
 
 type OrderBatchImportModalProps = {
@@ -40,8 +39,7 @@ const templateHeaders = [
   '实际核销金额',
   '主资产编号(支持自定义类型)',
   '电池号(选填)',
-  '下单时间(YYYY-MM-DD HH:mm)',
-  '预计取车时间(选填)'
+  '下单时间(YYYY-MM-DD HH:mm)'
 ];
 
 const headerAliases: Record<keyof Omit<OrderImportRow, 'lineNo'>, string[]> = {
@@ -53,8 +51,7 @@ const headerAliases: Record<keyof Omit<OrderImportRow, 'lineNo'>, string[]> = {
   verificationAmount: ['实际核销金额', '核销金额', 'verificationAmount'],
   frameSerialNo: ['主资产编号(支持自定义类型)', '主资产编号（支持自定义类型）', '主资产编号', '车架号(车电一体填此列)', '车架号（车电一体填此列）', '车架号(选填)', '车架号（选填）', '车架号', 'frameSerialNo'],
   batterySerialNo: ['电池号(选填)', '电池号（选填）', '电池号', 'batterySerialNo'],
-  orderedAt: ['下单时间(YYYY-MM-DD HH:mm)', '下单时间（YYYY-MM-DD HH:mm）', '下单时间', 'orderedAt'],
-  expectedPickupAt: ['预计取车时间(选填)', '预计取车时间（选填）', '预计取车时间', 'expectedPickupAt']
+  orderedAt: ['下单时间(YYYY-MM-DD HH:mm)', '下单时间（YYYY-MM-DD HH:mm）', '下单时间', 'orderedAt']
 };
 
 export function OrderBatchImportModal({ open, endpoint, onClose, onImported }: OrderBatchImportModalProps) {
@@ -158,8 +155,7 @@ export function OrderBatchImportModal({ open, endpoint, onClose, onImported }: O
                 { title: '实际核销金额', dataIndex: 'verificationAmount', width: 130 },
                 { title: '主资产编号', dataIndex: 'frameSerialNo', width: 160, render: textOrDash },
                 { title: '电池号', dataIndex: 'batterySerialNo', width: 160, render: textOrDash },
-                { title: '下单时间', dataIndex: 'orderedAt', width: 170, render: textOrDash },
-                { title: '预计取车', dataIndex: 'expectedPickupAt', width: 170, render: textOrDash }
+                { title: '下单时间', dataIndex: 'orderedAt', width: 170, render: textOrDash }
               ]}
             />
           </Space>
@@ -233,8 +229,7 @@ function buildOrderTemplateCsv(storeSkus: StoreSku[], assets: Asset[]) {
       firstPackage ? String(firstPackage.rentalAmount) : '399',
       firstFrameAsset?.serialNo ?? '',
       firstBatteryAsset?.serialNo ?? '',
-      '2026-07-01 10:00',
-      ''
+      '2026-07-01 10:00'
     ],
     Array(width).fill('')
   ];
@@ -247,7 +242,6 @@ function buildOrderTemplateCsv(storeSkus: StoreSku[], assets: Asset[]) {
       storeSku.storeSkuCode,
       item.packageCode,
       String(item.rentalAmount),
-      '',
       '',
       '',
       ''
@@ -266,7 +260,6 @@ function buildOrderTemplateCsv(storeSkus: StoreSku[], assets: Asset[]) {
       '',
       asset.assetType !== 'BATTERY' ? asset.serialNo : '',
       asset.assetType === 'BATTERY' ? asset.serialNo : '',
-      '',
       ''
     ]);
   if (assetReferences.length > 0) {
@@ -314,8 +307,7 @@ function parseOrderImportCsv(content: string): OrderImportRow[] {
       verificationAmount: values[indexes.verificationAmount] ?? '',
       frameSerialNo: values[indexes.frameSerialNo] ?? '',
       batterySerialNo: values[indexes.batterySerialNo] ?? '',
-      orderedAt: values[indexes.orderedAt] ?? '',
-      expectedPickupAt: values[indexes.expectedPickupAt] ?? ''
+      orderedAt: values[indexes.orderedAt] ?? ''
     };
     return Object.entries(row).some(([key, value]) => key !== 'lineNo' && String(value).trim().length > 0) ? [row] : [];
   });

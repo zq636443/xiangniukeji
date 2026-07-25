@@ -407,6 +407,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
           size="small"
           dataSource={skus}
           pagination={false}
+          scroll={{ x: 1100 }}
           columns={[
             { title: '链接编码', dataIndex: 'skuCode' },
             { title: '链接名称', dataIndex: 'skuName' },
@@ -426,6 +427,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
             {
               title: '操作',
               width: 170,
+              fixed: 'right',
               render: (_, record) => (
                 <Space>
                   <Button size="small" icon={<EditOutlined />} onClick={() => openEditSku(record)}>编辑</Button>
@@ -453,6 +455,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
           size="small"
           dataSource={packages}
           pagination={false}
+          scroll={{ x: 950 }}
           columns={[
             { title: 'SKU 编码', dataIndex: 'packageCode' },
             { title: 'SKU 名称', dataIndex: 'packageName' },
@@ -464,6 +467,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
             {
               title: '操作',
               width: 170,
+              fixed: 'right',
               render: (_, record) => (
                 <Space>
                   <Button size="small" icon={<EditOutlined />} onClick={() => openEditPackage(record)}>编辑</Button>

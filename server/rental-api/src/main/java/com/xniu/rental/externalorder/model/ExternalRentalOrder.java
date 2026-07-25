@@ -20,6 +20,7 @@ public record ExternalRentalOrder(
     ExternalRentalOrderStatus orderStatus,
     BigDecimal externalRentalAmount,
     BigDecimal verificationAmount,
+    Long settlementSnapshotId,
     BigDecimal signFeeAmount,
     BigDecimal depositAmount,
     String leaseUnit,
