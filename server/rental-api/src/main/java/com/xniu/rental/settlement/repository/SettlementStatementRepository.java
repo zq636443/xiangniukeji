@@ -161,6 +161,15 @@ public class SettlementStatementRepository {
         return jdbcTemplate.query("SELECT * FROM settlement_statement_line WHERE id = ?", lineMapper, id).stream().findFirst();
     }
 
+    public boolean hasLinesBySource(String sourceType, Long sourceId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement_line
+            WHERE source_type = ? AND source_id = ?
+            """, Integer.class, sourceType, sourceId);
+        return count != null && count > 0;
+    }
+
     public List<SettlementStatementLine> listLines(Long statementId) {
         return jdbcTemplate.query("""
             SELECT *

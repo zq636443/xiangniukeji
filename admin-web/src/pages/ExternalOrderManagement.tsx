@@ -1,5 +1,5 @@
-import { EditOutlined } from '@ant-design/icons';
-import { Alert, Button, DatePicker, Descriptions, Empty, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { Alert, Button, DatePicker, Descriptions, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
@@ -97,6 +97,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   const [completeOpen, setCompleteOpen] = useState(false);
   const [terminateOpen, setTerminateOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [deletingOrderId, setDeletingOrderId] = useState<number | null>(null);
   const [importText, setImportText] = useState('');
   const [importResult, setImportResult] = useState<ExternalRentalOrderBatchImportResult | null>(null);
   const [createForm] = Form.useForm<CreateForm>();
@@ -385,6 +386,24 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     }
   }
 
+  async function deleteOrder(record: ExternalRentalOrder) {
+    setDeletingOrderId(record.id);
+    try {
+      const endpoint = scope === 'merchant' ? '/api/merchant/external-orders' : '/api/admin/external-orders';
+      await http.delete(`${endpoint}/${record.id}`);
+      message.success('补录订单已删除，未结算收益已同步撤销');
+      if (selectedOrder?.id === record.id) {
+        setSelectedOrder(null);
+        setDetailOpen(false);
+      }
+      await loadAll();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '补录订单删除失败');
+    } finally {
+      setDeletingOrderId(null);
+    }
+  }
+
   async function submitImport() {
     const rows = parseImportRows(importText);
     if (!rows.length) {
@@ -490,7 +509,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             { title: '预计归还', dataIndex: 'expectedReturnAt', width: 170, render: dateText },
             {
               title: '操作',
-              width: 280,
+              width: 370,
               fixed: 'right',
               render: (_, record) => (
                 <Space>
@@ -502,11 +521,28 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
                       <Button size="small" danger onClick={() => openTerminate(record)}>提前终止</Button>
                     </>
                   ) : null}
+                  <Popconfirm
+                    title="确认删除补录订单？"
+                    description="删除会撤销未结算收益，并释放进行中订单占用的资产；已进入月结单或收益已结算的订单不能删除。"
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => deleteOrder(record)}
+                  >
+                    <Button
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      loading={deletingOrderId === record.id}
+                    >
+                      删除
+                    </Button>
+                  </Popconfirm>
                 </Space>
               )
             }
           ]}
-          scroll={{ x: 1900 }}
+          scroll={{ x: 2000 }}
         />
       </div>
 

@@ -6,6 +6,7 @@ import com.xniu.rental.asset.dto.AssetDetailResponse;
 import com.xniu.rental.asset.dto.AssetInvestorOptionResponse;
 import com.xniu.rental.asset.dto.AssetRequest;
 import com.xniu.rental.asset.dto.AssetResponse;
+import com.xniu.rental.asset.dto.AssetTransferRequest;
 import com.xniu.rental.asset.dto.AssetTypeResponse;
 import com.xniu.rental.asset.dto.AssetUpdateRequest;
 import com.xniu.rental.asset.service.AssetService;
@@ -67,6 +68,15 @@ public class MerchantAssetController {
         @Valid @RequestBody AssetUpdateRequest request
     ) {
         return ApiResponse.ok(assetService.updateMerchantAsset(storeId, id, request));
+    }
+
+    @PutMapping("/stores/{storeId}/{id}/transfer")
+    public ApiResponse<AssetResponse> transferStoreAsset(
+        @PathVariable Long storeId,
+        @PathVariable Long id,
+        @Valid @RequestBody AssetTransferRequest request
+    ) {
+        return ApiResponse.ok(assetService.transferMerchantAsset(storeId, id, request));
     }
 
     @DeleteMapping("/stores/{storeId}/{id}")

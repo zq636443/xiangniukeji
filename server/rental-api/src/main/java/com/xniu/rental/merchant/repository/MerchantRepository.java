@@ -72,6 +72,49 @@ public class MerchantRepository {
         return findById(id).orElseThrow();
     }
 
+    public int countStores(Long merchantId) {
+        return count("SELECT COUNT(1) FROM merchant_store WHERE merchant_id = ?", merchantId);
+    }
+
+    public int countActiveAccounts(Long merchantId) {
+        return count("SELECT COUNT(1) FROM sys_account WHERE merchant_id = ? AND deleted_at IS NULL", merchantId);
+    }
+
+    public int countCurrentAssets(Long merchantId) {
+        return count("SELECT COUNT(1) FROM asset_item WHERE current_merchant_id = ?", merchantId);
+    }
+
+    public int countOrders(Long merchantId) {
+        return count("SELECT COUNT(1) FROM rental_order WHERE merchant_id = ?", merchantId);
+    }
+
+    public int countExternalOrders(Long merchantId) {
+        return count("SELECT COUNT(1) FROM external_rental_order WHERE merchant_id = ?", merchantId);
+    }
+
+    public int countStoreSkus(Long merchantId) {
+        return count("SELECT COUNT(1) FROM store_sku WHERE merchant_id = ?", merchantId);
+    }
+
+    public int countSettlementRecords(Long merchantId) {
+        return count("""
+            SELECT
+                (SELECT COUNT(1) FROM settlement_profit_rule WHERE merchant_id = ?)
+              + (SELECT COUNT(1) FROM settlement_rule_snapshot WHERE merchant_id = ?)
+              + (SELECT COUNT(1) FROM settlement_income_entry WHERE merchant_id = ?)
+              + (SELECT COUNT(1) FROM settlement_statement WHERE merchant_id = ?)
+            """, merchantId, merchantId, merchantId, merchantId);
+    }
+
+    public void deleteById(Long id) {
+        jdbcTemplate.update("DELETE FROM merchant WHERE id = ?", id);
+    }
+
+    private int count(String sql, Object... args) {
+        var count = jdbcTemplate.queryForObject(sql, Integer.class, args);
+        return count == null ? 0 : count;
+    }
+
     private static class MerchantMapper implements RowMapper<Merchant> {
         @Override
         public Merchant mapRow(ResultSet rs, int rowNum) throws SQLException {

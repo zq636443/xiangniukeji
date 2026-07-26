@@ -69,6 +69,17 @@ public class SettlementIncomeRepository {
             """, mapper, sourceType.name(), sourceId);
     }
 
+    public boolean hasNonPendingBySource(SnapshotSourceType sourceType, Long sourceId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = ?
+              AND source_id = ?
+              AND entry_status <> 'PENDING'
+            """, Integer.class, sourceType.name(), sourceId);
+        return count != null && count > 0;
+    }
+
     public void deleteBySource(SnapshotSourceType sourceType, Long sourceId) {
         jdbcTemplate.update(
             "DELETE FROM settlement_income_entry WHERE source_type = ? AND source_id = ?",

@@ -138,7 +138,10 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   const canManageAssets = account.permissions.includes('asset.manage') || account.permissions.includes('system.admin');
   const canOperateAssets = account.permissions.includes('asset.operate') || account.permissions.includes('system.admin');
   const canManageAssetTypes = account.permissions.includes('system.admin');
+  const isPlatformAccount = account.accountType === 'PLATFORM_ADMIN' || account.accountType === 'FINANCE';
   const selectedAssetTypeId = Form.useWatch('assetTypeId', assetForm);
+  const selectedAssetMerchantId = Form.useWatch('currentMerchantId', assetForm);
+  const selectedTransferMerchantId = Form.useWatch('merchantId', transferForm);
 
   useEffect(() => {
     void loadAll({});
@@ -173,10 +176,33 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
     value: merchant.id
   })), [merchants]);
 
+  const enabledMerchantOptions = useMemo(() => merchants
+    .filter((merchant) => merchant.status === 'ENABLED')
+    .map((merchant) => ({
+      label: merchant.merchantName,
+      value: merchant.id
+    })), [merchants]);
+
   const storeOptions = useMemo(() => stores.map((store) => ({
     label: `${store.storeName} / ${store.storeCode}`,
     value: store.id
   })), [stores]);
+
+  const assetEntryStoreOptions = useMemo(() => stores
+    .filter((store) => store.status === 'ENABLED' && store.merchantId === selectedAssetMerchantId)
+    .map((store) => ({
+      label: `${store.storeName} / ${store.storeCode}`,
+      value: store.id
+    })), [selectedAssetMerchantId, stores]);
+
+  const transferStoreOptions = useMemo(() => stores
+    .filter((store) => store.status === 'ENABLED'
+      && store.merchantId === selectedTransferMerchantId
+      && store.id !== selectedAsset?.currentStoreId)
+    .map((store) => ({
+      label: `${store.storeName} / ${store.storeCode}`,
+      value: store.id
+    })), [selectedAsset, selectedTransferMerchantId, stores]);
 
   const sparePartOptions = useMemo(() => spareParts.map((part) => ({
     label: `${part.partName}${part.spec ? ` / ${part.spec}` : ''} / 库存 ${part.stockQuantity}`,
@@ -311,9 +337,10 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
 
   function openTransfer(record: Asset) {
     setSelectedAsset(record);
+    transferForm.resetFields();
     transferForm.setFieldsValue({
       merchantId: record.currentMerchantId ?? undefined,
-      storeId: record.currentStoreId ?? undefined,
+      storeId: undefined,
       remark: '门店调拨'
     });
     setTransferOpen(true);
@@ -441,8 +468,17 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
 
   async function submitTransfer(values: TransferForm) {
     if (!selectedAsset) return;
-    await http.put(`/api/admin/assets/${selectedAsset.id}/transfer`, values);
+    if (!isPlatformAccount && !selectedAsset.currentStoreId) {
+      message.error('资产未归属门店，当前账号不能调拨');
+      return;
+    }
+    const endpoint = isPlatformAccount
+      ? `/api/admin/assets/${selectedAsset.id}/transfer`
+      : `/api/merchant/assets/stores/${selectedAsset.currentStoreId}/${selectedAsset.id}/transfer`;
+    await http.put(endpoint, values);
     setTransferOpen(false);
+    setSelectedAsset(null);
+    transferForm.resetFields();
     message.success('资产已调拨');
     await loadAll();
   }
@@ -710,8 +746,25 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           </Form.Item>
           {!editingAsset ? (
             <>
-              <Form.Item name="currentMerchantId" label="商户"><Select allowClear showSearch optionFilterProp="label" options={merchantOptions} /></Form.Item>
-              <Form.Item name="currentStoreId" label="门店"><Select allowClear showSearch optionFilterProp="label" options={storeOptions} /></Form.Item>
+              <Form.Item name="currentMerchantId" label="商户">
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  options={enabledMerchantOptions}
+                  onChange={() => assetForm.setFieldValue('currentStoreId', undefined)}
+                />
+              </Form.Item>
+              <Form.Item name="currentStoreId" label="门店">
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  options={assetEntryStoreOptions}
+                  disabled={!selectedAssetMerchantId}
+                  placeholder={selectedAssetMerchantId ? '请选择该商户下的启用门店' : '请先选择商户'}
+                />
+              </Form.Item>
             </>
           ) : null}
           <Form.Item name="purchaseAmount" label="采购金额" rules={[{ required: true, message: '请输入采购金额' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
@@ -801,11 +854,46 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
         onImported={loadAll}
       />
 
-      <Modal title="资产调拨" open={transferOpen} onCancel={() => setTransferOpen(false)} onOk={() => transferForm.submit()} destroyOnHidden>
+      <Modal
+        title={`资产调拨${selectedAsset ? ` / ${selectedAsset.serialNo}` : ''}`}
+        open={transferOpen}
+        onCancel={() => {
+          setTransferOpen(false);
+          setSelectedAsset(null);
+          transferForm.resetFields();
+        }}
+        onOk={() => transferForm.submit()}
+        destroyOnHidden
+      >
         <Form form={transferForm} layout="vertical" onFinish={submitTransfer}>
-          <Form.Item name="merchantId" label="调拨到商户" rules={[{ required: true, message: '请选择商户' }]}><Select options={merchantOptions} /></Form.Item>
-          <Form.Item name="storeId" label="调拨到门店" rules={[{ required: true, message: '请选择门店' }]}><Select options={storeOptions} /></Form.Item>
-          <Form.Item name="remark" label="备注"><Input /></Form.Item>
+          <Form.Item label="当前门店">
+            <Input value={selectedAsset?.storeName || '-'} disabled />
+          </Form.Item>
+          {isPlatformAccount ? (
+            <Form.Item name="merchantId" label="调拨到商户" rules={[{ required: true, message: '请选择商户' }]}>
+              <Select
+                options={enabledMerchantOptions}
+                onChange={() => transferForm.setFieldValue('storeId', undefined)}
+              />
+            </Form.Item>
+          ) : (
+            <>
+              <Form.Item name="merchantId" hidden><Input /></Form.Item>
+              <Form.Item label="所属商户">
+                <Input value={selectedAsset?.merchantName || '-'} disabled />
+              </Form.Item>
+            </>
+          )}
+          <Form.Item name="storeId" label="调拨到门店" rules={[{ required: true, message: '请选择门店' }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={transferStoreOptions}
+              placeholder="选择同一商户下的目标门店"
+              notFoundContent="暂无其他可调拨门店"
+            />
+          </Form.Item>
+          <Form.Item name="remark" label="备注"><Input maxLength={255} /></Form.Item>
         </Form>
       </Modal>
 

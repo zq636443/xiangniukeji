@@ -148,6 +148,17 @@ public class ExternalRentalOrderRepository {
         return list.stream().findFirst();
     }
 
+    public boolean existsOtherActiveByAsset(Long assetId, Long excludedOrderId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM external_rental_order
+            WHERE order_status = 'ACTIVE'
+              AND id <> ?
+              AND (frame_asset_id = ? OR battery_asset_id = ?)
+            """, Integer.class, excludedOrderId, assetId, assetId);
+        return count != null && count > 0;
+    }
+
     public List<ExternalRentalOrderView> listByAsset(Long assetId) {
         return jdbcTemplate.query("""
             SELECT eo.*,
@@ -288,6 +299,14 @@ public class ExternalRentalOrderRepository {
             (external_order_id, from_status, to_status, operation_type, operator_account_id, remark)
             VALUES (?, ?, ?, ?, ?, ?)
             """, externalOrderId, fromStatus == null ? null : fromStatus.name(), toStatus.name(), operationType.name(), operatorAccountId, remark);
+    }
+
+    public void deleteLogs(Long externalOrderId) {
+        jdbcTemplate.update("DELETE FROM external_rental_order_log WHERE external_order_id = ?", externalOrderId);
+    }
+
+    public void delete(Long id) {
+        jdbcTemplate.update("DELETE FROM external_rental_order WHERE id = ?", id);
     }
 
     private static void setNullableLong(java.sql.PreparedStatement statement, int index, Long value) throws SQLException {

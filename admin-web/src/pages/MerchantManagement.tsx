@@ -1,4 +1,5 @@
 import { Button, Checkbox, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { DeleteOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { http } from '../services/request';
@@ -109,10 +110,12 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
     .filter((merchant) => merchant.status === 'ENABLED')
     .map((merchant) => ({ label: merchant.merchantName, value: merchant.id })), [merchants]);
 
-  const selectedMerchantStores = useMemo(
-    () => stores.filter((store) => store.merchantId === selectedMerchantId),
-    [selectedMerchantId, stores]
-  );
+  const selectedMerchantStores = useMemo(() => {
+    if (mode === 'stores' && !selectedMerchantId) {
+      return stores;
+    }
+    return stores.filter((store) => store.merchantId === selectedMerchantId);
+  }, [mode, selectedMerchantId, stores]);
 
   const employeeStoreOptions = useMemo(() => stores
     .filter((store) => store.merchantId === employeeMerchantId && store.status === 'ENABLED')
@@ -126,9 +129,12 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
     try {
       const data = await http.get<unknown, Merchant[]>('/api/admin/merchants');
       setMerchants(data);
-      if (!selectedMerchantId && data.length > 0) {
-        setSelectedMerchantId(data[0].id);
-      }
+      setSelectedMerchantId((current) => {
+        if (current && data.some((merchant) => merchant.id === current)) {
+          return current;
+        }
+        return mode === 'stores' ? undefined : data[0]?.id;
+      });
     } finally {
       setLoading(false);
     }
@@ -255,6 +261,21 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
     await loadStores();
   }
 
+  async function deleteMerchant(record: Merchant) {
+    try {
+      await http.delete(`/api/admin/merchants/${record.id}`);
+      if (editingMerchant?.id === record.id) {
+        setMerchantOpen(false);
+        setEditingMerchant(null);
+        merchantForm.resetFields();
+      }
+      message.success('商户已删除');
+      await Promise.all([loadMerchants(), loadStores()]);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '商户删除失败');
+    }
+  }
+
   async function toggleStoreStatus(record: Store) {
     const status = record.status === 'ENABLED' ? 'DISABLED' : 'ENABLED';
     await http.put(`/api/admin/stores/${record.id}/status`, null, { params: { status } });
@@ -262,18 +283,22 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
   }
 
   async function deleteStore(record: Store) {
-    await http.delete(`/api/admin/stores/${record.id}`);
-    if (selectedQrStore?.id === record.id) {
-      setQrOpen(false);
-      setSelectedQrStore(null);
+    try {
+      await http.delete(`/api/admin/stores/${record.id}`);
+      if (selectedQrStore?.id === record.id) {
+        setQrOpen(false);
+        setSelectedQrStore(null);
+      }
+      if (editingStore?.id === record.id) {
+        setStoreOpen(false);
+        setEditingStore(null);
+        storeForm.resetFields();
+      }
+      message.success('门店已删除');
+      await loadStores();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '门店删除失败');
     }
-    if (editingStore?.id === record.id) {
-      setStoreOpen(false);
-      setEditingStore(null);
-      storeForm.resetFields();
-    }
-    message.success('门店已删除');
-    await loadStores();
   }
 
   async function toggleEmployeeStatus(record: Employee) {
@@ -290,6 +315,8 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
           <Select
             value={selectedMerchantId}
             onChange={setSelectedMerchantId}
+            allowClear={mode === 'stores'}
+            placeholder={mode === 'stores' ? '全部商户' : '选择商户'}
             style={{ width: 220 }}
             options={allMerchantOptions}
           />
@@ -298,7 +325,7 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
         {showStores && <Button
           type={mode === 'stores' ? 'primary' : 'default'}
           onClick={openCreateStore}
-          disabled={!selectedMerchantId || selectedMerchant?.status !== 'ENABLED'}
+          disabled={selectedMerchantId ? selectedMerchant?.status !== 'ENABLED' : mode !== 'stores'}
         >
           新建门店
         </Button>}
@@ -340,6 +367,16 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
                 <Space>
                   <Button size="small" onClick={() => openEditMerchant(record)}>编辑</Button>
                   <Button size="small" onClick={() => toggleMerchantStatus(record)}>{record.status === 'ENABLED' ? '停用' : '启用'}</Button>
+                  <Popconfirm
+                    title="确认删除商户？"
+                    description={`删除后无法恢复。商户 ${record.merchantName} 必须没有门店、有效账号、资产、订单和结算数据。`}
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => deleteMerchant(record)}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                  </Popconfirm>
                 </Space>
               )
             }
@@ -348,7 +385,9 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
       </div>}
 
       {showStores && <div className="section">
-        <Typography.Title level={5}>{selectedMerchant ? `${selectedMerchant.merchantName} / 门店` : '门店'}</Typography.Title>
+        <Typography.Title level={5}>
+          {selectedMerchant ? `${selectedMerchant.merchantName} / 门店` : mode === 'stores' ? `全部门店（${selectedMerchantStores.length}）` : '门店'}
+        </Typography.Title>
         <Table
           rowKey="id"
           size="small"
@@ -357,6 +396,7 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
           scroll={{ x: 1100 }}
           columns={[
             { title: '门店编码', dataIndex: 'storeCode' },
+            { title: '所属商户', render: (_, record) => merchants.find((merchant) => merchant.id === record.merchantId)?.merchantName || '-' },
             { title: '门店名称', dataIndex: 'storeName' },
             { title: '地址', dataIndex: 'address' },
             { title: '营业时间', dataIndex: 'businessHours' },
@@ -389,7 +429,7 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
                     okButtonProps={{ danger: true }}
                     onConfirm={() => deleteStore(record)}
                   >
-                    <Button size="small" danger>删除</Button>
+                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
                   </Popconfirm>
                 </Space>
               )

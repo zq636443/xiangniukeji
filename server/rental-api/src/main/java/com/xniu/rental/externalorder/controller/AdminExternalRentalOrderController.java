@@ -11,6 +11,7 @@ import com.xniu.rental.externalorder.dto.ExternalRentalOrderUpdateRequest;
 import com.xniu.rental.externalorder.service.ExternalRentalOrderService;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -56,6 +57,12 @@ public class AdminExternalRentalOrderController {
         @Valid @RequestBody ExternalRentalOrderUpdateRequest request
     ) {
         return ApiResponse.ok(externalRentalOrderService.updateOrder(id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> deleteOrder(@PathVariable Long id) {
+        externalRentalOrderService.deleteOrder(id);
+        return ApiResponse.ok(null);
     }
 
     @PostMapping("/batch-import")

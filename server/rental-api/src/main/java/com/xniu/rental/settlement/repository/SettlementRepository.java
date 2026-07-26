@@ -450,6 +450,14 @@ public class SettlementRepository {
         return snapshots.stream().findFirst();
     }
 
+    public void deleteSnapshotsBySource(SnapshotSourceType sourceType, Long sourceId) {
+        jdbcTemplate.update(
+            "DELETE FROM settlement_rule_snapshot WHERE source_type = ? AND source_id = ?",
+            sourceType.name(),
+            sourceId
+        );
+    }
+
     public List<SettlementRuleSnapshot> findSnapshotsByIds(Collection<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             return List.of();

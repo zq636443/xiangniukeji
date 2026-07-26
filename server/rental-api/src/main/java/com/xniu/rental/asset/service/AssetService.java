@@ -201,19 +201,22 @@ public class AssetService {
         ensureAssetStoreAccess(asset);
         ensureStoreBelongsToMerchant(request.merchantId(), request.storeId());
         authorizationService.requireStoreAccess(request.merchantId(), request.storeId());
-        if (asset.status() == AssetStatus.RENTING) {
-            throw BusinessException.badRequest("租赁中的资产不能调拨门店");
+        return transferAssetInternal(asset, request.merchantId(), request.storeId(), request.remark());
+    }
+
+    @Transactional
+    public AssetResponse transferMerchantAsset(Long sourceStoreId, Long assetId, AssetTransferRequest request) {
+        authorizationService.requirePermission("asset.operate");
+        var sourceStore = requireActiveAccessibleStore(sourceStoreId);
+        var asset = ensureAssetExists(assetId);
+        if (!sourceStore.merchantId().equals(asset.currentMerchantId()) || !sourceStore.id().equals(asset.currentStoreId())) {
+            throw BusinessException.forbidden("只能调拨当前门店的资产");
         }
-        var updated = assetRepository.transferStore(assetId, request.merchantId(), request.storeId());
-        assetRepository.insertLocationHistory(
-            assetId,
-            asset.currentMerchantId(),
-            asset.currentStoreId(),
-            request.merchantId(),
-            request.storeId(),
-            request.remark() == null ? "门店调拨" : request.remark()
-        );
-        return toResponse(updated);
+        if (!sourceStore.merchantId().equals(request.merchantId())) {
+            throw BusinessException.badRequest("门店人员只能在同一商户下调拨资产");
+        }
+        ensureStoreBelongsToMerchant(sourceStore.merchantId(), request.storeId());
+        return transferAssetInternal(asset, sourceStore.merchantId(), request.storeId(), request.remark());
     }
 
     @Transactional
@@ -486,6 +489,25 @@ public class AssetService {
             throw BusinessException.forbidden("资产未分配门店，当前账号不能操作");
         }
         authorizationService.requireStoreAccess(asset.currentMerchantId(), asset.currentStoreId());
+    }
+
+    private AssetResponse transferAssetInternal(AssetItem asset, Long targetMerchantId, Long targetStoreId, String remark) {
+        if (asset.status() == AssetStatus.RENTING) {
+            throw BusinessException.badRequest("租赁中的资产不能调拨门店");
+        }
+        if (targetMerchantId.equals(asset.currentMerchantId()) && targetStoreId.equals(asset.currentStoreId())) {
+            throw BusinessException.badRequest("资产已在目标门店，无需重复调拨");
+        }
+        var updated = assetRepository.transferStore(asset.id(), targetMerchantId, targetStoreId);
+        assetRepository.insertLocationHistory(
+            asset.id(),
+            asset.currentMerchantId(),
+            asset.currentStoreId(),
+            targetMerchantId,
+            targetStoreId,
+            remark == null || remark.isBlank() ? "门店调拨" : remark.trim()
+        );
+        return toResponse(updated);
     }
 
     private void ensureSerialAvailable(String value, AssetType assetType, Long currentAssetId, String fieldLabel) {

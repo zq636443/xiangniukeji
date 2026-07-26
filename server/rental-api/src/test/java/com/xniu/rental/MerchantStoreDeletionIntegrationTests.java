@@ -7,6 +7,7 @@ import com.xniu.rental.auth.dto.CurrentAccountResponse;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.CurrentAccount;
 import com.xniu.rental.common.BusinessException;
+import com.xniu.rental.merchant.dto.MerchantRequest;
 import com.xniu.rental.merchant.dto.StoreRequest;
 import com.xniu.rental.merchant.service.MerchantService;
 import java.util.List;
@@ -100,6 +101,36 @@ class MerchantStoreDeletionIntegrationTests {
             .hasMessageContaining("暂不可删除")
             .hasMessageContaining("员工账号")
             .hasMessageContaining("门店商品")
+            .hasMessageContaining("租赁订单");
+    }
+
+    @Test
+    void emptyMerchantCanBeDeleted() {
+        var created = merchantService.createMerchant(new MerchantRequest(
+            "可删除测试商户",
+            "删除测试联系人",
+            "18800007771",
+            null,
+            false,
+            null,
+            null,
+            null,
+            null
+        ));
+
+        merchantService.deleteMerchant(created.id());
+
+        var count = jdbcTemplate.queryForObject("SELECT COUNT(1) FROM merchant WHERE id = ?", Integer.class, created.id());
+        assertThat(count).isZero();
+    }
+
+    @Test
+    void merchantWithRelatedDataCannotBeDeleted() {
+        assertThatThrownBy(() -> merchantService.deleteMerchant(1L))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("暂不可删除")
+            .hasMessageContaining("门店")
+            .hasMessageContaining("有效账号")
             .hasMessageContaining("租赁订单");
     }
 }

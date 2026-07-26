@@ -37,7 +37,10 @@ import com.xniu.rental.product.model.StoreSkuPackage;
 import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
+import com.xniu.rental.settlement.model.SnapshotSourceType;
+import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
+import com.xniu.rental.settlement.repository.SettlementStatementRepository;
 import com.xniu.rental.settlement.service.SettlementIncomeService;
 import com.xniu.rental.settlement.service.SettlementService;
 import java.math.BigDecimal;
@@ -65,7 +68,9 @@ public class ExternalRentalOrderService {
     private final AuthorizationService authorizationService;
     private final SettlementService settlementService;
     private final SettlementIncomeService settlementIncomeService;
+    private final SettlementIncomeRepository settlementIncomeRepository;
     private final SettlementRepository settlementRepository;
+    private final SettlementStatementRepository settlementStatementRepository;
     private final TransactionTemplate transactionTemplate;
 
     public ExternalRentalOrderService(
@@ -78,7 +83,9 @@ public class ExternalRentalOrderService {
         AuthorizationService authorizationService,
         SettlementService settlementService,
         SettlementIncomeService settlementIncomeService,
+        SettlementIncomeRepository settlementIncomeRepository,
         SettlementRepository settlementRepository,
+        SettlementStatementRepository settlementStatementRepository,
         TransactionTemplate transactionTemplate
     ) {
         this.externalRentalOrderRepository = externalRentalOrderRepository;
@@ -90,7 +97,9 @@ public class ExternalRentalOrderService {
         this.authorizationService = authorizationService;
         this.settlementService = settlementService;
         this.settlementIncomeService = settlementIncomeService;
+        this.settlementIncomeRepository = settlementIncomeRepository;
         this.settlementRepository = settlementRepository;
+        this.settlementStatementRepository = settlementStatementRepository;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -207,6 +216,31 @@ public class ExternalRentalOrderService {
             "编辑补录订单资料"
         );
         return toResponse(ensureView(updated.id()));
+    }
+
+    @Transactional
+    public void deleteOrder(Long id) {
+        authorizationService.requirePermission("order.operate");
+        var order = externalRentalOrderRepository.findByIdForUpdate(id)
+            .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
+        authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
+
+        if (settlementStatementRepository.hasLinesBySource(SnapshotSourceType.EXTERNAL_ORDER.name(), order.id())) {
+            throw BusinessException.badRequest("补录订单已进入月结单，不能删除");
+        }
+        if (settlementIncomeRepository.hasNonPendingBySource(SnapshotSourceType.EXTERNAL_ORDER, order.id())) {
+            throw BusinessException.badRequest("补录订单收益已结算或冻结，不能删除");
+        }
+
+        if (order.orderStatus() == ExternalRentalOrderStatus.ACTIVE) {
+            releaseDeletedActiveAsset(order.frameAssetId(), order, "删除补录订单释放主资产");
+            releaseDeletedActiveAsset(order.batteryAssetId(), order, "删除补录订单释放电池");
+        }
+
+        settlementIncomeRepository.deleteBySource(SnapshotSourceType.EXTERNAL_ORDER, order.id());
+        externalRentalOrderRepository.deleteLogs(order.id());
+        externalRentalOrderRepository.delete(order.id());
+        settlementRepository.deleteSnapshotsBySource(SnapshotSourceType.EXTERNAL_ORDER, order.id());
     }
 
     public ExternalRentalOrderBatchImportResponse batchImport(ExternalRentalOrderBatchImportRequest request) {
@@ -510,6 +544,25 @@ public class ExternalRentalOrderService {
         }
         var asset = ensureAsset(currentAssetId);
         if (asset.status() != AssetStatus.IDLE) {
+            assetRepository.updateStatus(asset.id(), AssetStatus.IDLE, LocalDateTime.now());
+            assetRepository.insertStatusLog(asset.id(), asset.status(), AssetStatus.IDLE, currentAccountId(), remark);
+        }
+    }
+
+    private void releaseDeletedActiveAsset(Long assetId, ExternalRentalOrder order, String remark) {
+        if (assetId == null) {
+            return;
+        }
+        if (externalRentalOrderRepository.existsOtherActiveByAsset(assetId, order.id())) {
+            throw BusinessException.badRequest("订单资产仍被其他补录订单占用，不能删除");
+        }
+        var formalOrderOccupied = orderRepository.listByAsset(assetId).stream()
+            .anyMatch(item -> item.orderStatus() != OrderStatus.COMPLETED && item.orderStatus() != OrderStatus.CANCELLED);
+        if (formalOrderOccupied) {
+            throw BusinessException.badRequest("订单资产已被正式订单占用，不能删除");
+        }
+        var asset = ensureAsset(assetId);
+        if (asset.status() == AssetStatus.RENTING) {
             assetRepository.updateStatus(asset.id(), AssetStatus.IDLE, LocalDateTime.now());
             assetRepository.insertStatusLog(asset.id(), asset.status(), AssetStatus.IDLE, currentAccountId(), remark);
         }

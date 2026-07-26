@@ -109,6 +109,24 @@ public class MerchantService {
     }
 
     @Transactional
+    public void deleteMerchant(Long id) {
+        authorizationService.requirePermission("merchant.write");
+        ensureMerchantExists(id);
+        var blockers = new ArrayList<String>();
+        addBlocker(blockers, "门店", merchantRepository.countStores(id));
+        addBlocker(blockers, "有效账号", merchantRepository.countActiveAccounts(id));
+        addBlocker(blockers, "在库资产", merchantRepository.countCurrentAssets(id));
+        addBlocker(blockers, "租赁订单", merchantRepository.countOrders(id));
+        addBlocker(blockers, "补录订单", merchantRepository.countExternalOrders(id));
+        addBlocker(blockers, "门店商品", merchantRepository.countStoreSkus(id));
+        addBlocker(blockers, "结算数据", merchantRepository.countSettlementRecords(id));
+        if (!blockers.isEmpty()) {
+            throw BusinessException.badRequest("商户仍存在关联数据，暂不可删除：" + String.join("、", blockers));
+        }
+        merchantRepository.deleteById(id);
+    }
+
+    @Transactional
     public MerchantResponse updateMerchantStatus(Long id, MerchantStatus status) {
         authorizationService.requirePermission("merchant.write");
         ensureMerchantExists(id);
@@ -120,6 +138,20 @@ public class MerchantService {
 
     public List<StoreResponse> listStores(Long merchantId, String keyword) {
         authorizationService.requirePermission("store.read");
+        var current = AuthContext.get();
+        var platformAccount = current != null
+            && (AccountType.PLATFORM_ADMIN.name().equals(current.account().accountType())
+                || AccountType.FINANCE.name().equals(current.account().accountType()));
+        if (current != null && !platformAccount) {
+            var currentMerchantId = current.account().merchantId();
+            if (currentMerchantId == null && !current.account().storeScopes().isEmpty()) {
+                currentMerchantId = current.account().storeScopes().get(0).merchantId();
+            }
+            if (currentMerchantId == null) {
+                throw BusinessException.forbidden("当前账号未绑定商户");
+            }
+            merchantId = currentMerchantId;
+        }
         return storeRepository.list(merchantId, keyword).stream().map(this::toResponse).toList();
     }
 

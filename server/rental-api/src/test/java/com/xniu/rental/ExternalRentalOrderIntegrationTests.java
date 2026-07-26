@@ -677,6 +677,137 @@ class ExternalRentalOrderIntegrationTests {
         assertThat(assetStatus(batteryAssetId)).isEqualTo("IDLE");
     }
 
+    @Test
+    void deleteActiveExternalOrderShouldReleaseAssetAndRemoveSettlementData() {
+        var suffix = String.valueOf(System.nanoTime());
+        var assetId = createIntegratedAsset("delete-" + suffix);
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "DELETE-" + suffix,
+            1L,
+            2L,
+            "删除补录客户",
+            "13800139991",
+            LocalDateTime.of(2026, 7, 20, 10, 0),
+            null,
+            assetId,
+            null,
+            new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            "待删除补录订单"
+        ));
+
+        assertThat(assetStatus(assetId)).isEqualTo("RENTING");
+        assertThat(created.settlementSnapshotId()).isNotNull();
+
+        externalRentalOrderService.deleteOrder(created.id());
+
+        assertThat(assetStatus(assetId)).isEqualTo("IDLE");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(1) FROM external_rental_order WHERE id = ?",
+            Integer.class,
+            created.id()
+        )).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(1) FROM external_rental_order_log WHERE external_order_id = ?",
+            Integer.class,
+            created.id()
+        )).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, Integer.class, created.id())).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_rule_snapshot
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, Integer.class, created.id())).isZero();
+        assertThatThrownBy(() -> externalRentalOrderService.getOrder(created.id()))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("补录订单不存在");
+    }
+
+    @Test
+    void deleteExternalOrderShouldRejectFinanciallyLockedRecords() {
+        var suffix = String.valueOf(System.nanoTime());
+        var settledAssetId = createIntegratedAsset("settled-" + suffix);
+        var settledOrder = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "SETTLED-" + suffix,
+            1L,
+            2L,
+            "已结算补录客户",
+            "13800139992",
+            LocalDateTime.of(2026, 7, 20, 10, 0),
+            null,
+            settledAssetId,
+            null,
+            new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            null
+        ));
+        jdbcTemplate.update("""
+            UPDATE settlement_income_entry
+            SET entry_status = 'SETTLED', settled_at = CURRENT_TIMESTAMP
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, settledOrder.id());
+
+        assertThatThrownBy(() -> externalRentalOrderService.deleteOrder(settledOrder.id()))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("已结算或冻结");
+        assertThat(assetStatus(settledAssetId)).isEqualTo("RENTING");
+
+        var statementAssetId = createIntegratedAsset("statement-" + suffix);
+        var statementOrder = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "STATEMENT-" + suffix,
+            1L,
+            2L,
+            "月结补录客户",
+            "13800139993",
+            LocalDateTime.of(2099, 2, 10, 10, 0),
+            null,
+            statementAssetId,
+            null,
+            new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            null
+        ));
+        jdbcTemplate.update(
+            "UPDATE external_rental_order SET created_at = '2099-02-10 10:00:00' WHERE id = ?",
+            statementOrder.id()
+        );
+        settlementStatementService.generateMonth("2099-02");
+
+        assertThatThrownBy(() -> externalRentalOrderService.deleteOrder(statementOrder.id()))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("已进入月结单");
+        assertThat(assetStatus(statementAssetId)).isEqualTo("RENTING");
+    }
+
+    private Long createIntegratedAsset(String suffix) {
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES (?, 'INTEGRATED_VEHICLE',
+                    (SELECT id FROM asset_type_definition WHERE type_code = 'INTEGRATED_VEHICLE'),
+                    ?, 1, 1, 1, 'IDLE', 4200.00, 0.00, NULL, CURRENT_DATE)
+            """, "A-ext-" + suffix, "FRAME-EXT-" + suffix);
+        return jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_item WHERE asset_code = ?",
+            Long.class,
+            "A-ext-" + suffix
+        );
+    }
+
     private String assetStatus(Long assetId) {
         return jdbcTemplate.queryForObject("SELECT status FROM asset_item WHERE id = ?", String.class, assetId);
     }

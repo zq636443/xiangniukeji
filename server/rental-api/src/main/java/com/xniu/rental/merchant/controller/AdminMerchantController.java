@@ -48,6 +48,12 @@ public class AdminMerchantController {
         return ApiResponse.ok(merchantService.updateMerchant(id, request));
     }
 
+    @DeleteMapping("/merchants/{id}")
+    public ApiResponse<Void> deleteMerchant(@PathVariable Long id) {
+        merchantService.deleteMerchant(id);
+        return ApiResponse.ok(null);
+    }
+
     @PutMapping("/merchants/{id}/status")
     public ApiResponse<MerchantResponse> updateMerchantStatus(@PathVariable Long id, @RequestParam MerchantStatus status) {
         return ApiResponse.ok(merchantService.updateMerchantStatus(id, status));
