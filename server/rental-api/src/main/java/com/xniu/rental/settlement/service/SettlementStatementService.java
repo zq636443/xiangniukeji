@@ -10,6 +10,7 @@ import com.xniu.rental.settlement.dto.SettlementOverviewResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementGenerateResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementLineResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementResponse;
+import com.xniu.rental.settlement.dto.StoreProfitOverviewResponse;
 import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.model.SettlementRuleSnapshot;
 import com.xniu.rental.settlement.model.SettlementStatement;
@@ -399,6 +400,35 @@ public class SettlementStatementService {
             overview.merchantStatementCount(),
             overview.investorStatementCount()
         );
+    }
+
+    public List<StoreProfitOverviewResponse> listStoreProfitOverview(String statementMonth, Long merchantId, Long storeId) {
+        authorizationService.requirePermission("settlement.read");
+        var month = normalizeMonth(statementMonth);
+        return statementRepository.listStoreProfitOverview(month, merchantId, storeId).stream()
+            .map(row -> new StoreProfitOverviewResponse(
+                row.statementId(),
+                row.statementNo(),
+                row.statementMonth(),
+                row.merchantId(),
+                row.storeId(),
+                money(row.settlementBaseAmount()),
+                money(row.signFeeAmount()),
+                money(row.storeOperationAmount()),
+                money(row.storeMaintenanceAmount()),
+                money(row.maintenanceReimburseAmount()),
+                money(row.maintenanceDeductAmount()),
+                money(row.adjustmentAmount()),
+                money(row.payableAmount()),
+                row.orderCount(),
+                row.billCount(),
+                row.lineCount(),
+                row.status(),
+                row.generatedAt(),
+                row.confirmedAt(),
+                row.paidAt()
+            ))
+            .toList();
     }
 
     public List<SettlementStatementResponse> listAdmin(String statementMonth, String beneficiaryType, Long beneficiaryId, String status, Long merchantId, Long storeId) {

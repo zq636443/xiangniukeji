@@ -713,6 +713,29 @@ export type SettlementOverview = {
   investorStatementCount: number;
 };
 
+export type StoreProfitOverview = {
+  statementId: number;
+  statementNo: string;
+  statementMonth: string;
+  merchantId: number;
+  storeId: number;
+  settlementBaseAmount: number;
+  signFeeAmount: number;
+  storeOperationAmount: number;
+  storeMaintenanceAmount: number;
+  maintenanceReimburseAmount: number;
+  maintenanceDeductAmount: number;
+  adjustmentAmount: number;
+  payableAmount: number;
+  orderCount: number;
+  billCount: number;
+  lineCount: number;
+  status: SettlementStatement['status'];
+  generatedAt: string;
+  confirmedAt?: string | null;
+  paidAt?: string | null;
+};
+
 export type SettlementStatementGenerateResult = {
   statementMonth: string;
   merchantStatementCount: number;

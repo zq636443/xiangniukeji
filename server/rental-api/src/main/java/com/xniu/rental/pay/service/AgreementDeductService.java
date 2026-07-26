@@ -271,7 +271,7 @@ public class AgreementDeductService {
             PayChannel.ALIPAY,
             PayStatus.CREATED,
             record.deductAmount(),
-            "电牛哥租赁自动扣款 " + bill.billNo(),
+            "途派熊租赁自动扣款 " + bill.billNo(),
             agreement.alipayUserId()
         ));
         deductRepository.markProcessing(record.id(), batchNo, payment.id());

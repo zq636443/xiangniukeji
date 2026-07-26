@@ -208,13 +208,13 @@ const investorMenuItems: NavItem[] = [
 const loginMeta: Record<LoginMode, { title: string; eyebrow: string; description: string; endpoint: string }> = {
   merchant: {
     title: '运营工作台登录',
-    eyebrow: '电牛哥运营中心',
+    eyebrow: '途派熊运营中心',
     description: '平台管理员、商户老板和门店人员使用各自账号登录。',
     endpoint: '/api/auth/workspace/login'
   },
   investor: {
     title: '出资方工作台登录',
-    eyebrow: '电牛哥运营中心',
+    eyebrow: '途派熊运营中心',
     description: '出资方使用专属账号查看名下资产状态与收益分成。',
     endpoint: '/api/auth/admin/login'
   }
@@ -366,15 +366,15 @@ export default function App() {
           <section className="login-branding">
             <div className="login-brand-copy">
               <div className="login-brand-lockup">
-                <img src="/dianniuge-mascot.png" alt="电牛哥" />
+                <img src="/tupaixiong-logo.png" alt="途派熊" />
                 <div>
-                  <strong>电牛哥</strong>
+                  <strong>途派熊</strong>
                   <span>租赁运营平台</span>
                 </div>
               </div>
               <div className="login-brand-message">
-                <Typography.Text className="login-brand-eyebrow">DIANNIUGE RENTAL OPERATIONS</Typography.Text>
-                <Typography.Title level={1}>电牛哥租赁运营平台</Typography.Title>
+                <Typography.Text className="login-brand-eyebrow">TUPAIXIONG RENTAL OPERATIONS</Typography.Text>
+                <Typography.Title level={1}>途派熊租赁运营平台</Typography.Title>
                 <Typography.Paragraph>
                   总部、商户与门店统一协作，让订单履约、租赁资产和收益结算始终清晰可控。
                 </Typography.Paragraph>
@@ -404,15 +404,15 @@ export default function App() {
               </div>
             </div>
             <div className="login-mascot-stage">
-              <img src="/dianniuge-mascot.png" alt="电牛哥品牌形象" />
+              <img src="/tupaixiong-logo.png" alt="途派熊品牌形象" />
             </div>
           </section>
           <section className="login-access">
             <div className="login-panel">
               <div className="login-panel-brand">
-                <img src="/dianniuge-mascot.png" alt="" aria-hidden="true" />
+                <img src="/tupaixiong-logo.png" alt="" aria-hidden="true" />
                 <div>
-                  <strong>电牛哥</strong>
+                  <strong>途派熊</strong>
                   <span>统一运营入口</span>
                 </div>
               </div>
@@ -454,10 +454,10 @@ export default function App() {
         <Layout.Sider width={248} className="sider" theme="dark">
           <div className="brand">
             <div className="brand-logo">
-              <img src="/dianniuge-mascot.png" alt="电牛哥" />
+              <img src="/tupaixiong-logo.png" alt="途派熊" />
             </div>
             <div>
-              <div className="brand-title">电牛哥</div>
+              <div className="brand-title">途派熊</div>
               <div className="brand-subtitle">
                 {workspaceMode === 'merchant' ? '商户运营平台' : workspaceMode === 'investor' ? '出资方工作台' : '租赁运营平台'}
               </div>

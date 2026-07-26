@@ -5,6 +5,7 @@ import com.xniu.rental.settlement.dto.SettlementOverviewResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementGenerateResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementLineResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementResponse;
+import com.xniu.rental.settlement.dto.StoreProfitOverviewResponse;
 import com.xniu.rental.settlement.service.SettlementStatementService;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,6 +34,15 @@ public class AdminSettlementStatementController {
     @PostMapping("/generate")
     public ApiResponse<SettlementStatementGenerateResponse> generate(@RequestParam(required = false) String month) {
         return ApiResponse.ok(settlementStatementService.generateMonth(month));
+    }
+
+    @GetMapping("/store-profit-overview")
+    public ApiResponse<List<StoreProfitOverviewResponse>> storeProfitOverview(
+        @RequestParam(required = false) String month,
+        @RequestParam(required = false) Long merchantId,
+        @RequestParam(required = false) Long storeId
+    ) {
+        return ApiResponse.ok(settlementStatementService.listStoreProfitOverview(month, merchantId, storeId));
     }
 
     @GetMapping

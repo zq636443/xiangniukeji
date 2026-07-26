@@ -159,7 +159,7 @@ public class FundAuthService {
             FundAuthStatus.CREATED,
             authAmount,
             nextNo("FAR"),
-            "电牛哥租赁押金/逾期授权 " + order.orderNo()
+            "途派熊租赁押金/逾期授权 " + order.orderNo()
         )));
         var operation = fundAuthRepository.createOperation(new FundAuthRepository.OperationCreateRow(
             nextNo("FAOP"),
@@ -229,7 +229,7 @@ public class FundAuthService {
             PayChannel.ALIPAY,
             PayStatus.CREATED,
             amount,
-            defaultRemark(request.remark(), "电牛哥授权扣费 " + bill.billNo()),
+            defaultRemark(request.remark(), "途派熊授权扣费 " + bill.billNo()),
             auth.alipayUserId()
         ));
         try {
@@ -279,7 +279,7 @@ public class FundAuthService {
             defaultRemark(request.remark(), "授权解冻")
         ));
         try {
-            var result = alipayGatewayClient.unfreezeFundAuth(auth.alipayAuthNo(), operation.outRequestNo(), amount, defaultRemark(request.remark(), "电牛哥租赁授权解冻"));
+            var result = alipayGatewayClient.unfreezeFundAuth(auth.alipayAuthNo(), operation.outRequestNo(), amount, defaultRemark(request.remark(), "途派熊租赁授权解冻"));
             fundAuthRepository.markOperationSuccess(operation.id(), null, result.operationId(), null);
             return toResponse(fundAuthRepository.addReleased(auth.id(), parseAmount(result.amount(), amount)));
         } catch (BusinessException exception) {
@@ -305,7 +305,7 @@ public class FundAuthService {
             defaultRemark(remark, "撤销授权")
         ));
         try {
-            var result = alipayGatewayClient.cancelFundAuth(auth.authOrderNo(), operation.outRequestNo(), auth.alipayAuthNo(), auth.alipayOperationId(), defaultRemark(remark, "电牛哥租赁撤销授权"));
+            var result = alipayGatewayClient.cancelFundAuth(auth.authOrderNo(), operation.outRequestNo(), auth.alipayAuthNo(), auth.alipayOperationId(), defaultRemark(remark, "途派熊租赁撤销授权"));
             fundAuthRepository.markOperationSuccess(operation.id(), null, result.operationId(), null);
             return toResponse(fundAuthRepository.markCancelled(auth.id()));
         } catch (BusinessException exception) {

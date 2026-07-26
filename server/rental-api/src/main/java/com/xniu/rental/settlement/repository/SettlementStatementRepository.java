@@ -153,6 +153,78 @@ public class SettlementStatementRepository {
         return jdbcTemplate.query(sql.toString(), statementMapper, params.toArray());
     }
 
+    public List<StoreProfitOverviewRow> listStoreProfitOverview(String statementMonth, Long merchantId, Long storeId) {
+        var sql = new StringBuilder("""
+            SELECT
+              s.id AS statement_id,
+              s.statement_no,
+              s.statement_month,
+              s.merchant_id,
+              s.store_id,
+              s.rent_base_amount,
+              s.sign_fee_income_amount,
+              COALESCE(line_total.store_operation_amount, 0) AS store_operation_amount,
+              COALESCE(line_total.store_maintenance_amount, 0) AS store_maintenance_amount,
+              COALESCE(line_total.maintenance_reimburse_amount, 0) AS maintenance_reimburse_amount,
+              s.maintenance_deduct_amount,
+              s.adjustment_amount,
+              s.payable_amount,
+              s.order_count,
+              s.bill_count,
+              COALESCE(line_total.line_count, 0) AS line_count,
+              s.status,
+              s.generated_at,
+              s.confirmed_at,
+              s.paid_at
+            FROM settlement_statement s
+            LEFT JOIN (
+              SELECT
+                statement_id,
+                SUM(CASE WHEN line_type = 'MERCHANT_RENT_SHARE' THEN amount ELSE 0 END) AS store_operation_amount,
+                SUM(CASE WHEN line_type = 'MERCHANT_MAINTENANCE_SHARE' THEN amount ELSE 0 END) AS store_maintenance_amount,
+                SUM(CASE WHEN line_type = 'MERCHANT_MAINTENANCE_REIMBURSE' THEN amount ELSE 0 END) AS maintenance_reimburse_amount,
+                COUNT(1) AS line_count
+              FROM settlement_statement_line
+              GROUP BY statement_id
+            ) line_total ON line_total.statement_id = s.id
+            WHERE s.statement_month = ?
+              AND s.beneficiary_type = 'MERCHANT'
+            """);
+        var params = new ArrayList<Object>();
+        params.add(statementMonth);
+        if (merchantId != null) {
+            sql.append(" AND s.merchant_id = ?");
+            params.add(merchantId);
+        }
+        if (storeId != null) {
+            sql.append(" AND s.store_id = ?");
+            params.add(storeId);
+        }
+        sql.append(" ORDER BY s.payable_amount DESC, s.store_id");
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new StoreProfitOverviewRow(
+            rs.getLong("statement_id"),
+            rs.getString("statement_no"),
+            rs.getString("statement_month"),
+            rs.getLong("merchant_id"),
+            rs.getLong("store_id"),
+            rs.getBigDecimal("rent_base_amount"),
+            rs.getBigDecimal("sign_fee_income_amount"),
+            rs.getBigDecimal("store_operation_amount"),
+            rs.getBigDecimal("store_maintenance_amount"),
+            rs.getBigDecimal("maintenance_reimburse_amount"),
+            rs.getBigDecimal("maintenance_deduct_amount"),
+            rs.getBigDecimal("adjustment_amount"),
+            rs.getBigDecimal("payable_amount"),
+            rs.getInt("order_count"),
+            rs.getInt("bill_count"),
+            rs.getInt("line_count"),
+            rs.getString("status"),
+            rs.getObject("generated_at", LocalDateTime.class),
+            rs.getObject("confirmed_at", LocalDateTime.class),
+            rs.getObject("paid_at", LocalDateTime.class)
+        ), params.toArray());
+    }
+
     public Optional<SettlementStatement> findStatement(Long id) {
         return jdbcTemplate.query("SELECT * FROM settlement_statement WHERE id = ?", statementMapper, id).stream().findFirst();
     }
@@ -436,6 +508,30 @@ public class SettlementStatementRepository {
         Long costBearerId,
         BigDecimal totalCost,
         LocalDateTime occurredAt
+    ) {
+    }
+
+    public record StoreProfitOverviewRow(
+        Long statementId,
+        String statementNo,
+        String statementMonth,
+        Long merchantId,
+        Long storeId,
+        BigDecimal settlementBaseAmount,
+        BigDecimal signFeeAmount,
+        BigDecimal storeOperationAmount,
+        BigDecimal storeMaintenanceAmount,
+        BigDecimal maintenanceReimburseAmount,
+        BigDecimal maintenanceDeductAmount,
+        BigDecimal adjustmentAmount,
+        BigDecimal payableAmount,
+        Integer orderCount,
+        Integer billCount,
+        Integer lineCount,
+        String status,
+        LocalDateTime generatedAt,
+        LocalDateTime confirmedAt,
+        LocalDateTime paidAt
     ) {
     }
 

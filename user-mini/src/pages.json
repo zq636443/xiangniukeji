@@ -3,13 +3,13 @@
     {
       "path": "pages/index/index",
       "style": {
-        "navigationBarTitleText": "电牛哥租车"
+        "navigationBarTitleText": "途派熊租车"
       }
     }
   ],
   "globalStyle": {
     "navigationBarTextStyle": "black",
-    "navigationBarTitleText": "电牛哥租车",
+    "navigationBarTitleText": "途派熊租车",
     "navigationBarBackgroundColor": "#ffffff",
     "backgroundColor": "#f5f7fb"
   }

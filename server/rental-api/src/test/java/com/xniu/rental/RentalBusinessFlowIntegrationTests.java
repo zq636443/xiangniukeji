@@ -1081,6 +1081,25 @@ class RentalBusinessFlowIntegrationTests {
         assertThat(merchantStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("91.77"));
         assertThat(merchantStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("12.00"));
         assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("109.77"));
+
+        assertThat(settlementStatementService.listStoreProfitOverview("2026-09", 1L, 1L))
+            .singleElement()
+            .satisfies(storeProfit -> {
+                assertThat(storeProfit.statementMonth()).isEqualTo("2026-09");
+                assertThat(storeProfit.merchantId()).isEqualTo(1L);
+                assertThat(storeProfit.storeId()).isEqualTo(1L);
+                assertThat(storeProfit.settlementBaseAmount()).isEqualByComparingTo("399.00");
+                assertThat(storeProfit.signFeeAmount()).isEqualByComparingTo("30.00");
+                assertThat(storeProfit.storeOperationAmount()).isEqualByComparingTo("55.06");
+                assertThat(storeProfit.storeMaintenanceAmount()).isEqualByComparingTo("36.71");
+                assertThat(storeProfit.maintenanceReimburseAmount()).isEqualByComparingTo("0.00");
+                assertThat(storeProfit.maintenanceDeductAmount()).isEqualByComparingTo("12.00");
+                assertThat(storeProfit.payableAmount()).isEqualByComparingTo("109.77");
+                assertThat(storeProfit.orderCount()).isEqualTo(1);
+                assertThat(storeProfit.billCount()).isEqualTo(1);
+                assertThat(storeProfit.lineCount()).isEqualTo(4);
+                assertThat(storeProfit.status()).isEqualTo("DRAFT");
+            });
     }
 
     @Test

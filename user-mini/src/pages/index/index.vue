@@ -2,7 +2,7 @@
   <view class="page">
     <view class="topbar">
       <view>
-        <view class="title">电牛哥租车</view>
+        <view class="title">途派熊租车</view>
         <view class="subtitle">扫码门店、选择 SKU、完成支付与签约</view>
       </view>
       <button v-if="account" class="ghost-btn compact-btn" @tap="logout">退出</button>
