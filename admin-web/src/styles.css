@@ -692,6 +692,198 @@ body {
   padding-top: 4px;
 }
 
+.investor-page-header {
+  align-items: flex-start;
+}
+
+.investor-page-header p.ant-typography {
+  margin: 4px 0 0;
+  color: #667085;
+}
+
+.investor-metric {
+  min-height: 132px;
+}
+
+.investor-metric::after {
+  background: #0f9f7a;
+}
+
+.investor-metric .metric-head {
+  margin-bottom: 10px;
+}
+
+.investor-metric .ant-statistic-content {
+  font-size: 22px;
+}
+
+.investor-metric > .ant-typography-secondary {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.investor-metric-compact {
+  min-height: 116px;
+  padding: 13px;
+}
+
+.investor-metric-compact .ant-statistic-content {
+  font-size: 20px;
+}
+
+.investor-dashboard-section {
+  min-height: 360px;
+}
+
+.investor-primary-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.investor-primary-cell strong {
+  color: #182230;
+  line-height: 1.35;
+}
+
+.investor-primary-cell span {
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.investor-utilization-cell {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+}
+
+.investor-utilization-cell .ant-progress {
+  min-width: 0;
+  margin: 0;
+}
+
+.investor-utilization-cell span {
+  color: #475467;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.investor-status-list {
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.investor-status-row > div:first-child {
+  margin-bottom: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.investor-status-row strong {
+  color: #344054;
+  font-size: 13px;
+}
+
+.investor-status-row span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.investor-status-row .ant-progress {
+  margin: 0;
+}
+
+.investor-attention-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.investor-attention-item {
+  min-height: 58px;
+  padding: 10px 0;
+  border-bottom: 1px solid #eef2f6;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.investor-attention-item:last-child {
+  border-bottom: 0;
+}
+
+.investor-attention-item .metric-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.investor-attention-item > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.investor-attention-item > div span {
+  color: #344054;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.investor-attention-item > div small {
+  overflow: hidden;
+  color: #667085;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.investor-attention-item > strong {
+  color: #182230;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.investor-settlement-tabs > .ant-tabs-content-holder {
+  margin-top: 16px;
+}
+
+.investor-filter-bar {
+  margin: 14px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.investor-list-head {
+  align-items: flex-start;
+  margin-bottom: 0;
+}
+
+.investor-list-head h4.ant-typography {
+  margin-bottom: 3px;
+}
+
+.investor-modal-section {
+  box-shadow: none;
+}
+
+.investor-modal-section .section-head {
+  margin-bottom: 12px;
+}
+
 .statement-status-strip {
   display: flex;
   flex-wrap: wrap;

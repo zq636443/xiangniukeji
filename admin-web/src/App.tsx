@@ -195,12 +195,12 @@ const investorMenuItems: NavItem[] = [
   { key: 'investorDashboard', label: '出资方工作台', permission: '', icon: <DashboardOutlined /> },
   {
     key: 'investor-asset-group',
-    label: '资产与收益',
+    label: '资产运营与结算',
     permission: 'asset.read',
     icon: <BankOutlined />,
     children: [
-      { key: 'investorAssets', label: '我的资产', permission: 'asset.read', icon: <BankOutlined /> },
-      { key: 'investorIncome', label: '收益分成', permission: 'settlement.read', icon: <DollarOutlined /> }
+      { key: 'investorAssets', label: '资产运营', permission: 'asset.read', icon: <BankOutlined /> },
+      { key: 'investorIncome', label: '收益结算', permission: 'settlement.read', icon: <DollarOutlined /> }
     ]
   }
 ];
