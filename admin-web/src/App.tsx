@@ -3,6 +3,7 @@ import {
   AuditOutlined,
   BankOutlined,
   ClockCircleOutlined,
+  CloseOutlined,
   DashboardOutlined,
   DollarOutlined,
   FileDoneOutlined,
@@ -11,6 +12,7 @@ import {
   LockOutlined,
   LoginOutlined,
   LogoutOutlined,
+  MenuOutlined,
   PayCircleOutlined,
   ProductOutlined,
   ProfileOutlined,
@@ -26,6 +28,7 @@ import {
   Avatar,
   Button,
   ConfigProvider,
+  Drawer,
   Dropdown,
   Form,
   Input,
@@ -277,6 +280,7 @@ export default function App() {
   const menuItems = useMemo(() => allowedMenuItems.map(toAntdMenuItem), [allowedMenuItems]);
   const openKeys = useMemo(() => allowedMenuItems.filter((item) => item.children?.length).map((item) => item.key), [allowedMenuItems]);
   const [menuOpenKeys, setMenuOpenKeys] = useState<string[]>([]);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const activeTitle = useMemo(
     () => findMenuTitle(allowedMenuItems, activeMenu) || (workspaceMode === 'merchant' ? '商户工作台' : workspaceMode === 'investor' ? '出资方工作台' : '经营工作台'),
     [allowedMenuItems, activeMenu, workspaceMode]
@@ -355,6 +359,7 @@ export default function App() {
       setMerchantStoresLoading(false);
       setActiveStoreId(undefined);
       setLoginMode('merchant');
+      setMobileNavigationOpen(false);
       loginForm.resetFields();
     }
   };
@@ -451,7 +456,47 @@ export default function App() {
   return (
     <ConfigProvider theme={appTheme}>
       <Layout className="app-shell">
-        <Layout.Sider width={248} className="sider" theme="dark">
+        <Drawer
+          className="mobile-navigation-drawer"
+          placement="left"
+          width={280}
+          open={mobileNavigationOpen}
+          closable={false}
+          onClose={() => setMobileNavigationOpen(false)}
+        >
+          <div className="brand mobile-drawer-brand">
+            <div className="brand-logo">
+              <img src="/tupaixiong-logo.png" alt="途派熊" />
+            </div>
+            <div>
+              <div className="brand-title">途派熊</div>
+              <div className="brand-subtitle">
+                {workspaceMode === 'merchant' ? '商户运营平台' : workspaceMode === 'investor' ? '出资方工作台' : '租赁运营平台'}
+              </div>
+            </div>
+            <Button
+              className="mobile-drawer-close"
+              type="text"
+              icon={<CloseOutlined />}
+              aria-label="关闭导航"
+              onClick={() => setMobileNavigationOpen(false)}
+            />
+          </div>
+          <Menu
+            className="side-menu mobile-side-menu"
+            theme="dark"
+            mode="inline"
+            openKeys={menuOpenKeys}
+            selectedKeys={[activeMenu]}
+            items={menuItems}
+            onClick={(event) => {
+              setActiveMenu(event.key);
+              setMobileNavigationOpen(false);
+            }}
+            onOpenChange={(keys) => setMenuOpenKeys(keys as string[])}
+          />
+        </Drawer>
+        <Layout.Sider width={248} className="sider desktop-sider" theme="dark">
           <div className="brand">
             <div className="brand-logo">
               <img src="/tupaixiong-logo.png" alt="途派熊" />
@@ -474,17 +519,27 @@ export default function App() {
             onOpenChange={(keys) => setMenuOpenKeys(keys as string[])}
           />
         </Layout.Sider>
-        <Layout>
+        <Layout className="main-layout">
           <Layout.Header className="header">
-            <div>
-              <Typography.Text className="header-kicker">
-                {workspaceMode === 'merchant' ? '商户经营后台' : workspaceMode === 'investor' ? '出资方工作台' : '总部管理后台'}
-              </Typography.Text>
-              <Typography.Title level={4}>{activeTitle}</Typography.Title>
+            <div className="header-title-group">
+              <Button
+                className="mobile-menu-button"
+                type="text"
+                icon={<MenuOutlined />}
+                aria-label="打开导航"
+                onClick={() => setMobileNavigationOpen(true)}
+              />
+              <div className="header-title-copy">
+                <Typography.Text className="header-kicker">
+                  {workspaceMode === 'merchant' ? '商户经营后台' : workspaceMode === 'investor' ? '出资方工作台' : '总部管理后台'}
+                </Typography.Text>
+                <Typography.Title level={4}>{activeTitle}</Typography.Title>
+              </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="header-actions">
               {workspaceMode === 'merchant' ? (
                 <Select
+                  className="header-store-select"
                   value={activeStoreId}
                   style={{ width: 240 }}
                   placeholder="选择门店"
