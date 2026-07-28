@@ -151,7 +151,7 @@ export function SystemManagement({ mode }: SystemManagementProps) {
     createForm.resetFields();
     createForm.setFieldsValue({
       roleCode: 'MERCHANT_OWNER',
-      password: 'Xniu@2026'
+      password: 'Tupaixiong@2026'
     });
     setCreateOpen(true);
   }

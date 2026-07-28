@@ -15,7 +15,7 @@
     <artifactId>rental-api</artifactId>
     <version>0.1.0</version>
     <name>rental-api</name>
-    <description>Xniu rental platform API</description>
+    <description>途派熊租赁平台 API</description>
 
     <properties>
         <java.version>21</java.version>

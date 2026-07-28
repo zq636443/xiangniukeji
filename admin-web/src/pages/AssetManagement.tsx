@@ -276,7 +276,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   function openCreateInvestor() {
     setEditingInvestor(null);
     investorForm.resetFields();
-    investorForm.setFieldsValue({ operationFeeRate: 0.08, createAccount: true, password: 'Xniu@2026' });
+    investorForm.setFieldsValue({ operationFeeRate: 0.08, createAccount: true, password: 'Tupaixiong@2026' });
     setInvestorOpen(true);
   }
 

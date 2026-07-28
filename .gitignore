@@ -7,6 +7,7 @@ build/
 target/
 .output/
 .vite/
+*.tsbuildinfo
 
 # Logs
 *.log
@@ -28,4 +29,3 @@ yarn-debug.log*
 *.class
 *.jar
 *.war
-

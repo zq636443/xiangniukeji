@@ -153,7 +153,7 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
   function openCreateMerchant() {
     setEditingMerchant(null);
     merchantForm.resetFields();
-    merchantForm.setFieldsValue({ createOwnerAccount: true, ownerPassword: 'Xniu@2026' });
+    merchantForm.setFieldsValue({ createOwnerAccount: true, ownerPassword: 'Tupaixiong@2026' });
     setMerchantOpen(true);
   }
 
@@ -333,7 +333,7 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
           type={mode === 'employees' ? 'primary' : 'default'}
           onClick={() => {
             employeeForm.resetFields();
-            employeeForm.setFieldsValue({ merchantId: selectedMerchantId, roleCode: 'STORE_STAFF', password: 'Xniu@2026' });
+            employeeForm.setFieldsValue({ merchantId: selectedMerchantId, roleCode: 'STORE_STAFF', password: 'Tupaixiong@2026' });
             setEmployeeOpen(true);
           }}
           disabled={!selectedMerchantId || selectedMerchant?.status !== 'ENABLED'}

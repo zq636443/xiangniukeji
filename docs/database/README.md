@@ -11,7 +11,7 @@
 
 ## 联调数据
 
-- [settlement-demo-seed.sql](/Users/zq/Desktop/享牛科技/docs/database/settlement-demo-seed.sql)
+- [settlement-demo-seed.sql](./settlement-demo-seed.sql)
   - 作用：补一套 `2026-07` 自然月月结联调数据。
   - 内容：1 笔已支付租赁订单、1 笔出资方承担维修、1 笔商户承担维修。
   - 用途：供后台“分润结算 -> 月结中心”、商户工作台、出资方工作台验证真实月结结果。
