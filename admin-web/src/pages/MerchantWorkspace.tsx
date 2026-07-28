@@ -1,4 +1,21 @@
-import { DeleteOutlined, DownloadOutlined, EditOutlined, ExportOutlined, GiftOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
+import {
+  BankOutlined,
+  CarOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  DeleteOutlined,
+  DownloadOutlined,
+  EditOutlined,
+  ExclamationCircleOutlined,
+  ExportOutlined,
+  GiftOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+  ShopOutlined,
+  UploadOutlined,
+  WalletOutlined
+} from '@ant-design/icons';
 import {
   Alert,
   Button,
@@ -12,7 +29,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Statistic,
   Table,
   Tag,
   Tabs,
@@ -22,9 +38,28 @@ import {
 import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { AssetBatchImportModal, downloadAssetImportTemplate } from '../components/AssetBatchImportModal';
+import {
+  CockpitAttentionList,
+  CockpitHeader,
+  CockpitMetric,
+  CockpitPanel,
+  CockpitProgressList,
+  CockpitTrend
+} from '../components/OperationsCockpit';
 import { OrderBatchImportModal, OrderImportTemplateButton } from '../components/OrderBatchImportModal';
 import { http } from '../services/request';
 import { downloadCsv } from '../utils/csv';
+import {
+  buildTimeBuckets,
+  compactMoney,
+  getDateWindow,
+  isInWindow,
+  percent,
+  percentageChange,
+  sumNumbers,
+  valueByBuckets,
+  type CockpitPeriod
+} from '../utils/dashboard';
 import type {
   AssetDetail,
   AssetInvestorOption,
@@ -174,6 +209,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
   const [overdues, setOverdues] = useState<OverdueCase[]>([]);
   const [incomeEntries, setIncomeEntries] = useState<SettlementIncomeEntry[]>([]);
   const [statements, setStatements] = useState<SettlementStatement[]>([]);
+  const [period, setPeriod] = useState<CockpitPeriod>('7D');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const canReadSettlement = account.permissions.includes('settlement.read') || account.permissions.includes('system.admin');
@@ -220,131 +256,210 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     void loadData();
   }, [storeId, canReadSettlement]);
 
-  const metrics = useMemo(() => ({
-    pendingPickup: orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').length,
-    renting: orders.filter((item) => item.orderStatus === 'RENTING').length
-      + externalOrders.filter((item) => item.orderStatus === 'ACTIVE').length,
-    externalCount: externalOrders.length,
-    externalCollected: externalOrders.reduce((sum, item) => sum + Number(item.verificationAmount || 0), 0),
-    overdue: overdues.length,
-    idleAssets: assets.filter((item) => item.status === 'IDLE').length,
-    exceptionAssets: assets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length,
-    pendingIncome: incomeEntries.filter((item) => item.entryStatus === 'PENDING').reduce((sum, item) => sum + Number(item.amount || 0), 0),
-    latestStatementIncome: Number(statements[0]?.payableAmount || 0)
-  }), [orders, externalOrders, assets, overdues, incomeEntries, statements]);
-
   const currentStore = stores.find((item) => item.id === storeId);
+  const window = useMemo(() => getDateWindow(period), [period]);
+  const dashboard = useMemo(() => {
+    const periodOrders = orders.filter((item) => isInWindow(item.orderedAt, window.start, window.end));
+    const previousOrders = orders.filter((item) => isInWindow(item.orderedAt, window.previousStart, window.previousEnd));
+    const periodExternal = externalOrders.filter((item) => isInWindow(item.createdAt || item.rentStartedAt, window.start, window.end));
+    const previousExternal = externalOrders.filter((item) => isInWindow(item.createdAt || item.rentStartedAt, window.previousStart, window.previousEnd));
+    const periodCollected = sumNumbers(periodOrders.map((item) => item.paidAmount)) + sumNumbers(periodExternal.map((item) => item.verificationAmount));
+    const previousCollected = sumNumbers(previousOrders.map((item) => item.paidAmount)) + sumNumbers(previousExternal.map((item) => item.verificationAmount));
+    const periodIncome = sumNumbers(incomeEntries.filter((item) => isInWindow(item.occurredAt, window.start, window.end)).map((item) => item.amount));
+    const previousIncome = sumNumbers(incomeEntries.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd)).map((item) => item.amount));
+    const activeAssets = assets.filter((item) => !['SCRAPPED', 'SOLD'].includes(item.status));
+    const rentingAssets = activeAssets.filter((item) => item.status === 'RENTING');
+    const deploymentRate = activeAssets.length ? rentingAssets.length / activeAssets.length * 100 : 0;
+    const openOverdueAmount = sumNumbers(overdues.map((item) => item.unpaidAmount));
+    const periodOrderCount = periodOrders.length + periodExternal.length;
+    const verifiedCount = periodOrders.filter((item) => Number(item.paidAmount || 0) > 0 || Number(item.verificationAmount || 0) > 0).length + periodExternal.length;
+    const startedCount = periodOrders.filter((item) => Boolean(item.leaseStartedAt)).length + periodExternal.filter((item) => Boolean(item.rentStartedAt)).length;
+    const fulfilledCount = periodOrders.filter((item) => ['RENTING', 'PENDING_RETURN', 'OVERDUE', 'PENDING_SUPPLEMENT', 'COMPLETED'].includes(item.orderStatus)).length
+      + periodExternal.filter((item) => ['ACTIVE', 'COMPLETED'].includes(item.orderStatus)).length;
+    return {
+      periodOrders,
+      periodExternal,
+      periodCollected,
+      collectedChange: percentageChange(periodCollected, previousCollected),
+      periodIncome,
+      incomeChange: percentageChange(periodIncome, previousIncome),
+      activeAssets,
+      rentingAssets,
+      deploymentRate,
+      openOverdueAmount,
+      periodOrderCount,
+      verifiedCount,
+      startedCount,
+      fulfilledCount,
+      pendingPickup: orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').length,
+      pendingReturn: orders.filter((item) => item.orderStatus === 'PENDING_RETURN').length,
+      repairingAssets: activeAssets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length,
+      idleAssets: activeAssets.filter((item) => item.status === 'IDLE').length,
+      pendingIncome: sumNumbers(incomeEntries.filter((item) => item.entryStatus === 'PENDING').map((item) => item.amount)),
+      latestStatement: [...statements].sort((left, right) => right.statementMonth.localeCompare(left.statementMonth))[0]
+    };
+  }, [orders, externalOrders, assets, overdues, incomeEntries, statements, window]);
+
+  const trend = useMemo(() => {
+    const buckets = buildTimeBuckets(window);
+    const formalCounts = valueByBuckets(buckets, orders, (item) => item.orderedAt, () => 1);
+    const externalCounts = valueByBuckets(buckets, externalOrders, (item) => item.createdAt || item.rentStartedAt, () => 1);
+    return {
+      labels: buckets.map((item) => item.label),
+      orders: formalCounts.map((value, index) => value + externalCounts[index]),
+      income: valueByBuckets(buckets, incomeEntries, (item) => item.occurredAt, (item) => Number(item.amount || 0))
+    };
+  }, [orders, externalOrders, incomeEntries, window]);
+
+  const upcomingTasks = useMemo(() => {
+    const now = Date.now();
+    const deadline = now + 24 * 60 * 60 * 1000;
+    const isUpcoming = (value?: string | null) => {
+      if (!value) return false;
+      const timestamp = new Date(value).getTime();
+      return timestamp >= now && timestamp <= deadline;
+    };
+    return [
+      ...orders.filter((item) => item.orderStatus === 'PENDING_PICKUP' && isUpcoming(item.expectedPickupAt)).map((item) => ({
+        key: `pickup-${item.id}`,
+        type: '取车',
+        time: item.expectedPickupAt,
+        orderNo: item.orderNo,
+        customer: item.customerName || `用户 ${item.userAccountId || '-'}`,
+        asset: item.frameSerialNo || item.frameAssetCode || '待分配',
+        status: item.orderStatus
+      })),
+      ...orders.filter((item) => ['RENTING', 'PENDING_RETURN'].includes(item.orderStatus) && isUpcoming(item.expectedReturnAt)).map((item) => ({
+        key: `return-${item.id}`,
+        type: '还车',
+        time: item.expectedReturnAt,
+        orderNo: item.orderNo,
+        customer: item.customerName || `用户 ${item.userAccountId || '-'}`,
+        asset: item.frameSerialNo || item.frameAssetCode || '-',
+        status: item.orderStatus
+      })),
+      ...externalOrders.filter((item) => item.orderStatus === 'ACTIVE' && isUpcoming(item.expectedReturnAt)).map((item) => ({
+        key: `external-return-${item.id}`,
+        type: '还车',
+        time: item.expectedReturnAt,
+        orderNo: item.recordNo,
+        customer: item.customerName,
+        asset: item.frameAssetSerialNo || '补录资产',
+        status: item.orderStatus
+      }))
+    ].sort((left, right) => new Date(left.time || 0).getTime() - new Date(right.time || 0).getTime());
+  }, [orders, externalOrders]);
+
+  const sourceRows = useMemo(() => {
+    const counts = new Map<string, number>();
+    counts.set('平台正式订单', dashboard.periodOrders.length);
+    dashboard.periodExternal.forEach((item) => {
+      const label = externalSourceName(item.sourcePlatform);
+      counts.set(label, (counts.get(label) || 0) + 1);
+    });
+    return [...counts.entries()]
+      .map(([label, value]) => ({ key: label, label, value, total: dashboard.periodOrderCount, detail: `${value} 单` }))
+      .filter((item) => item.value > 0)
+      .sort((left, right) => right.value - left.value);
+  }, [dashboard]);
 
   if (!storeId) {
     return <Empty description="当前账号暂无可访问门店" />;
   }
 
   return (
-    <Space direction="vertical" size={18} className="page-stack">
-      <section className="dashboard-hero">
-        <div>
-          <Typography.Text className="page-eyebrow">Merchant Workspace</Typography.Text>
-          <Typography.Title level={3}>商户工作台</Typography.Title>
-          <Typography.Text type="secondary">
-            {currentStore
-              ? `${currentStore.storeName} / 现场履约、逾期跟进、资产${canReadSettlement ? '和收益' : ''}总览`
-              : '按当前门店查看经营数据'}
-          </Typography.Text>
-        </div>
-        <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={loadData}>刷新数据</Button>
-      </section>
+    <Space direction="vertical" size={16} className="page-stack cockpit-page">
+      <CockpitHeader
+        eyebrow="Store Operations"
+        title="门店经营驾驶舱"
+        description={`${account.displayName} · ${window.label}订单、收益、履约任务与资产状态总览。`}
+        period={period}
+        onPeriodChange={setPeriod}
+        onRefresh={loadData}
+        loading={loading}
+        scope={<Tag color="green"><ShopOutlined /> {currentStore?.storeName || `门店 ${storeId}`}</Tag>}
+      />
 
       {error ? <Alert type="error" message={error} showIcon /> : null}
 
-      <Space size={16} wrap>
-        <Metric title="待取车订单" value={metrics.pendingPickup} />
-        <Metric title="租赁中订单（含补录）" value={metrics.renting} />
-        <Metric title="补录订单" value={metrics.externalCount} />
-        <Metric title="补录核销金额" value={money(metrics.externalCollected)} />
-        <Metric title="逾期订单" value={metrics.overdue} />
-        <Metric title="空闲资产" value={metrics.idleAssets} />
-        <Metric title="异常/维修资产" value={metrics.exceptionAssets} />
-        {canReadSettlement ? <Metric title="待结算收益" value={money(metrics.pendingIncome)} /> : null}
-        {canReadSettlement ? <Metric title="最近月结金额" value={money(metrics.latestStatementIncome)} /> : null}
-      </Space>
-
-      <div className="section">
-        <Typography.Title level={5}>最近补录订单</Typography.Title>
-        <Table
-          rowKey="id"
-          size="small"
-          loading={loading}
-          dataSource={externalOrders.slice(0, 8)}
-          pagination={false}
-          columns={[
-            { title: '补录单号', dataIndex: 'recordNo' },
-            { title: '客户', dataIndex: 'customerName' },
-            { title: '状态', dataIndex: 'orderStatus', render: externalOrderStatusTag },
-            { title: '实际核销金额', dataIndex: 'verificationAmount', render: money },
-            { title: '起租时间', dataIndex: 'rentStartedAt', render: dateText },
-            { title: '预计归还', dataIndex: 'expectedReturnAt', render: dateText }
-          ]}
-        />
+      <div className="cockpit-metric-grid">
+        <CockpitMetric icon={<WalletOutlined />} tone="green" label="期间订单核销" value={compactMoney(dashboard.periodCollected)} detail={`${dashboard.periodOrderCount} 笔订单，含外部补录`} change={dashboard.collectedChange} changeLabel="环比" />
+        {canReadSettlement ? (
+          <CockpitMetric icon={<CheckCircleOutlined />} tone="violet" label="期间门店收益" value={compactMoney(dashboard.periodIncome)} detail={`待归集 ${compactMoney(dashboard.pendingIncome)}`} change={dashboard.incomeChange} changeLabel="环比" />
+        ) : (
+          <CockpitMetric icon={<BankOutlined />} tone="violet" label="期间新增订单" value={`${dashboard.periodOrderCount} 单`} detail="正式订单与补录订单" />
+        )}
+        <CockpitMetric icon={<CarOutlined />} tone="blue" label="当前资产投放率" value={percent(dashboard.deploymentRate)} detail={`${dashboard.rentingAssets.length} / ${dashboard.activeAssets.length} 台在租`} />
+        <CockpitMetric icon={<ExclamationCircleOutlined />} tone="red" label="逾期未收" value={compactMoney(dashboard.openOverdueAmount)} detail={`${overdues.length} 个待跟进案件`} inverseChange />
       </div>
 
-      <div className="section">
-        <Typography.Title level={5}>待处理订单</Typography.Title>
-        <Table
-          rowKey="id"
-          size="small"
-          loading={loading}
-          dataSource={orders.filter((item) => ['PENDING_PICKUP', 'RENTING', 'OVERDUE', 'PENDING_RETURN'].includes(item.orderStatus)).slice(0, 8)}
-          pagination={false}
-          columns={[
-            { title: '订单号', dataIndex: 'orderNo' },
-            { title: '状态', dataIndex: 'orderStatus', render: orderStatusTag },
-            { title: '租期', render: (_, record) => `${record.leaseValue}${record.leaseUnit === 'DAY' ? '天' : '月'} / ${record.totalPeriods}期` },
-            { title: '应付', dataIndex: 'payableAmount', render: money },
-            { title: '创建时间', dataIndex: 'createdAt', render: dateText }
-          ]}
-        />
+      <div className="cockpit-layout cockpit-layout-main">
+        <CockpitPanel title="门店经营趋势" subtitle={canReadSettlement ? '订单量与门店收益按业务发生时间统计' : '正式订单与外部补录订单量'} extra={<Tag>{window.label}</Tag>}>
+          <CockpitTrend
+            labels={trend.labels}
+            primary={trend.orders}
+            secondary={canReadSettlement ? trend.income : undefined}
+            primaryLabel="订单量"
+            secondaryLabel={canReadSettlement ? '门店收益' : undefined}
+            primaryFormatter={(value) => `${value} 单`}
+            secondaryFormatter={compactMoney}
+          />
+        </CockpitPanel>
+        <CockpitPanel title="经营与履约关注" subtitle="门店当天应优先完成的工作" extra={<Tag color={overdues.length ? 'red' : 'green'}>{overdues.length ? '有待办' : '正常'}</Tag>}>
+          <CockpitAttentionList rows={[
+            { key: 'pickup', icon: <ClockCircleOutlined />, tone: 'blue', label: '待取车订单', detail: '核验人员、车辆与电池准备', value: `${dashboard.pendingPickup} 单` },
+            { key: 'return', icon: <CarOutlined />, tone: 'violet', label: '待归还订单', detail: '安排验车并更新资产状态', value: `${dashboard.pendingReturn} 单` },
+            { key: 'overdue', icon: <ExclamationCircleOutlined />, tone: 'red', label: '逾期催缴', detail: `${overdues.length} 个未关闭案件`, value: compactMoney(dashboard.openOverdueAmount), tag: overdues.length ? '优先' : undefined },
+            { key: 'repair', icon: <BankOutlined />, tone: 'orange', label: '维修及异常资产', detail: '影响当前可投放运力', value: `${dashboard.repairingAssets} 台` },
+            { key: 'idle', icon: <ShopOutlined />, tone: 'green', label: '可投放空闲资产', detail: '可用于新增订单履约', value: `${dashboard.idleAssets} 台` }
+          ]} />
+        </CockpitPanel>
       </div>
 
-      <div className="section">
-        <Typography.Title level={5}>逾期跟进</Typography.Title>
-        <Table
-          rowKey="id"
-          size="small"
-          loading={loading}
-          dataSource={overdues.slice(0, 8)}
-          pagination={false}
-          columns={[
-            { title: '案件号', dataIndex: 'caseNo' },
-            { title: '订单', dataIndex: 'orderId' },
-            { title: '未收金额', dataIndex: 'unpaidAmount', render: money },
-            { title: '失败次数', dataIndex: 'failCount' },
-            { title: '催缴状态', dataIndex: 'collectionStatus', render: collectionStatusTag }
-          ]}
-        />
-      </div>
-
-      {canReadSettlement ? (
-        <div className="section">
-          <Typography.Title level={5}>最近月结单</Typography.Title>
+      <div className="cockpit-layout cockpit-layout-equal">
+        <CockpitPanel title="未来 24 小时履约计划" subtitle="按预计取车、归还时间自动汇总" extra={<Tag color="blue">{upcomingTasks.length} 项</Tag>}>
           <Table
-            rowKey="id"
+            rowKey="key"
             size="small"
             loading={loading}
-            dataSource={statements.slice(0, 6)}
+            dataSource={upcomingTasks.slice(0, 8)}
             pagination={false}
-            locale={{ emptyText: <Empty description="暂无月结单" /> }}
+            locale={{ emptyText: <Empty description="未来 24 小时暂无已排期任务" /> }}
             columns={[
-              { title: '月结单号', dataIndex: 'statementNo' },
-              { title: '月份', dataIndex: 'statementMonth' },
-              { title: '签单费', dataIndex: 'signFeeIncomeAmount', render: money },
-              { title: '运营及维修分润', dataIndex: 'rentShareIncomeAmount', render: money },
-              { title: '维保扣减', dataIndex: 'maintenanceDeductAmount', render: money },
-              { title: '应结算', dataIndex: 'payableAmount', render: money },
-              { title: '状态', dataIndex: 'status', render: statementStatusTag }
+              { title: '任务', dataIndex: 'type', width: 68, render: (value) => <Tag color={value === '取车' ? 'blue' : 'purple'}>{value}</Tag> },
+              { title: '计划时间', dataIndex: 'time', width: 145, render: dateText },
+              { title: '订单', dataIndex: 'orderNo' },
+              { title: '客户', dataIndex: 'customer', ellipsis: true },
+              { title: '车架 / 资产', dataIndex: 'asset', ellipsis: true }
             ]}
           />
-        </div>
-      ) : null}
+        </CockpitPanel>
+        <CockpitPanel title="订单来源结构" subtitle={`${window.label}获客渠道构成`} extra={<Tag color="purple">{dashboard.periodOrderCount} 单</Tag>}>
+          {sourceRows.length ? <CockpitProgressList rows={sourceRows} /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前周期暂无订单" />}
+          <div className="cockpit-panel-note">补录订单按抖音、美团、闲鱼、线下及其他渠道分别统计。</div>
+        </CockpitPanel>
+      </div>
+
+      <div className="cockpit-layout cockpit-layout-equal">
+        <CockpitPanel title="门店履约漏斗" subtitle={`${window.label}订单从创建到租赁履约`} extra={<Tag color="green">{dashboard.periodOrderCount} 单</Tag>}>
+          <CockpitProgressList rows={[
+            { key: 'created', label: '订单创建', value: dashboard.periodOrderCount, total: dashboard.periodOrderCount, detail: `${dashboard.periodOrderCount} 单`, color: '#2563eb' },
+            { key: 'verified', label: '支付 / 核销', value: dashboard.verifiedCount, total: dashboard.periodOrderCount, detail: `${dashboard.verifiedCount} 单`, color: '#7c3aed' },
+            { key: 'started', label: '完成交付', value: dashboard.startedCount, total: dashboard.periodOrderCount, detail: `${dashboard.startedCount} 单`, color: '#0f9f7a' },
+            { key: 'fulfilled', label: '履约中 / 完成', value: dashboard.fulfilledCount, total: dashboard.periodOrderCount, detail: `${dashboard.fulfilledCount} 单`, color: '#059669' }
+          ]} />
+        </CockpitPanel>
+        <CockpitPanel title="收益与月结状态" subtitle={canReadSettlement ? '门店收益归集和最近月结结果' : '当前账号无收益查看权限'} extra={dashboard.latestStatement ? statementStatusTag(dashboard.latestStatement.status) : undefined}>
+          {canReadSettlement ? (
+            <div className="cockpit-summary-block">
+              <div><span>最近月结月份</span><strong>{dashboard.latestStatement?.statementMonth || '-'}</strong></div>
+              <div><span>最近应结算金额</span><strong>{compactMoney(dashboard.latestStatement?.payableAmount)}</strong></div>
+              <div><span>签单费收益</span><strong>{compactMoney(dashboard.latestStatement?.signFeeIncomeAmount)}</strong></div>
+              <div><span>运营及维修分润</span><strong>{compactMoney(dashboard.latestStatement?.rentShareIncomeAmount)}</strong></div>
+            </div>
+          ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请联系管理员开通收益查看权限" />}
+        </CockpitPanel>
+      </div>
     </Space>
   );
 }
@@ -2298,17 +2413,18 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
   );
 }
 
-function Metric(props: { title: string; value: string | number }) {
-  return (
-    <section className="metric-tile">
-      <Typography.Text type="secondary">{props.title}</Typography.Text>
-      <Statistic value={props.value} />
-    </section>
-  );
-}
-
 function money(value?: number | string | null) {
   return `¥${Number(value || 0).toFixed(2)}`;
+}
+
+function externalSourceName(value: ExternalRentalOrder['sourcePlatform']) {
+  return ({
+    DOUYIN: '抖音',
+    MEITUAN: '美团',
+    XIANYU: '闲鱼',
+    OFFLINE: '线下',
+    OTHER: '其他渠道'
+  } as Record<ExternalRentalOrder['sourcePlatform'], string>)[value];
 }
 
 function optionalMoney(value?: number | string | null) {
