@@ -141,12 +141,10 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   }, [selectedStoreSku]);
 
   const frameAssetOptions = useMemo(() => {
-    const batteryInvestorId = assets.find((item) => item.id === selectedBatteryAssetId)?.investorId;
     return assets
       .filter((item) => {
         const isCurrentAsset = item.id === editingOrder?.frameAssetId;
-        return item.assetType !== 'BATTERY'
-          && (batteryInvestorId == null || item.investorId === batteryInvestorId)
+        return item.id !== selectedBatteryAssetId
           && (isCurrentAsset || (
             item.status === 'IDLE'
             && item.currentMerchantId === selectedStoreSku?.merchantId
@@ -157,12 +155,10 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   }, [assets, editingOrder, selectedBatteryAssetId, selectedStoreSku]);
 
   const batteryAssetOptions = useMemo(() => {
-    const frameInvestorId = assets.find((item) => item.id === selectedFrameAssetId)?.investorId;
     return assets
       .filter((item) => {
         const isCurrentAsset = item.id === editingOrder?.batteryAssetId;
-        return item.assetType === 'BATTERY'
-          && (frameInvestorId == null || item.investorId === frameInvestorId)
+        return item.id !== selectedFrameAssetId
           && (isCurrentAsset || (
             item.status === 'IDLE'
             && item.currentMerchantId === selectedStoreSku?.merchantId
@@ -171,23 +167,6 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       })
       .map((item) => ({ label: formatAssetLabel(item), value: item.id }));
   }, [assets, editingOrder, selectedFrameAssetId, selectedStoreSku]);
-
-  const integratedVehicleSelected = useMemo(
-    () => assets.some((item) => item.id === selectedFrameAssetId && item.assetType === 'INTEGRATED_VEHICLE'),
-    [assets, selectedFrameAssetId]
-  );
-
-  useEffect(() => {
-    if (integratedVehicleSelected) {
-      createForm.setFieldValue('batteryAssetId', undefined);
-      return;
-    }
-    const frameInvestorId = assets.find((item) => item.id === selectedFrameAssetId)?.investorId;
-    const batteryInvestorId = assets.find((item) => item.id === selectedBatteryAssetId)?.investorId;
-    if (frameInvestorId != null && batteryInvestorId != null && frameInvestorId !== batteryInvestorId) {
-      createForm.setFieldValue('batteryAssetId', undefined);
-    }
-  }, [assets, createForm, integratedVehicleSelected, selectedBatteryAssetId, selectedFrameAssetId]);
 
   const storeOptions = useMemo(() => stores.map((item) => ({
     label: `${item.storeName} / ${item.storeCode}`,
@@ -505,7 +484,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               render: (_, record) => (
                 <div>
                   <div>主资产: {record.frameAssetSerialNo || '-'}</div>
-                  <div>电池: {record.batteryAssetSerialNo || '-'}</div>
+                  <div>第二资产: {record.batteryAssetSerialNo || '-'}</div>
                 </div>
               )
             },
@@ -662,26 +641,25 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           </Space>
           <Space size={12} style={{ width: '100%' }} align="start">
             {selectedStoreSku?.needFrameAsset !== false ? (
-              <Form.Item name="frameAssetId" label="主资产（支持全部自定义类型）" rules={selectedStoreSku?.needFrameAsset ? [{ required: true, message: '请选择主资产或自定义资产' }] : undefined} style={{ flex: 1 }}>
+              <Form.Item name="frameAssetId" label="主资产（不限类型）" rules={selectedStoreSku?.needFrameAsset ? [{ required: true, message: '请选择主资产' }] : undefined} style={{ flex: 1 }}>
                 <Select
                   showSearch
                   allowClear
                   optionFilterProp="label"
-                  placeholder="输入序列号、资产编号或自定义类型搜索"
-                  notFoundContent={selectedStoreSku ? '该门店暂无空闲主资产或自定义资产' : '请先选择门店商品'}
+                  placeholder="输入序列号、资产编号或类型搜索"
+                  notFoundContent={selectedStoreSku ? '该门店暂无可用空闲资产' : '请先选择门店商品'}
                   options={frameAssetOptions}
                 />
               </Form.Item>
             ) : null}
             {selectedStoreSku?.needBatteryAsset !== false ? (
-              <Form.Item name="batteryAssetId" label="电池资产" rules={selectedStoreSku?.needBatteryAsset && !integratedVehicleSelected ? [{ required: true, message: '请选择电池资产' }] : undefined} style={{ flex: 1 }}>
+              <Form.Item name="batteryAssetId" label="第二资产（不限类型）" rules={selectedStoreSku?.needBatteryAsset ? [{ required: true, message: '请选择第二资产' }] : undefined} style={{ flex: 1 }}>
                 <Select
                   showSearch
                   allowClear
                   optionFilterProp="label"
-                  disabled={integratedVehicleSelected}
-                  placeholder={integratedVehicleSelected ? '车电一体无需独立电池' : '输入电池号或资产编号搜索'}
-                  notFoundContent={selectedStoreSku ? '该门店暂无空闲电池资产' : '请先选择门店商品'}
+                  placeholder="输入序列号、资产编号或类型搜索"
+                  notFoundContent={selectedStoreSku ? '该门店暂无其他可用空闲资产' : '请先选择门店商品'}
                   options={batteryAssetOptions}
                 />
               </Form.Item>
@@ -707,7 +685,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             type="info"
             showIcon
             message="一行一单，支持英文逗号或 Tab 分隔"
-            description="字段顺序：来源平台,外部订单号,门店商品ID,SKU ID,租期倍数,客户姓名,客户手机号,起租时间,预计归还时间,主资产ID,电池资产ID,外部订单租金,实际核销金额,签单费,押金,备注。月租统一按30天计算；旧版不含租期倍数的15列格式仍兼容，默认1倍。"
+            description="字段顺序：来源平台,外部订单号,门店商品ID,SKU ID,租期倍数,客户姓名,客户手机号,起租时间,预计归还时间,主资产ID,第二资产ID,外部订单租金,实际核销金额,签单费,押金,备注。两个资产栏均不限制资产类型；月租统一按30天计算；旧版不含租期倍数的15列格式仍兼容，默认1倍。"
           />
           <Input.TextArea
             rows={10}
@@ -751,10 +729,10 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           <Form.Item name="returnStoreId" label="归还门店">
             <Select allowClear options={storeOptions} placeholder="不选则默认原提车门店" />
           </Form.Item>
-          <Form.Item name="frameResultStatus" label="车架归还状态">
+          <Form.Item name="frameResultStatus" label="主资产归还状态">
             <Select allowClear options={returnStatusOptions as unknown as { label: string; value: string }[]} />
           </Form.Item>
-          <Form.Item name="batteryResultStatus" label="电池归还状态">
+          <Form.Item name="batteryResultStatus" label="第二资产归还状态">
             <Select allowClear options={returnStatusOptions as unknown as { label: string; value: string }[]} />
           </Form.Item>
           <Form.Item name="remark" label="备注">
@@ -778,10 +756,10 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           <Form.Item name="returnStoreId" label="归还门店">
             <Select allowClear options={storeOptions} placeholder="不选则默认原提车门店" />
           </Form.Item>
-          <Form.Item name="frameResultStatus" label="车架归还状态">
+          <Form.Item name="frameResultStatus" label="主资产归还状态">
             <Select allowClear options={returnStatusOptions as unknown as { label: string; value: string }[]} />
           </Form.Item>
-          <Form.Item name="batteryResultStatus" label="电池归还状态">
+          <Form.Item name="batteryResultStatus" label="第二资产归还状态">
             <Select allowClear options={returnStatusOptions as unknown as { label: string; value: string }[]} />
           </Form.Item>
           <Form.Item name="remark" label="备注">
@@ -812,7 +790,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               <Descriptions.Item label="SKU">{selectedOrder.packageName || '-'}</Descriptions.Item>
               <Descriptions.Item label="租期">{leaseText(selectedOrder.leaseUnit, selectedOrder.leaseValue, selectedOrder.totalPeriods)}</Descriptions.Item>
               <Descriptions.Item label="主资产">{selectedOrder.frameAssetSerialNo || '-'}</Descriptions.Item>
-              <Descriptions.Item label="电池资产">{selectedOrder.batteryAssetSerialNo || '-'}</Descriptions.Item>
+              <Descriptions.Item label="第二资产">{selectedOrder.batteryAssetSerialNo || '-'}</Descriptions.Item>
               <Descriptions.Item label="外部订单租金">{moneyText(selectedOrder.externalRentalAmount)}</Descriptions.Item>
               <Descriptions.Item label="实际核销金额">{moneyText(selectedOrder.verificationAmount)}</Descriptions.Item>
               <Descriptions.Item label="分润快照">{selectedOrder.settlementSnapshotNo || '-'}</Descriptions.Item>

@@ -188,10 +188,21 @@ public class SettlementIncomeService {
             throw BusinessException.badRequest("订单资产未绑定出资方，不能生成分润");
         }
         var investorIds = assets.stream().map(AssetItem::investorId).distinct().toList();
-        if (investorIds.size() > 1) {
+        if (snapshot.sourceType() != SnapshotSourceType.EXTERNAL_ORDER && investorIds.size() > 1) {
             throw BusinessException.badRequest("订单绑定了不同出资方的资产，请拆分订单后再生成分润");
         }
-        return List.of(new V2InvestorAllocation(investorIds.get(0), money(snapshot.investorShareAmount())));
+        var amountByInvestor = new LinkedHashMap<Long, BigDecimal>();
+        var remainingAmount = money(snapshot.investorShareAmount());
+        var averageAmount = remainingAmount.divide(BigDecimal.valueOf(assets.size()), 2, RoundingMode.HALF_UP);
+        for (var index = 0; index < assets.size(); index += 1) {
+            var asset = assets.get(index);
+            var amount = index == assets.size() - 1 ? remainingAmount : averageAmount;
+            remainingAmount = remainingAmount.subtract(amount);
+            amountByInvestor.merge(asset.investorId(), money(amount), BigDecimal::add);
+        }
+        return amountByInvestor.entrySet().stream()
+            .map(entry -> new V2InvestorAllocation(entry.getKey(), money(entry.getValue())))
+            .toList();
     }
 
     private void addInvestorEntries(List<SettlementIncomeEntry> created, SettlementRuleSnapshot snapshot, IncomeSource source, List<InvestorIncomeAllocation> allocations) {

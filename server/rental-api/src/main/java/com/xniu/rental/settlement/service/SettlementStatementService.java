@@ -592,16 +592,30 @@ public class SettlementStatementService {
             throw BusinessException.badRequest("订单资产未绑定出资方，不能生成月结");
         }
         var investorIds = investorAssets.stream().map(InvestorAssetRef::investorId).distinct().toList();
-        if (investorIds.size() > 1) {
-            var orderLabel = orderId == null ? "补录订单" : "订单 " + orderId;
-            throw BusinessException.badRequest(orderLabel + " 绑定了不同出资方的资产，请拆分订单后再生成月结");
+        if (orderId != null && investorIds.size() > 1) {
+            throw BusinessException.badRequest("订单 " + orderId + " 绑定了不同出资方的资产，请拆分订单后再生成月结");
         }
-        var investorId = investorIds.get(0);
-        var profitV2 = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2;
-        var grossAmount = profitV2
+        var grossAmount = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
             ? money(calculateProfitV2(snapshot, rentAmount).investorShareAmount())
             : money(rentAmount.multiply(snapshot.investorRentShareRate()));
-        return List.of(new InvestorAllocation(investorId, money(rentAmount), grossAmount));
+        var rentByInvestor = new LinkedHashMap<Long, BigDecimal>();
+        var grossByInvestor = new LinkedHashMap<Long, BigDecimal>();
+        var remainingRent = money(rentAmount);
+        var remainingGross = grossAmount;
+        var averageRent = remainingRent.divide(BigDecimal.valueOf(investorAssets.size()), 2, RoundingMode.HALF_UP);
+        var averageGross = remainingGross.divide(BigDecimal.valueOf(investorAssets.size()), 2, RoundingMode.HALF_UP);
+        for (var index = 0; index < investorAssets.size(); index += 1) {
+            var asset = investorAssets.get(index);
+            var assetRent = index == investorAssets.size() - 1 ? remainingRent : averageRent;
+            var assetGross = index == investorAssets.size() - 1 ? remainingGross : averageGross;
+            remainingRent = remainingRent.subtract(assetRent);
+            remainingGross = remainingGross.subtract(assetGross);
+            rentByInvestor.merge(asset.investorId(), money(assetRent), BigDecimal::add);
+            grossByInvestor.merge(asset.investorId(), money(assetGross), BigDecimal::add);
+        }
+        return rentByInvestor.entrySet().stream()
+            .map(entry -> new InvestorAllocation(entry.getKey(), money(entry.getValue()), money(grossByInvestor.get(entry.getKey()))))
+            .toList();
     }
 
     private ProfitSharingCalculator.Allocation calculateProfitV2(SettlementRuleSnapshot snapshot, BigDecimal settlementBaseAmount) {
