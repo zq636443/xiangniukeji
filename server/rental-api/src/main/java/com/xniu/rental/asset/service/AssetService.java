@@ -110,7 +110,10 @@ public class AssetService {
         authorizationService.requirePermission("asset.manage");
         authorizationService.requirePlatformAccount();
         ensureInvestorExists(request.investorId());
-        if (request.currentStoreId() != null) {
+        if ((request.currentMerchantId() == null) != (request.currentStoreId() == null)) {
+            throw BusinessException.badRequest("资产分配到商户时，必须同时选择商户和门店");
+        }
+        if (request.currentMerchantId() != null) {
             ensureStoreBelongsToMerchant(request.currentMerchantId(), request.currentStoreId());
         }
         var typeDefinition = assetTypeService.resolveForEntry(request.assetTypeId(), request.assetType());

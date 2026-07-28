@@ -25,12 +25,13 @@ public class MerchantRepository {
 
     public List<Merchant> list(String keyword) {
         if (keyword == null || keyword.isBlank()) {
-            return jdbcTemplate.query("SELECT * FROM merchant ORDER BY id DESC", mapper);
+            return jdbcTemplate.query("SELECT * FROM merchant WHERE status <> 'ARCHIVED' ORDER BY id DESC", mapper);
         }
         var like = "%" + keyword.trim() + "%";
         return jdbcTemplate.query("""
             SELECT * FROM merchant
-            WHERE merchant_name LIKE ? OR merchant_code LIKE ? OR contact_phone LIKE ?
+            WHERE status <> 'ARCHIVED'
+              AND (merchant_name LIKE ? OR merchant_code LIKE ? OR contact_phone LIKE ?)
             ORDER BY id DESC
             """, mapper, like, like, like);
     }
@@ -108,6 +109,23 @@ public class MerchantRepository {
 
     public void deleteById(Long id) {
         jdbcTemplate.update("DELETE FROM merchant WHERE id = ?", id);
+    }
+
+    public void archiveById(Long id) {
+        jdbcTemplate.update("""
+            UPDATE auth_session
+            SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+            WHERE account_id IN (
+                SELECT id FROM sys_account WHERE merchant_id = ? AND deleted_at IS NULL
+            )
+            """, id);
+        jdbcTemplate.update("""
+            UPDATE sys_account
+            SET status = 'DISABLED'
+            WHERE merchant_id = ? AND deleted_at IS NULL
+            """, id);
+        jdbcTemplate.update("UPDATE merchant_store SET status = 'DISABLED' WHERE merchant_id = ?", id);
+        jdbcTemplate.update("UPDATE merchant SET status = 'ARCHIVED' WHERE id = ?", id);
     }
 
     private int count(String sql, Object... args) {

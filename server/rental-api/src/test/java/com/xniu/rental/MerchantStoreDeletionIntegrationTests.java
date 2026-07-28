@@ -125,12 +125,26 @@ class MerchantStoreDeletionIntegrationTests {
     }
 
     @Test
-    void merchantWithRelatedDataCannotBeDeleted() {
-        assertThatThrownBy(() -> merchantService.deleteMerchant(1L))
-            .isInstanceOf(BusinessException.class)
-            .hasMessageContaining("暂不可删除")
-            .hasMessageContaining("门店")
-            .hasMessageContaining("有效账号")
-            .hasMessageContaining("租赁订单");
+    void merchantWithRelatedDataShouldBeArchivedAndHidden() {
+        merchantService.deleteMerchant(1L);
+
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT status FROM merchant WHERE id = 1",
+            String.class
+        )).isEqualTo("ARCHIVED");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT status FROM merchant_store WHERE id = 1",
+            String.class
+        )).isEqualTo("DISABLED");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT status FROM store_sku WHERE id = 1",
+            String.class
+        )).isEqualTo("ARCHIVED");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT status FROM sys_account WHERE merchant_id = 1 AND deleted_at IS NULL LIMIT 1",
+            String.class
+        )).isEqualTo("DISABLED");
+        assertThat(merchantService.listMerchants(null)).noneMatch(item -> item.id().equals(1L));
+        assertThat(merchantService.listStores(null, null)).noneMatch(item -> item.id().equals(1L));
     }
 }

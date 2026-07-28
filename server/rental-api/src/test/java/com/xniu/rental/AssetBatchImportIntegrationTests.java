@@ -133,6 +133,29 @@ class AssetBatchImportIntegrationTests {
     }
 
     @Test
+    void platformAssetEntryShouldRejectIncompleteMerchantStoreLocation() {
+        var typeId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_type_definition WHERE type_code = 'BATTERY'",
+            Long.class
+        );
+
+        assertThatThrownBy(() -> assetService.createAsset(new AssetRequest(
+            typeId,
+            null,
+            "BATTERY-PARTIAL-" + UUID.randomUUID().toString().substring(0, 8),
+            1L,
+            1L,
+            null,
+            new BigDecimal("1800.00"),
+            null,
+            null,
+            LocalDate.of(2026, 7, 28)
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("同时选择商户和门店");
+    }
+
+    @Test
     void integratedVehicleShouldUseFrameNumberForSingleAndBatchEntry() {
         var singleSerialNo = "INTEGRATED-SINGLE-" + UUID.randomUUID().toString().substring(0, 8);
         var single = assetService.createAsset(new AssetRequest(

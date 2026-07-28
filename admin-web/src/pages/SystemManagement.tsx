@@ -1,5 +1,6 @@
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
-import { Button, Descriptions, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
+import { Button, Descriptions, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
+import type { TableColumnsType } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
 import type {
@@ -51,6 +52,7 @@ const investorRoleOptions: { label: string; value: SystemAccount['accountType'] 
 ] ;
 
 type SystemManagementMode = 'accounts' | 'roles' | 'permissions' | 'scopes';
+type AccountGroup = 'platform' | 'merchant' | 'investor' | 'consumer';
 
 type SystemManagementProps = {
   mode: SystemManagementMode;
@@ -74,6 +76,10 @@ export function SystemManagement({ mode }: SystemManagementProps) {
   const [roleEditOpen, setRoleEditOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [permissionUpdatingAccountId, setPermissionUpdatingAccountId] = useState<number>();
+  const [accountGroup, setAccountGroup] = useState<AccountGroup>('merchant');
+  const [accountKeyword, setAccountKeyword] = useState('');
+  const [accountRole, setAccountRole] = useState<string>();
+  const [accountStatus, setAccountStatus] = useState<SystemAccount['status']>();
   const [createForm] = Form.useForm<CreateForm>();
   const [editForm] = Form.useForm<EditForm>();
   const [passwordForm] = Form.useForm<ResetPasswordForm>();
@@ -120,6 +126,29 @@ export function SystemManagement({ mode }: SystemManagementProps) {
   const createRoleOptions = useMemo(() => roles
     .filter((role) => role.status === 'ENABLED' && role.roleCode !== 'CONSUMER')
     .map((role) => ({ label: role.roleName, value: role.roleCode as SystemAccountCreatePayload['roleCode'] })), [roles]);
+  const createAccountRoleOptions = useMemo(() => createRoleOptions.filter((option) => (
+    accountGroup === 'platform' ? platformRoleOptions.some((item) => item.value === option.value)
+      : accountGroup === 'investor' ? investorRoleOptions.some((item) => item.value === option.value)
+        : merchantRoleOptions.some((item) => item.value === option.value)
+  )), [accountGroup, createRoleOptions]);
+  const accountGroupRows = useMemo(() => accounts.filter((item) => accountGroupOf(item) === accountGroup), [accountGroup, accounts]);
+  const filteredAccounts = useMemo(() => {
+    const keyword = accountKeyword.trim().toLowerCase();
+    return accountGroupRows.filter((item) => {
+      if (accountStatus && item.status !== accountStatus) return false;
+      if (accountRole && !item.roles.includes(accountRole)) return false;
+      if (!keyword) return true;
+      return [item.displayName, item.username, item.phone, item.merchantName, item.storeName, item.investorName]
+        .some((value) => String(value || '').toLowerCase().includes(keyword));
+    });
+  }, [accountGroupRows, accountKeyword, accountRole, accountStatus]);
+  const accountGroupTabs = useMemo(() => (['platform', 'merchant', 'investor', 'consumer'] as AccountGroup[]).map((key) => ({
+    key,
+    label: `${accountGroupText(key)}（${accounts.filter((item) => accountGroupOf(item) === key).length}）`
+  })), [accounts]);
+  const accountRoleOptions = useMemo(() => roles
+    .filter((role) => accountTypeBelongsToGroup(role.roleCode, accountGroup))
+    .map((role) => ({ label: role.roleName, value: role.roleCode })), [accountGroup, roles]);
   const permissionOptions = useMemo(() => permissions.map((permission) => ({
     label: `${permission.permissionName} / ${permission.permissionCode}`,
     value: permission.permissionCode
@@ -150,7 +179,7 @@ export function SystemManagement({ mode }: SystemManagementProps) {
   function openCreate() {
     createForm.resetFields();
     createForm.setFieldsValue({
-      roleCode: 'MERCHANT_OWNER',
+      roleCode: accountGroup === 'platform' ? 'PLATFORM_ADMIN' : accountGroup === 'investor' ? 'INVESTOR' : 'MERCHANT_OWNER',
       password: 'Tupaixiong@2026'
     });
     setCreateOpen(true);
@@ -307,6 +336,65 @@ export function SystemManagement({ mode }: SystemManagementProps) {
     await loadAll();
   }
 
+  const accountColumns: TableColumnsType<SystemAccount> = [
+    { title: '账号ID', dataIndex: 'id', width: 84 },
+    { title: '显示名称', dataIndex: 'displayName', width: 150 },
+    { title: '登录账号', dataIndex: 'username', width: 150, render: (value) => value || '-' },
+    { title: '手机号', dataIndex: 'phone', width: 135, render: (value) => value || '-' },
+    { title: '类型', dataIndex: 'accountType', width: 120, render: accountTypeText },
+    { title: '角色', dataIndex: 'roles', width: 160, render: (value: string[]) => value.length ? value.map((item) => <Tag key={item}>{accountTypeText(item)}</Tag>) : '-' },
+    ...(accountGroup === 'merchant' ? [
+      {
+        title: '新建订单',
+        width: 110,
+        align: 'center' as const,
+        render: (_: unknown, record: SystemAccount) => record.roles.includes('STORE_MANAGER')
+          ? <Tag color="green">店长默认</Tag>
+          : (
+            <Switch
+              checked={record.directPermissions.includes('order.create')}
+              loading={permissionUpdatingAccountId === record.id}
+              onChange={(checked) => void toggleOrderCreatePermission(record, checked)}
+            />
+          )
+      },
+      { title: '所属商户', dataIndex: 'merchantName', width: 180, render: (value: unknown) => value || '-' },
+      { title: '默认门店', dataIndex: 'storeName', width: 180, render: (value: unknown) => value || '-' }
+    ] : []),
+    ...(accountGroup === 'investor' ? [
+      { title: '所属出资方', dataIndex: 'investorName', width: 200, render: (value: unknown) => value || '-' }
+    ] : []),
+    { title: '状态', dataIndex: 'status', width: 90, render: statusTag },
+    { title: '最后登录', dataIndex: 'lastLoginAt', width: 150, render: dateText },
+    {
+      title: '操作',
+      fixed: 'right',
+      width: accountGroup === 'merchant' ? 440 : 360,
+      render: (_: unknown, record: SystemAccount) => (
+        <Space wrap>
+          <Button size="small" onClick={() => openDetail(record)}>详情</Button>
+          <Button size="small" onClick={() => openEdit(record)}>编辑</Button>
+          {record.username ? <Button size="small" onClick={() => openResetPassword(record)}>重置密码</Button> : null}
+          <Button size="small" onClick={() => openRole(record)}>角色</Button>
+          {record.merchantId && record.roles[0] !== 'MERCHANT_OWNER' ? (
+            <Button size="small" onClick={() => openScopes(record)}>范围</Button>
+          ) : null}
+          <Button size="small" onClick={() => toggleStatus(record)}>{record.status === 'ENABLED' ? '停用' : '启用'}</Button>
+          <Popconfirm
+            title="删除账号"
+            description="删除后账号将立即退出登录并从账号列表移除，历史业务记录仍会保留。"
+            okText="删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => deleteAccount(record)}
+          >
+            <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+          </Popconfirm>
+        </Space>
+      )
+    }
+  ];
+
   const pageMeta = pageMetaMap[mode];
 
   return (
@@ -314,74 +402,72 @@ export function SystemManagement({ mode }: SystemManagementProps) {
       <Space align="center" className="toolbar">
         <Typography.Title level={3}>{pageMeta.title}</Typography.Title>
         <Typography.Text type="secondary">{pageMeta.description}</Typography.Text>
-        {mode === 'accounts' ? <Button type="primary" onClick={openCreate}>新增账号</Button> : null}
+        {mode === 'accounts' && accountGroup !== 'consumer' ? (
+          <Button type="primary" onClick={openCreate}>新增{accountGroupText(accountGroup)}</Button>
+        ) : null}
       </Space>
 
       <section className="section">
         {mode === 'accounts' ? (
-          <Table
-            rowKey="id"
-            size="small"
-            loading={loading}
-            dataSource={accounts}
-            scroll={{ x: 1640 }}
-            pagination={false}
-            columns={[
-              { title: '账号ID', dataIndex: 'id', width: 84 },
-              { title: '显示名称', dataIndex: 'displayName' },
-              { title: '登录账号', dataIndex: 'username', render: (value) => value || '-' },
-              { title: '手机号', dataIndex: 'phone', render: (value) => value || '-' },
-              { title: '类型', dataIndex: 'accountType', render: accountTypeText },
-              { title: '角色', dataIndex: 'roles', render: (value: string[]) => value.length ? value.map((item) => <Tag key={item}>{accountTypeText(item)}</Tag>) : '-' },
-              {
-                title: '新建订单',
-                width: 110,
-                align: 'center',
-                render: (_, record) => record.merchantId ? (
-                  record.roles.includes('STORE_MANAGER')
-                    ? <Tag color="green">店长默认</Tag>
-                    : (
-                      <Switch
-                        checked={record.directPermissions.includes('order.create')}
-                        loading={permissionUpdatingAccountId === record.id}
-                        onChange={(checked) => void toggleOrderCreatePermission(record, checked)}
-                      />
-                    )
-                ) : '-'
-              },
-              { title: '所属商户', dataIndex: 'merchantName', render: (value) => value || '-' },
-              { title: '默认门店', dataIndex: 'storeName', render: (value) => value || '-' },
-              { title: '出资方', dataIndex: 'investorName', render: (value) => value || '-' },
-              { title: '状态', dataIndex: 'status', render: statusTag },
-              { title: '最后登录', dataIndex: 'lastLoginAt', render: dateText },
-              {
-                title: '操作',
-                fixed: 'right',
-                render: (_, record) => (
-                  <Space wrap>
-                    <Button size="small" onClick={() => openDetail(record)}>详情</Button>
-                    <Button size="small" onClick={() => openEdit(record)}>编辑</Button>
-                    {record.username ? <Button size="small" onClick={() => openResetPassword(record)}>重置密码</Button> : null}
-                    <Button size="small" onClick={() => openRole(record)}>角色</Button>
-                    {record.merchantId && record.roles[0] !== 'MERCHANT_OWNER' ? (
-                      <Button size="small" onClick={() => openScopes(record)}>范围</Button>
-                    ) : null}
-                    <Button size="small" onClick={() => toggleStatus(record)}>{record.status === 'ENABLED' ? '停用' : '启用'}</Button>
-                    <Popconfirm
-                      title="删除账号"
-                      description="删除后账号将立即退出登录并从账号列表移除，历史业务记录仍会保留。"
-                      okText="删除"
-                      cancelText="取消"
-                      okButtonProps={{ danger: true }}
-                      onConfirm={() => deleteAccount(record)}
-                    >
-                      <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
-                    </Popconfirm>
-                  </Space>
-                )
-              }
-            ]}
-          />
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Tabs
+              activeKey={accountGroup}
+              items={accountGroupTabs}
+              onChange={(key) => {
+                setAccountGroup(key as AccountGroup);
+                setAccountRole(undefined);
+                setAccountStatus(undefined);
+              }}
+            />
+            <Space wrap>
+              <Input
+                allowClear
+                value={accountKeyword}
+                onChange={(event) => setAccountKeyword(event.target.value)}
+                placeholder="名称、账号、手机号或所属主体"
+                style={{ width: 280 }}
+              />
+              <Select
+                allowClear
+                value={accountRole}
+                onChange={setAccountRole}
+                options={accountRoleOptions}
+                placeholder="全部角色"
+                style={{ width: 160 }}
+              />
+              <Select
+                allowClear
+                value={accountStatus}
+                onChange={setAccountStatus}
+                options={[
+                  { label: '启用', value: 'ENABLED' },
+                  { label: '停用', value: 'DISABLED' }
+                ]}
+                placeholder="全部状态"
+                style={{ width: 130 }}
+              />
+              <Button onClick={() => {
+                setAccountKeyword('');
+                setAccountRole(undefined);
+                setAccountStatus(undefined);
+              }}>重置筛选</Button>
+              <Typography.Text type="secondary">当前显示 {filteredAccounts.length} 个账号</Typography.Text>
+            </Space>
+            <Table
+              rowKey="id"
+              size="small"
+              loading={loading}
+              dataSource={filteredAccounts}
+              scroll={{ x: accountGroup === 'merchant' ? 1700 : 1250 }}
+              pagination={{
+                defaultPageSize: 20,
+                showSizeChanger: true,
+                pageSizeOptions: [10, 20, 50, 100],
+                showTotal: (total) => `共 ${total} 个账号`
+              }}
+              columns={accountColumns}
+            />
+          </Space>
         ) : null}
 
         {mode === 'roles' ? (
@@ -684,7 +770,7 @@ export function SystemManagement({ mode }: SystemManagementProps) {
           }}
         >
           <Form.Item name="roleCode" label="账号角色" rules={[{ required: true, message: '请选择账号角色' }]}>
-            <Select options={createRoleOptions} />
+            <Select options={createAccountRoleOptions} />
           </Form.Item>
           <Form.Item name="username" label="登录账号" rules={[{ required: true, message: '请输入登录账号' }]}>
             <Input />
@@ -768,6 +854,30 @@ function roleOptions(account: SystemAccount | null, roles: SystemRole[]) {
 
 function statusTag(status: 'ENABLED' | 'DISABLED') {
   return <Tag color={status === 'ENABLED' ? 'green' : 'red'}>{status === 'ENABLED' ? '启用' : '停用'}</Tag>;
+}
+
+function accountGroupOf(account: SystemAccount): AccountGroup {
+  if (account.accountType === 'CONSUMER') return 'consumer';
+  if (account.accountType === 'INVESTOR' || account.investorId) return 'investor';
+  if (merchantRoleOptions.some((item) => item.value === account.accountType) || account.merchantId) return 'merchant';
+  return 'platform';
+}
+
+function accountTypeBelongsToGroup(accountType: string, group: AccountGroup) {
+  if (group === 'platform') return platformRoleOptions.some((item) => item.value === accountType);
+  if (group === 'merchant') return merchantRoleOptions.some((item) => item.value === accountType);
+  if (group === 'investor') return accountType === 'INVESTOR';
+  return accountType === 'CONSUMER';
+}
+
+function accountGroupText(group: AccountGroup) {
+  const map: Record<AccountGroup, string> = {
+    platform: '平台账号',
+    merchant: '商户账号',
+    investor: '出资方账号',
+    consumer: '消费者账号'
+  };
+  return map[group];
 }
 
 function accountTypeText(value?: string | null) {

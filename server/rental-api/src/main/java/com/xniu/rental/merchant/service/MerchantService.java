@@ -98,7 +98,7 @@ public class MerchantService {
     @Transactional
     public MerchantResponse updateMerchant(Long id, MerchantRequest request) {
         authorizationService.requirePermission("merchant.write");
-        ensureMerchantExists(id);
+        ensureMerchantNotArchived(id);
         return toResponse(merchantRepository.update(
             id,
             request.merchantName(),
@@ -121,7 +121,9 @@ public class MerchantService {
         addBlocker(blockers, "门店商品", merchantRepository.countStoreSkus(id));
         addBlocker(blockers, "结算数据", merchantRepository.countSettlementRecords(id));
         if (!blockers.isEmpty()) {
-            throw BusinessException.badRequest("商户仍存在关联数据，暂不可删除：" + String.join("、", blockers));
+            productRepository.archiveStoreSkusByMerchant(id);
+            merchantRepository.archiveById(id);
+            return;
         }
         merchantRepository.deleteById(id);
     }
@@ -129,7 +131,10 @@ public class MerchantService {
     @Transactional
     public MerchantResponse updateMerchantStatus(Long id, MerchantStatus status) {
         authorizationService.requirePermission("merchant.write");
-        ensureMerchantExists(id);
+        ensureMerchantNotArchived(id);
+        if (status == MerchantStatus.ARCHIVED) {
+            throw BusinessException.badRequest("请通过移除操作归档商户");
+        }
         if (status == MerchantStatus.DISABLED) {
             productRepository.offShelfStoreSkusByMerchant(id);
         }
@@ -385,6 +390,14 @@ public class MerchantService {
         var merchant = ensureMerchantExists(merchantId);
         if (merchant.status() != MerchantStatus.ENABLED) {
             throw BusinessException.badRequest("商户已停用");
+        }
+        return merchant;
+    }
+
+    private Merchant ensureMerchantNotArchived(Long merchantId) {
+        var merchant = ensureMerchantExists(merchantId);
+        if (merchant.status() == MerchantStatus.ARCHIVED) {
+            throw BusinessException.badRequest("商户已归档");
         }
         return merchant;
     }

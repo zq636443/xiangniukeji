@@ -35,6 +35,7 @@ public class SystemManagementRepository {
             LEFT JOIN merchant_store s ON s.id = a.store_id
             LEFT JOIN investor i ON i.id = a.investor_id
             WHERE a.deleted_at IS NULL
+              AND (m.id IS NULL OR m.status <> 'ARCHIVED')
             """);
         var params = new ArrayList<Object>();
         if (accountType != null) {

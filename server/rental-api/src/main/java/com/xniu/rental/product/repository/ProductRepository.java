@@ -219,6 +219,8 @@ public class ProductRepository {
         if (status != null) {
             sql.append(" AND status = ?");
             params.add(status.name());
+        } else {
+            sql.append(" AND status <> 'ARCHIVED'");
         }
         sql.append(" ORDER BY id DESC");
         return jdbcTemplate.query(sql.toString(), storeSkuMapper, params.toArray());
@@ -275,11 +277,15 @@ public class ProductRepository {
     }
 
     public void offShelfStoreSkusByStore(Long storeId) {
-        jdbcTemplate.update("UPDATE store_sku SET status = 'OFF_SHELF' WHERE store_id = ?", storeId);
+        jdbcTemplate.update("UPDATE store_sku SET status = 'OFF_SHELF' WHERE store_id = ? AND status <> 'ARCHIVED'", storeId);
     }
 
     public void offShelfStoreSkusByMerchant(Long merchantId) {
-        jdbcTemplate.update("UPDATE store_sku SET status = 'OFF_SHELF' WHERE merchant_id = ?", merchantId);
+        jdbcTemplate.update("UPDATE store_sku SET status = 'OFF_SHELF' WHERE merchant_id = ? AND status <> 'ARCHIVED'", merchantId);
+    }
+
+    public void archiveStoreSkusByMerchant(Long merchantId) {
+        jdbcTemplate.update("UPDATE store_sku SET status = 'ARCHIVED' WHERE merchant_id = ?", merchantId);
     }
 
     public int countOrdersByStoreSku(Long storeSkuId) {
@@ -312,6 +318,10 @@ public class ProductRepository {
 
     public void deleteStoreSku(Long id) {
         jdbcTemplate.update("DELETE FROM store_sku WHERE id = ?", id);
+    }
+
+    public void archiveStoreSku(Long id) {
+        jdbcTemplate.update("UPDATE store_sku SET status = 'ARCHIVED' WHERE id = ?", id);
     }
 
     public void replaceStoreSkuPackages(Long storeSkuId, List<PackagePriceRow> rows) {

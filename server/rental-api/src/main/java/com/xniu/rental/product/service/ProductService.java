@@ -223,8 +223,20 @@ public class ProductService {
     public StoreSkuResponse publishStoreSku(StoreSkuRequest request) {
         authorizationService.requirePermission("product.write");
         validateStoreSkuRequest(request);
-        if (productRepository.findStoreSkuByStoreAndSku(request.storeId(), request.skuId()).isPresent()) {
-            throw BusinessException.badRequest("该门店已配置此商品链接，请在门店商品列表中编辑或重新上架");
+        var existing = productRepository.findStoreSkuByStoreAndSku(request.storeId(), request.skuId());
+        if (existing.isPresent()) {
+            if (existing.get().status() != StoreSkuStatus.ARCHIVED) {
+                throw BusinessException.badRequest("该门店已配置此商品链接，请在门店商品列表中编辑或重新上架");
+            }
+            var restored = productRepository.updateStoreSku(
+                existing.get().id(),
+                parseSkuType(request.saleMode()),
+                request.displayName(),
+                normalizeMoney(request.signFeeAmount()),
+                parseSignFeePayer(request.signFeePayer())
+            );
+            productRepository.replaceStoreSkuPackages(restored.id(), toRows(request.packages()));
+            return toResponse(productRepository.updateStoreSkuStatus(restored.id(), StoreSkuStatus.ON_SHELF));
         }
         var storeSku = productRepository.createStoreSku(
             nextCode("SSKU"),
@@ -271,7 +283,9 @@ public class ProductService {
             throw BusinessException.badRequest("批量上架门店不能重复");
         }
         var duplicatedStores = storeIds.stream()
-            .filter(storeId -> productRepository.findStoreSkuByStoreAndSku(storeId, request.skuId()).isPresent())
+            .filter(storeId -> productRepository.findStoreSkuByStoreAndSku(storeId, request.skuId())
+                .filter(item -> item.status() != StoreSkuStatus.ARCHIVED)
+                .isPresent())
             .map(storeId -> storeRepository.findById(storeId).map(MerchantStore::storeName).orElse("门店#" + storeId))
             .toList();
         if (!duplicatedStores.isEmpty()) {
@@ -319,7 +333,8 @@ public class ProductService {
         addBlocker(blockers, "分润规则", productRepository.countSettlementRulesByStoreSku(id));
         addBlocker(blockers, "逾期记录", productRepository.countOverdueCasesByStoreSku(id));
         if (!blockers.isEmpty()) {
-            throw BusinessException.badRequest("门店商品仍存在历史业务数据，暂不可删除：" + String.join("、", blockers));
+            productRepository.archiveStoreSku(id);
+            return;
         }
         productRepository.deleteStoreSkuPackages(id);
         productRepository.deleteStoreSku(id);

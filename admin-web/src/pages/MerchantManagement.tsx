@@ -269,7 +269,7 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
         setEditingMerchant(null);
         merchantForm.resetFields();
       }
-      message.success('商户已删除');
+      message.success('商户已移除，历史业务数据已安全保留');
       await Promise.all([loadMerchants(), loadStores()]);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '商户删除失败');
@@ -368,14 +368,14 @@ export function MerchantManagement({ mode = 'all' }: MerchantManagementProps) {
                   <Button size="small" onClick={() => openEditMerchant(record)}>编辑</Button>
                   <Button size="small" onClick={() => toggleMerchantStatus(record)}>{record.status === 'ENABLED' ? '停用' : '启用'}</Button>
                   <Popconfirm
-                    title="确认删除商户？"
-                    description={`删除后无法恢复。商户 ${record.merchantName} 必须没有门店、有效账号、资产、订单和结算数据。`}
-                    okText="删除"
+                    title="确认移除商户？"
+                    description={`商户 ${record.merchantName} 没有历史业务时将直接删除；已有门店、账号、资产、订单或结算数据时将停用并安全归档。`}
+                    okText="移除"
                     cancelText="取消"
                     okButtonProps={{ danger: true }}
                     onConfirm={() => deleteMerchant(record)}
                   >
-                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                    <Button size="small" danger icon={<DeleteOutlined />}>移除</Button>
                   </Popconfirm>
                 </Space>
               )

@@ -25,23 +25,25 @@ public class StoreRepository {
     }
 
     public List<MerchantStore> list(Long merchantId, String keyword) {
-        if (merchantId == null && (keyword == null || keyword.isBlank())) {
-            return jdbcTemplate.query("SELECT * FROM merchant_store ORDER BY id DESC", mapper);
-        }
-        var sql = new StringBuilder("SELECT * FROM merchant_store WHERE 1 = 1");
+        var sql = new StringBuilder("""
+            SELECT s.*
+            FROM merchant_store s
+            JOIN merchant m ON m.id = s.merchant_id
+            WHERE m.status <> 'ARCHIVED'
+            """);
         var params = new java.util.ArrayList<Object>();
         if (merchantId != null) {
-            sql.append(" AND merchant_id = ?");
+            sql.append(" AND s.merchant_id = ?");
             params.add(merchantId);
         }
         if (keyword != null && !keyword.isBlank()) {
-            sql.append(" AND (store_name LIKE ? OR store_code LIKE ? OR address LIKE ?)");
+            sql.append(" AND (s.store_name LIKE ? OR s.store_code LIKE ? OR s.address LIKE ?)");
             var like = "%" + keyword.trim() + "%";
             params.add(like);
             params.add(like);
             params.add(like);
         }
-        sql.append(" ORDER BY id DESC");
+        sql.append(" ORDER BY s.id DESC");
         return jdbcTemplate.query(sql.toString(), mapper, params.toArray());
     }
 

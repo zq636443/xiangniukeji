@@ -345,9 +345,13 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
   }
 
   async function deleteStoreSku(record: StoreSku) {
-    await http.delete(`/api/admin/products/store-skus/${record.id}`);
-    message.success('门店商品已删除');
-    await loadAll();
+    try {
+      await http.delete(`/api/admin/products/store-skus/${record.id}`);
+      message.success('门店商品已移除，历史业务数据已安全保留');
+      await loadAll();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '门店商品移除失败');
+    }
   }
 
   return (
@@ -532,14 +536,14 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
                     </Tooltip>
                   ) : (
                     <Popconfirm
-                      title="确认删除门店商品？"
-                      description="已有订单、核销、分润或逾期记录的门店商品不可删除。"
-                      okText="删除"
+                      title="确认移除门店商品？"
+                      description="没有历史业务时将直接删除；已有订单、核销或分润记录时将安全归档并从列表隐藏。"
+                      okText="移除"
                       cancelText="取消"
                       okButtonProps={{ danger: true }}
                       onConfirm={() => deleteStoreSku(record)}
                     >
-                      <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                      <Button size="small" danger icon={<DeleteOutlined />}>移除</Button>
                     </Popconfirm>
                   )}
                 </Space>

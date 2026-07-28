@@ -22,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +33,9 @@ class ProductLinkSkuIntegrationTests {
 
     @Autowired
     private ProductService productService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void setAdminAccount() {
@@ -229,6 +233,33 @@ class ProductLinkSkuIntegrationTests {
         assertThat(productService.listPackages(link.id())).isEmpty();
         assertThat(productService.listSkus(category.id())).isEmpty();
         assertThat(productService.listCategories()).noneMatch(item -> item.id().equals(category.id()));
+    }
+
+    @Test
+    void storeSkuWithHistoricalBusinessDataShouldBeArchivedAndCanBeRepublished() {
+        productService.updateStoreSkuStatus(1L, StoreSkuStatus.OFF_SHELF);
+        productService.deleteStoreSku(1L);
+
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT status FROM store_sku WHERE id = 1",
+            String.class
+        )).isEqualTo("ARCHIVED");
+        assertThat(productService.listStoreSkus(1L, 1L, null)).isEmpty();
+
+        var restored = productService.publishStoreSku(new StoreSkuRequest(
+            1L,
+            1L,
+            1L,
+            "重新上架的演示门店整车租赁",
+            "RENTAL",
+            new BigDecimal("30.00"),
+            "USER",
+            List.of(price(1L, "39.00", "39.00"))
+        ));
+
+        assertThat(restored.id()).isEqualTo(1L);
+        assertThat(restored.status()).isEqualTo("ON_SHELF");
+        assertThat(restored.displayName()).isEqualTo("重新上架的演示门店整车租赁");
     }
 
     private StoreSkuPackageRequest price(Long skuId, String price, String periodAmount) {

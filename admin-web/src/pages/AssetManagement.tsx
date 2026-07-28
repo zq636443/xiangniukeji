@@ -124,6 +124,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   const [detailOpen, setDetailOpen] = useState(false);
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [assetSaving, setAssetSaving] = useState(false);
   const [investorForm] = Form.useForm<InvestorForm>();
   const [assetForm] = Form.useForm<AssetForm>();
   const [assetTypeForm] = Form.useForm<AssetTypeForm>();
@@ -414,29 +415,36 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
   }
 
   async function submitAsset(values: AssetForm) {
-    const details = {
-      assetTypeId: values.assetTypeId,
-      serialNo: values.serialNo,
-      investorId: values.investorId,
-      purchaseAmount: values.purchaseAmount,
-      residualValue: values.residualValue,
-      purchasedAt: values.purchasedAt
-    };
-    if (editingAsset) {
-      await http.put(`/api/admin/assets/${editingAsset.id}`, details);
-      message.success('资产资料已更新');
-    } else {
-      await http.post('/api/admin/assets', {
-        ...details,
-        currentMerchantId: values.currentMerchantId,
-        currentStoreId: values.currentStoreId
-      });
-      message.success('资产已入库');
+    setAssetSaving(true);
+    try {
+      const details = {
+        assetTypeId: values.assetTypeId,
+        serialNo: values.serialNo.trim(),
+        investorId: values.investorId,
+        purchaseAmount: values.purchaseAmount,
+        residualValue: values.residualValue,
+        purchasedAt: values.purchasedAt
+      };
+      if (editingAsset) {
+        await http.put(`/api/admin/assets/${editingAsset.id}`, details);
+        message.success('资产资料已更新');
+      } else {
+        await http.post('/api/admin/assets', {
+          ...details,
+          currentMerchantId: values.currentMerchantId,
+          currentStoreId: values.currentStoreId
+        });
+        message.success('资产已入库');
+      }
+      setAssetOpen(false);
+      setEditingAsset(null);
+      assetForm.resetFields();
+      await loadAll();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '资产录入失败，请检查填写内容');
+    } finally {
+      setAssetSaving(false);
     }
-    setAssetOpen(false);
-    setEditingAsset(null);
-    assetForm.resetFields();
-    await loadAll();
   }
 
   async function deleteAsset(record: Asset) {
@@ -728,6 +736,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           setAssetOpen(false);
         }}
         onOk={() => assetForm.submit()}
+        confirmLoading={assetSaving}
         forceRender
       >
         <Form form={assetForm} layout="vertical" onFinish={submitAsset}>
@@ -755,7 +764,16 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
                   onChange={() => assetForm.setFieldValue('currentStoreId', undefined)}
                 />
               </Form.Item>
-              <Form.Item name="currentStoreId" label="门店">
+              <Form.Item
+                name="currentStoreId"
+                label="门店"
+                dependencies={['currentMerchantId']}
+                rules={[({ getFieldValue }) => ({
+                  validator: (_, value) => getFieldValue('currentMerchantId') && !value
+                    ? Promise.reject(new Error('资产分配到商户时，请同时选择门店'))
+                    : Promise.resolve()
+                })]}
+              >
                 <Select
                   allowClear
                   showSearch
@@ -769,7 +787,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           ) : null}
           <Form.Item name="purchaseAmount" label="采购金额" rules={[{ required: true, message: '请输入采购金额' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="residualValue" label="报废残值"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
-          <Form.Item name="purchasedAt" label="采购日期"><Input placeholder="2026-06-25" /></Form.Item>
+          <Form.Item name="purchasedAt" label="采购日期"><Input type="date" /></Form.Item>
         </Form>
       </Modal>
 
