@@ -11,6 +11,7 @@ type OrderImportRow = {
   userAccountId: string;
   storeSkuCode: string;
   packageCode: string;
+  leaseMultiplier: string;
   verificationAmount: string;
   frameSerialNo: string;
   batterySerialNo: string;
@@ -36,6 +37,7 @@ const templateHeaders = [
   '用户账号ID(选填)',
   '门店商品编码',
   'SKU编码',
+  '租期倍数',
   '实际核销金额',
   '主资产编号(支持自定义类型)',
   '电池号(选填)',
@@ -48,6 +50,7 @@ const headerAliases: Record<keyof Omit<OrderImportRow, 'lineNo'>, string[]> = {
   userAccountId: ['用户账号ID(选填)', '用户账号ID（选填）', '用户账号ID', 'userAccountId'],
   storeSkuCode: ['门店商品编码', 'storeSkuCode'],
   packageCode: ['SKU编码', 'SKU 编码', '套餐编码', 'packageCode'],
+  leaseMultiplier: ['租期倍数', '数量', 'leaseMultiplier'],
   verificationAmount: ['实际核销金额', '核销金额', 'verificationAmount'],
   frameSerialNo: ['主资产编号(支持自定义类型)', '主资产编号（支持自定义类型）', '主资产编号', '车架号(车电一体填此列)', '车架号（车电一体填此列）', '车架号(选填)', '车架号（选填）', '车架号', 'frameSerialNo'],
   batterySerialNo: ['电池号(选填)', '电池号（选填）', '电池号', 'batterySerialNo'],
@@ -152,6 +155,7 @@ export function OrderBatchImportModal({ open, endpoint, onClose, onImported }: O
                 { title: '联系电话', dataIndex: 'customerPhone', width: 140 },
                 { title: '商品编码', dataIndex: 'storeSkuCode', width: 190 },
                 { title: 'SKU编码', dataIndex: 'packageCode', width: 160 },
+                { title: '租期倍数', dataIndex: 'leaseMultiplier', width: 100 },
                 { title: '实际核销金额', dataIndex: 'verificationAmount', width: 130 },
                 { title: '主资产编号', dataIndex: 'frameSerialNo', width: 160, render: textOrDash },
                 { title: '电池号', dataIndex: 'batterySerialNo', width: 160, render: textOrDash },
@@ -212,25 +216,8 @@ export function OrderImportTemplateButton({ storeCode, storeSkus, assets }: Temp
 
 function buildOrderTemplateCsv(storeSkus: StoreSku[], assets: Asset[]) {
   const width = templateHeaders.length;
-  const firstStoreSku = storeSkus[0];
-  const firstPackage = firstStoreSku?.packages.find((item) => item.status === 'ENABLED');
-  const firstFrameAsset = assets.find((item) => item.status === 'IDLE' && item.assetType !== 'BATTERY');
-  const firstBatteryAsset = firstFrameAsset?.assetType === 'INTEGRATED_VEHICLE'
-    ? undefined
-    : assets.find((item) => item.status === 'IDLE' && item.assetType === 'BATTERY');
   const rows: string[][] = [
     templateHeaders,
-    [
-      '# 示例客户（请替换或删除本行）',
-      '13800138000',
-      '',
-      firstStoreSku?.storeSkuCode ?? '',
-      firstPackage?.packageCode ?? '',
-      firstPackage ? String(firstPackage.rentalAmount) : '399',
-      firstFrameAsset?.serialNo ?? '',
-      firstBatteryAsset?.serialNo ?? '',
-      '2026-07-01 10:00'
-    ],
     Array(width).fill('')
   ];
   const packageReferences = storeSkus.flatMap((storeSku) => storeSku.packages
@@ -241,6 +228,7 @@ function buildOrderTemplateCsv(storeSkus: StoreSku[], assets: Asset[]) {
       '',
       storeSku.storeSkuCode,
       item.packageCode,
+      '1',
       String(item.rentalAmount),
       '',
       '',
@@ -254,6 +242,7 @@ function buildOrderTemplateCsv(storeSkus: StoreSku[], assets: Asset[]) {
     .map((asset) => [
       '#空闲资产',
       asset.assetTypeName || assetTypeText(asset.assetType),
+      '',
       '',
       '',
       '',
@@ -304,6 +293,7 @@ function parseOrderImportCsv(content: string): OrderImportRow[] {
       userAccountId: values[indexes.userAccountId] ?? '',
       storeSkuCode: values[indexes.storeSkuCode] ?? '',
       packageCode: values[indexes.packageCode] ?? '',
+      leaseMultiplier: values[indexes.leaseMultiplier] ?? '1',
       verificationAmount: values[indexes.verificationAmount] ?? '',
       frameSerialNo: values[indexes.frameSerialNo] ?? '',
       batterySerialNo: values[indexes.batterySerialNo] ?? '',

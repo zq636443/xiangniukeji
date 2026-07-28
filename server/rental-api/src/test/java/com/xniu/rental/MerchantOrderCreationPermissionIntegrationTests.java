@@ -13,6 +13,8 @@ import com.xniu.rental.order.dto.OrderCancelRequest;
 import com.xniu.rental.order.dto.OrderCreateRequest;
 import com.xniu.rental.order.service.OrderService;
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -97,6 +99,38 @@ class MerchantOrderCreationPermissionIntegrationTests {
         assertThatThrownBy(() -> orderService.createUserOrder(orderRequest()))
             .isInstanceOf(BusinessException.class)
             .hasMessageContaining("不是消费者账号");
+    }
+
+    @Test
+    void leaseMultiplierExpandsAmountPeriodsAndThirtyDayMonth() {
+        setMerchantAccount(List.of("order.read", "order.create"), allMerchantStores());
+
+        var created = merchantOrderController.createOrder(new OrderCreateRequest(
+            null,
+            "倍数租期客户",
+            "13800002222",
+            1L,
+            2L,
+            null,
+            null,
+            null,
+            LocalDateTime.of(2026, 7, 29, 10, 0),
+            2,
+            null
+        )).data();
+
+        assertThat(created.leaseMultiplier()).isEqualTo(2);
+        assertThat(created.leaseValue()).isEqualTo(2);
+        assertThat(created.totalPeriods()).isEqualTo(2);
+        assertThat(created.rentalAmount()).isEqualByComparingTo("798.00");
+        assertThat(created.items().stream().filter(item -> "SKU".equals(item.itemType())).findFirst().orElseThrow().quantity()).isEqualTo(2);
+        var dueDates = jdbcTemplate.queryForList(
+            "SELECT due_at FROM rental_bill WHERE order_id = ? ORDER BY period_no",
+            LocalDateTime.class,
+            created.id()
+        );
+        assertThat(dueDates).hasSize(2);
+        assertThat(Duration.between(dueDates.get(0), dueDates.get(1)).toDays()).isEqualTo(30);
     }
 
     @Test

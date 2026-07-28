@@ -276,6 +276,7 @@ public class VoucherService {
             packageTemplate.leaseUnit().name(),
             packageTemplate.leaseValue(),
             packageTemplate.totalPeriods(),
+            1,
             packageTemplate.billDayMode().name(),
             packageTemplate.billDay(),
             LocalDateTime.now(),

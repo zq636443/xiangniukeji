@@ -139,7 +139,7 @@ public class OrderRenewalService {
     private LocalDateTime nextExpectedReturnAt(RentalOrder order) {
         var base = order.expectedReturnAt() == null ? LocalDateTime.now() : order.expectedReturnAt();
         if ("MONTH".equals(order.renewalUnit())) {
-            return base.plusMonths(order.renewalValue());
+            return base.plusDays(30L * order.renewalValue());
         }
         return base.plusDays(order.renewalValue());
     }

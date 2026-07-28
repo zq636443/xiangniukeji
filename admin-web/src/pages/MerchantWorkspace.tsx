@@ -92,6 +92,7 @@ type CreateOrderForm = {
   customerPhone: string;
   storeSkuId: number;
   packageId: number;
+  leaseMultiplier: number;
   verificationAmount: number;
   frameAssetId?: number;
   batteryAssetId?: number;
@@ -401,6 +402,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
   const [returnForm] = Form.useForm<ReturnForm>();
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
   const selectedPackageId = Form.useWatch('packageId', createForm);
+  const selectedLeaseMultiplier = Form.useWatch('leaseMultiplier', createForm) ?? 1;
   const selectedCreateFrameAssetId = Form.useWatch('frameAssetId', createForm);
   const selectedCreateBatteryAssetId = Form.useWatch('batteryAssetId', createForm);
   const selectedPickupFrameAssetId = Form.useWatch('frameAssetId', pickupForm);
@@ -594,6 +596,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
     createForm.setFieldsValue({
       storeSkuId: firstStoreSku?.id,
       packageId: firstPackage?.packageId,
+      leaseMultiplier: 1,
       verificationAmount: firstPackage ? Number(firstPackage.rentalAmount) : undefined,
       orderedAt: dayjs()
     });
@@ -610,6 +613,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
       customerPhone: order.customerPhone || '',
       storeSkuId: order.storeSkuId,
       packageId: order.packageId,
+      leaseMultiplier: order.leaseMultiplier || 1,
       verificationAmount: Number(order.verificationAmount),
       frameAssetId: order.frameAssetId ?? undefined,
       batteryAssetId: order.batteryAssetId ?? undefined,
@@ -633,6 +637,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
         customerPhone: values.customerPhone,
         storeSkuId: values.storeSkuId,
         packageId: values.packageId,
+        leaseMultiplier: values.leaseMultiplier,
         verificationAmount: values.verificationAmount,
         frameAssetId: values.frameAssetId,
         batteryAssetId: values.batteryAssetId,
@@ -909,6 +914,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
                 const firstPackage = nextStoreSku?.packages.find((item) => item.status === 'ENABLED');
                 createForm.setFieldsValue({
                   packageId: firstPackage?.packageId,
+                  leaseMultiplier: 1,
                   verificationAmount: firstPackage ? Number(firstPackage.rentalAmount) : undefined,
                   frameAssetId: undefined,
                   batteryAssetId: undefined
@@ -921,15 +927,35 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
               options={packageOptions}
               onChange={(value) => {
                 const nextPackage = selectedStoreSku?.packages.find((item) => item.packageId === value);
-                createForm.setFieldValue('verificationAmount', nextPackage ? Number(nextPackage.rentalAmount) : undefined);
+                createForm.setFieldValue('verificationAmount', nextPackage ? Number(nextPackage.rentalAmount) * selectedLeaseMultiplier : undefined);
               }}
+            />
+          </Form.Item>
+          <Form.Item
+            name="leaseMultiplier"
+            label="租期倍数"
+            rules={[{ required: true, message: '请输入租期倍数' }]}
+            extra={selectedPackage
+              ? `最终租期：${selectedPackage.leaseValue * selectedLeaseMultiplier}${selectedPackage.leaseUnit === 'MONTH' ? '个月（每月30天）' : '天'} / ${selectedPackage.totalPeriods * selectedLeaseMultiplier}期`
+              : '例如 1个月 SKU 选择 2 倍，即租用 2个月（60天）'}
+          >
+            <InputNumber
+              min={1}
+              max={120}
+              precision={0}
+              addonAfter="倍"
+              style={{ width: '100%' }}
+              onChange={(value) => createForm.setFieldValue(
+                'verificationAmount',
+                selectedPackage && value ? Number(selectedPackage.rentalAmount) * Number(value) : undefined
+              )}
             />
           </Form.Item>
           <Form.Item
             name="verificationAmount"
             label="实际核销金额"
             rules={[{ required: true, message: '请输入实际核销金额' }]}
-            extra={selectedPackage ? `当前 SKU 参考价：${money(selectedPackage.rentalAmount)}` : undefined}
+            extra={selectedPackage ? `当前 ${selectedLeaseMultiplier} 倍参考总价：${money(Number(selectedPackage.rentalAmount) * selectedLeaseMultiplier)}` : undefined}
           >
             <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
           </Form.Item>

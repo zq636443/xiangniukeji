@@ -155,6 +155,7 @@ export type RentalOrder = {
   leaseUnit: 'DAY' | 'MONTH';
   leaseValue: number;
   totalPeriods: number;
+  leaseMultiplier: number;
   billDayMode: 'PAYMENT_DAY' | 'FIXED_DAY';
   billDay?: number | null;
   autoRenewEnabled: boolean;

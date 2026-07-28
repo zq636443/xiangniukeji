@@ -35,6 +35,7 @@ public record OrderResponse(
     String leaseUnit,
     Integer leaseValue,
     Integer totalPeriods,
+    Integer leaseMultiplier,
     String billDayMode,
     Integer billDay,
     LocalDateTime orderedAt,

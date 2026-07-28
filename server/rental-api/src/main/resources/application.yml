@@ -12,6 +12,8 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    placeholders:
+      cleanupDemoData: ${CLEANUP_DEMO_DATA:true}
   data:
     redis:
       host: localhost

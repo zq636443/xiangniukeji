@@ -111,8 +111,8 @@ class OrderBatchImportIntegrationTests {
         );
         assertThat(dueDates).containsExactly(
             orderedAt,
-            orderedAt.plusMonths(1),
-            orderedAt.plusMonths(2)
+            orderedAt.plusDays(30),
+            orderedAt.plusDays(60)
         );
         assertThat(jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM rental_order WHERE customer_name = ?",

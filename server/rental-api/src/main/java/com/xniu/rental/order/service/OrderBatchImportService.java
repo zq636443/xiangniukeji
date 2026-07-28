@@ -129,6 +129,7 @@ public class OrderBatchImportService {
             assetId(row.batterySerialNo(), AssetType.BATTERY),
             optionalDateTime(row.expectedPickupAt(), "预计取车时间"),
             optionalDateTime(row.orderedAt(), "下单时间"),
+            optionalLeaseMultiplier(row.leaseMultiplier()),
             requiredMoney(row.verificationAmount(), "实际核销金额")
         );
         return merchantImport
@@ -169,6 +170,22 @@ public class OrderBatchImportService {
             return parsed;
         } catch (ArithmeticException | NumberFormatException exception) {
             throw BusinessException.badRequest(fieldName + "格式不正确");
+        }
+    }
+
+    private Integer optionalLeaseMultiplier(String value) {
+        var normalized = trimToNull(value);
+        if (normalized == null) {
+            return 1;
+        }
+        try {
+            var multiplier = Integer.parseInt(normalized);
+            if (multiplier < 1 || multiplier > 120) {
+                throw BusinessException.badRequest("租期倍数必须在1到120之间");
+            }
+            return multiplier;
+        } catch (NumberFormatException exception) {
+            throw BusinessException.badRequest("租期倍数格式不正确");
         }
     }
 

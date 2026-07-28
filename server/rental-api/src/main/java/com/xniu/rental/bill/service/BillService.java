@@ -23,7 +23,6 @@ import com.xniu.rental.order.repository.OrderRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -273,12 +272,7 @@ public class BillService {
             base = order.orderedAt() != null ? order.orderedAt() : order.createdAt();
         }
         if ("MONTH".equals(order.leaseUnit())) {
-            var target = base.plusMonths(periodNo - 1L);
-            if ("FIXED_DAY".equals(order.billDayMode()) && order.billDay() != null) {
-                var yearMonth = YearMonth.from(target);
-                target = target.withDayOfMonth(Math.min(order.billDay(), yearMonth.lengthOfMonth()));
-            }
-            return target;
+            return base.plusDays(30L * (periodNo - 1L));
         }
         var stepDays = Math.max(1, order.leaseValue() / safeTotalPeriods(order));
         return base.plusDays((long) stepDays * (periodNo - 1L));

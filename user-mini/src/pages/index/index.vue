@@ -63,12 +63,21 @@
         <view>
           <view class="item-title">{{ item.packageName }}</view>
           <view class="muted">
-            {{ leaseText(item.leaseUnit, item.leaseValue) }} / {{ item.totalPeriods }} 期
+            {{ leaseText(item.leaseUnit, item.leaseValue * packageMultiplier(item)) }} / {{ item.totalPeriods * packageMultiplier(item) }} 期
           </view>
-	          <view class="muted">首期应付含租金、签单费和押金，{{ renewalText(item) }}。</view>
+	          <view class="muted">月租统一按30天计算；首期应付含租金、签单费和押金，{{ renewalText(item) }}。</view>
         </view>
         <view class="package-side">
-          <view class="amount">{{ money(item.periodAmount) }}</view>
+          <view class="amount">{{ money(item.rentalAmount * packageMultiplier(item)) }}</view>
+          <view class="multiplier-row">
+            <text>租期倍数</text>
+            <input
+              class="multiplier-input"
+              type="number"
+              :value="packageMultiplier(item)"
+              @input="onPackageMultiplierInput(item, $event)"
+            />
+          </view>
           <button class="mini-primary" :loading="createLoading" @tap.stop="createOrder(item)">下单</button>
           <button class="mini-ghost" @tap.stop="selectVoucherPackage(item)">核销</button>
         </view>
@@ -288,6 +297,7 @@ const currentVoucher = ref<VoucherRecord | null>(null);
 const agreementUrl = ref('');
 const voucherCode = ref('');
 const voucherVerificationAmount = ref('');
+const leaseMultipliers = reactive<Record<number, number>>({});
 const voucherPlatformIndex = ref(0);
 const voucherPlatformLabels = ['抖音券码', '美团券码', '闲鱼核销码'];
 const voucherPlatforms: VoucherRecord['sourcePlatform'][] = ['DOUYIN', 'MEITUAN', 'XIANYU'];
@@ -398,6 +408,16 @@ function selectVoucherPackage(item: StoreSkuPackage) {
   uni.showToast({ title: '已选择核销 SKU', icon: 'none' });
 }
 
+function packageMultiplier(item: StoreSkuPackage) {
+  return leaseMultipliers[item.packageId] || 1;
+}
+
+function onPackageMultiplierInput(item: StoreSkuPackage, event: unknown) {
+  const value = (event as { detail?: { value?: string | number } }).detail?.value;
+  const rawValue = Math.trunc(Number(value || 1));
+  leaseMultipliers[item.packageId] = Math.min(120, Math.max(1, Number.isFinite(rawValue) ? rawValue : 1));
+}
+
 async function createOrder(item: StoreSkuPackage) {
   if (!account.value) {
     uni.showToast({ title: '请先登录', icon: 'none' });
@@ -415,7 +435,8 @@ async function createOrder(item: StoreSkuPackage) {
         customerName: account.value.displayName,
         customerPhone: account.value.phone || undefined,
         storeSkuId: selectedProduct.value.id,
-        packageId: item.packageId
+        packageId: item.packageId,
+        leaseMultiplier: packageMultiplier(item)
       }
     });
     currentOrder.value = result.order;
@@ -1233,6 +1254,24 @@ button::after {
 .package-side {
   min-width: 140rpx;
   text-align: right;
+}
+
+.multiplier-row {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  color: #667085;
+  font-size: 22rpx;
+}
+
+.multiplier-input {
+  width: 84rpx;
+  height: 52rpx;
+  padding: 0 10rpx;
+  border: 1rpx solid #d0d5dd;
+  border-radius: 10rpx;
+  text-align: center;
+  background: #fff;
 }
 
 .contract-actions {

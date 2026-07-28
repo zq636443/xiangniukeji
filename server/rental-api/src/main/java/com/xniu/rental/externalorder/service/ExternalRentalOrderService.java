@@ -159,9 +159,12 @@ public class ExternalRentalOrderService {
         var sku = ensureSku(storeSku.skuId());
         var packageTemplate = ensureStoreSkuPackage(storeSku, request.packageId());
         var packagePricing = storeSkuPackageAmount(storeSku.id(), request.packageId());
+        var leaseMultiplier = request.leaseMultiplier() == null
+            ? normalizeLeaseMultiplier(order.leaseMultiplier())
+            : normalizeLeaseMultiplier(request.leaseMultiplier());
         validateRequestAssets(request.frameAssetId(), request.batteryAssetId(), sku);
         var expectedReturnAt = request.expectedReturnAt() == null
-            ? calculateExpectedReturnAt(request.rentStartedAt(), packageTemplate)
+            ? calculateExpectedReturnAt(request.rentStartedAt(), packageTemplate, leaseMultiplier)
             : request.expectedReturnAt();
         if (expectedReturnAt != null && expectedReturnAt.isBefore(request.rentStartedAt())) {
             throw BusinessException.badRequest("预计归还时间不能早于起租时间");
@@ -179,7 +182,10 @@ public class ExternalRentalOrderService {
             validateHistoricalEditableAsset(request.batteryAssetId(), order.batteryAssetId(), AssetType.BATTERY, storeSku);
         }
 
-        var externalRentalAmount = normalizeMoney(request.externalRentalAmount(), packagePricing.rentalAmount());
+        var externalRentalAmount = normalizeMoney(
+            request.externalRentalAmount(),
+            packagePricing.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier))
+        );
         var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), externalRentalAmount);
         var updated = externalRentalOrderRepository.update(new ExternalRentalOrderRepository.UpdateRow(
             order.id(),
@@ -199,8 +205,9 @@ public class ExternalRentalOrderService {
             normalizeMoney(request.signFeeAmount(), storeSku.signFeeAmount()),
             normalizeMoney(request.depositAmount(), packagePricing.depositAmount()),
             packageTemplate.leaseUnit().name(),
-            packageTemplate.leaseValue(),
-            packageTemplate.totalPeriods(),
+            packageTemplate.leaseValue() * leaseMultiplier,
+            packageTemplate.totalPeriods() * leaseMultiplier,
+            leaseMultiplier,
             request.rentStartedAt(),
             expectedReturnAt,
             blankToNull(request.remark()),
@@ -285,14 +292,20 @@ public class ExternalRentalOrderService {
         var sku = ensureSku(storeSku.skuId());
         var packageTemplate = ensureStoreSkuPackage(storeSku, request.packageId());
         var packagePricing = storeSkuPackageAmount(storeSku.id(), request.packageId());
+        var leaseMultiplier = normalizeLeaseMultiplier(request.leaseMultiplier());
         validateRequestAssets(request.frameAssetId(), request.batteryAssetId(), sku);
-        var expectedReturnAt = request.expectedReturnAt() == null ? calculateExpectedReturnAt(request.rentStartedAt(), packageTemplate) : request.expectedReturnAt();
+        var expectedReturnAt = request.expectedReturnAt() == null
+            ? calculateExpectedReturnAt(request.rentStartedAt(), packageTemplate, leaseMultiplier)
+            : request.expectedReturnAt();
         if (expectedReturnAt != null && expectedReturnAt.isBefore(request.rentStartedAt())) {
             throw BusinessException.badRequest("预计归还时间不能早于起租时间");
         }
         var frameAsset = request.frameAssetId() == null ? null : occupyAsset(request.frameAssetId(), AssetType.VEHICLE_FRAME, storeSku, "外部补录订单绑定主资产");
         var batteryAsset = request.batteryAssetId() == null ? null : occupyAsset(request.batteryAssetId(), AssetType.BATTERY, storeSku, "外部补录订单绑定电池");
-        var externalRentalAmount = normalizeMoney(request.externalRentalAmount(), packagePricing.rentalAmount());
+        var externalRentalAmount = normalizeMoney(
+            request.externalRentalAmount(),
+            packagePricing.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier))
+        );
         var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), externalRentalAmount);
         var order = externalRentalOrderRepository.create(new ExternalRentalOrderRepository.CreateRow(
             nextRecordNo(),
@@ -313,8 +326,9 @@ public class ExternalRentalOrderService {
             normalizeMoney(request.signFeeAmount(), storeSku.signFeeAmount()),
             normalizeMoney(request.depositAmount(), packagePricing.depositAmount()),
             packageTemplate.leaseUnit().name(),
-            packageTemplate.leaseValue(),
-            packageTemplate.totalPeriods(),
+            packageTemplate.leaseValue() * leaseMultiplier,
+            packageTemplate.totalPeriods() * leaseMultiplier,
+            leaseMultiplier,
             request.rentStartedAt(),
             expectedReturnAt,
             blankToNull(request.remark()),
@@ -696,6 +710,7 @@ public class ExternalRentalOrderService {
             order.leaseUnit(),
             order.leaseValue(),
             order.totalPeriods(),
+            order.leaseMultiplier(),
             order.rentStartedAt(),
             order.expectedReturnAt(),
             order.finishedAt(),
@@ -836,6 +851,7 @@ public class ExternalRentalOrderService {
             row.externalOrderNo(),
             row.storeSkuId(),
             row.packageId(),
+            row.leaseMultiplier(),
             row.customerName(),
             row.customerPhone(),
             row.rentStartedAt(),
@@ -900,14 +916,24 @@ public class ExternalRentalOrderService {
         return amount.setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
-    private LocalDateTime calculateExpectedReturnAt(LocalDateTime startedAt, ProductPackage productPackage) {
+    private LocalDateTime calculateExpectedReturnAt(LocalDateTime startedAt, ProductPackage productPackage, Integer leaseMultiplier) {
         if (startedAt == null) {
             return null;
         }
+        var multiplier = normalizeLeaseMultiplier(leaseMultiplier);
+        var leaseValue = (long) productPackage.leaseValue() * multiplier;
         if ("MONTH".equals(productPackage.leaseUnit().name())) {
-            return startedAt.plusMonths(productPackage.leaseValue());
+            return startedAt.plusDays(leaseValue * 30L);
         }
-        return startedAt.plusDays(productPackage.leaseValue());
+        return startedAt.plusDays(leaseValue);
+    }
+
+    private Integer normalizeLeaseMultiplier(Integer value) {
+        var multiplier = value == null ? 1 : value;
+        if (multiplier < 1 || multiplier > 120) {
+            throw BusinessException.badRequest("租期倍数必须在 1 到 120 之间");
+        }
+        return multiplier;
     }
 
     private String defaultRemark(String remark, String fallback) {

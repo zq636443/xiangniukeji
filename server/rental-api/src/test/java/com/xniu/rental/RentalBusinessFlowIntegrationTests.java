@@ -689,7 +689,7 @@ class RentalBusinessFlowIntegrationTests {
         orderRenewalService.handlePaidBill(paidBill);
 
         assertThat(orderStatus(order.id())).isEqualTo("RENTING");
-        assertThat(expectedReturnAt(order.id())).isEqualTo(dueAt.plusMonths(1));
+        assertThat(expectedReturnAt(order.id())).isEqualTo(dueAt.plusDays(30));
         assertThat(renewalCount(order.id())).isEqualTo(1);
 
         var statementMonth = paidBill.paidAt().format(DateTimeFormatter.ofPattern("yyyy-MM"));
@@ -810,7 +810,7 @@ class RentalBusinessFlowIntegrationTests {
             .orElseThrow();
         assertThat(renewalBill.billStatus()).isEqualTo(BillStatus.PAID);
         assertThat(orderStatus(order.id())).isEqualTo("RENTING");
-        assertThat(expectedReturnAt(order.id())).isEqualTo(dueAt.plusMonths(1));
+        assertThat(expectedReturnAt(order.id())).isEqualTo(dueAt.plusDays(30));
         assertThat(renewalCount(order.id())).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
             "SELECT paid_amount FROM rental_order WHERE id = ?",

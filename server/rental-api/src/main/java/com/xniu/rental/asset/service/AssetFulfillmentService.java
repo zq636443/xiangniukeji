@@ -355,7 +355,7 @@ public class AssetFulfillmentService {
     private LocalDateTime expectedReturnAt(LocalDateTime startedAt, RentalOrder order) {
         LocalDateTime expectedReturnAt;
         if ("MONTH".equals(order.leaseUnit())) {
-            expectedReturnAt = startedAt.plusMonths(order.leaseValue());
+            expectedReturnAt = startedAt.plusDays(30L * order.leaseValue());
         } else {
             expectedReturnAt = startedAt.plusDays(order.leaseValue());
         }

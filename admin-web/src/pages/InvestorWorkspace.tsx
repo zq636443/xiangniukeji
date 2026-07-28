@@ -1,14 +1,18 @@
 import {
   BankOutlined,
   CheckCircleOutlined,
+  DeleteOutlined,
   DollarOutlined,
   DownloadOutlined,
+  EditOutlined,
   ExclamationCircleOutlined,
   FileDoneOutlined,
   FileSearchOutlined,
+  PlusOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
   ShopOutlined,
+  SwapOutlined,
   ToolOutlined,
   WalletOutlined
 } from '@ant-design/icons';
@@ -19,8 +23,11 @@ import {
   DatePicker,
   Descriptions,
   Empty,
+  Form,
   Input,
+  InputNumber,
   Modal,
+  Popconfirm,
   Progress,
   Row,
   Select,
@@ -29,7 +36,8 @@ import {
   Table,
   Tabs,
   Tag,
-  Typography
+  Typography,
+  message
 } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -39,6 +47,7 @@ import type {
   AssetDetail,
   AssetMaintenance,
   AssetRentalRecord,
+  AssetTypeDefinition,
   CurrentAccount,
   SettlementIncomeEntry,
   SettlementStatement,
@@ -48,6 +57,40 @@ import { downloadCsv } from '../utils/csv';
 
 type InvestorPageProps = {
   account: CurrentAccount;
+};
+
+type InvestorAssetForm = {
+  assetTypeId: number;
+  serialNo: string;
+  currentMerchantId?: number;
+  currentStoreId?: number;
+  purchaseAmount: number;
+  residualValue?: number;
+  purchasedAt?: Dayjs;
+};
+
+type InvestorTransferForm = {
+  merchantId: number;
+  storeId: number;
+  remark?: string;
+};
+
+type InvestorAssetStatusForm = {
+  status: Asset['status'];
+  remark?: string;
+};
+
+type InvestorMerchantOption = {
+  id: number;
+  merchantCode: string;
+  merchantName: string;
+};
+
+type InvestorStoreOption = {
+  id: number;
+  merchantId: number;
+  storeCode: string;
+  storeName: string;
 };
 
 type StoreAllocation = {
@@ -813,22 +856,47 @@ export function InvestorIncomePage() {
 
 function InvestorAssetManagement({ account }: InvestorPageProps) {
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [assetTypes, setAssetTypes] = useState<AssetTypeDefinition[]>([]);
+  const [merchants, setMerchants] = useState<InvestorMerchantOption[]>([]);
+  const [stores, setStores] = useState<InvestorStoreOption[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
+  const [actionAsset, setActionAsset] = useState<Asset | null>(null);
   const [assetDetail, setAssetDetail] = useState<AssetDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [assetOpen, setAssetOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState<Asset['status']>();
   const [storeFilter, setStoreFilter] = useState<number>();
   const [typeFilter, setTypeFilter] = useState<number>();
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [assetForm] = Form.useForm<InvestorAssetForm>();
+  const [transferForm] = Form.useForm<InvestorTransferForm>();
+  const [statusForm] = Form.useForm<InvestorAssetStatusForm>();
+  const selectedAssetMerchantId = Form.useWatch('currentMerchantId', assetForm);
+  const selectedTransferMerchantId = Form.useWatch('merchantId', transferForm);
+  const canManageAssets = account.permissions.includes('asset.manage');
+  const canOperateAssets = account.permissions.includes('asset.operate');
 
   async function loadAssets() {
     setLoading(true);
     setError('');
     try {
-      setAssets(await http.get<unknown, Asset[]>('/api/investor/assets'));
+      const [assetData, typeData, merchantData, storeData] = await Promise.all([
+        http.get<unknown, Asset[]>('/api/investor/assets'),
+        http.get<unknown, AssetTypeDefinition[]>('/api/investor/assets/types'),
+        http.get<unknown, InvestorMerchantOption[]>('/api/investor/assets/merchants'),
+        http.get<unknown, InvestorStoreOption[]>('/api/investor/assets/stores')
+      ]);
+      setAssets(assetData);
+      setAssetTypes(typeData);
+      setMerchants(merchantData);
+      setStores(storeData);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '资产台账加载失败');
     } finally {
@@ -853,6 +921,24 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
     assets.forEach((asset) => options.set(asset.assetTypeId, assetTypeLabel(asset)));
     return [...options.entries()].map(([value, label]) => ({ value, label }));
   }, [assets]);
+
+  const assetTypeEntryOptions = useMemo(() => assetTypes.map((type) => ({
+    value: type.id,
+    label: type.typeName
+  })), [assetTypes]);
+
+  const merchantOptions = useMemo(() => merchants.map((merchant) => ({
+    value: merchant.id,
+    label: `${merchant.merchantName} / ${merchant.merchantCode}`
+  })), [merchants]);
+
+  const assetStoreOptions = useMemo(() => stores
+    .filter((store) => store.merchantId === selectedAssetMerchantId)
+    .map((store) => ({ value: store.id, label: `${store.storeName} / ${store.storeCode}` })), [selectedAssetMerchantId, stores]);
+
+  const transferStoreOptions = useMemo(() => stores
+    .filter((store) => store.merchantId === selectedTransferMerchantId)
+    .map((store) => ({ value: store.id, label: `${store.storeName} / ${store.storeCode}` })), [selectedTransferMerchantId, stores]);
 
   const filteredAssets = useMemo(() => {
     const normalized = keyword.trim().toLowerCase();
@@ -898,6 +984,112 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
     }
   }
 
+  function openCreateAsset() {
+    setEditingAsset(null);
+    assetForm.resetFields();
+    assetForm.setFieldsValue({
+      assetTypeId: assetTypes[0]?.id,
+      purchaseAmount: 0,
+      purchasedAt: dayjs()
+    });
+    setAssetOpen(true);
+  }
+
+  function openEditAsset(record: Asset) {
+    setEditingAsset(record);
+    assetForm.resetFields();
+    assetForm.setFieldsValue({
+      assetTypeId: record.assetTypeId,
+      serialNo: record.serialNo,
+      purchaseAmount: Number(record.purchaseAmount),
+      residualValue: record.residualValue == null ? undefined : Number(record.residualValue),
+      purchasedAt: record.purchasedAt ? dayjs(record.purchasedAt) : undefined
+    });
+    setAssetOpen(true);
+  }
+
+  function openTransferAsset(record: Asset) {
+    setActionAsset(record);
+    transferForm.resetFields();
+    transferForm.setFieldsValue({
+      merchantId: record.currentMerchantId ?? undefined,
+      storeId: record.currentStoreId ?? undefined,
+      remark: '出资方调拨资产'
+    });
+    setTransferOpen(true);
+  }
+
+  function openStatusAsset(record: Asset) {
+    setActionAsset(record);
+    statusForm.resetFields();
+    statusForm.setFieldsValue({ status: record.status, remark: '出资方变更资产状态' });
+    setStatusOpen(true);
+  }
+
+  async function submitAsset(values: InvestorAssetForm) {
+    setSaving(true);
+    try {
+      const payload = {
+        assetTypeId: values.assetTypeId,
+        serialNo: values.serialNo.trim(),
+        purchaseAmount: values.purchaseAmount,
+        residualValue: values.residualValue,
+        purchasedAt: values.purchasedAt?.format('YYYY-MM-DD')
+      };
+      if (editingAsset) {
+        await http.put(`/api/investor/assets/${editingAsset.id}`, payload);
+        message.success('资产资料已更新');
+      } else {
+        await http.post('/api/investor/assets', {
+          ...payload,
+          currentMerchantId: values.currentMerchantId,
+          currentStoreId: values.currentStoreId
+        });
+        message.success('资产已录入并关联到所选门店');
+      }
+      setAssetOpen(false);
+      setEditingAsset(null);
+      assetForm.resetFields();
+      await loadAssets();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitTransfer(values: InvestorTransferForm) {
+    if (!actionAsset) return;
+    setSaving(true);
+    try {
+      await http.put(`/api/investor/assets/${actionAsset.id}/transfer`, values);
+      message.success('资产调拨完成');
+      setTransferOpen(false);
+      setActionAsset(null);
+      await loadAssets();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitStatus(values: InvestorAssetStatusForm) {
+    if (!actionAsset) return;
+    setSaving(true);
+    try {
+      await http.put(`/api/investor/assets/${actionAsset.id}/status`, values);
+      message.success('资产状态已更新');
+      setStatusOpen(false);
+      setActionAsset(null);
+      await loadAssets();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteAsset(record: Asset) {
+    await http.delete(`/api/investor/assets/${record.id}`);
+    message.success('资产已删除');
+    await loadAssets();
+  }
+
   function resetFilters() {
     setKeyword('');
     setStatusFilter(undefined);
@@ -931,7 +1123,8 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
         </div>
         <Space>
           <Button icon={<DownloadOutlined />} disabled={filteredAssets.length === 0} onClick={exportAssets}>导出资产</Button>
-          <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={loadAssets}>刷新数据</Button>
+          {canManageAssets ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAsset}>录入资产</Button> : null}
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={loadAssets}>刷新数据</Button>
         </Space>
       </section>
 
@@ -1027,10 +1220,99 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
             { title: '采购金额', dataIndex: 'purchaseAmount', width: 120, render: money },
             { title: '参考残值', dataIndex: 'residualValue', width: 120, render: optionalMoney },
             { title: '采购日期', dataIndex: 'purchasedAt', width: 120, render: dateOnlyText },
-            { title: '操作', width: 84, fixed: 'right', render: (_, record) => <Button size="small" type="link" onClick={() => void openDetail(record)}>详情</Button> }
+            {
+              title: '操作',
+              width: 300,
+              fixed: 'right',
+              render: (_, record) => (
+                <Space size={4} wrap>
+                  {canManageAssets ? (
+                    <Button size="small" icon={<EditOutlined />} disabled={record.status === 'RENTING'} onClick={() => openEditAsset(record)}>编辑</Button>
+                  ) : null}
+                  {canOperateAssets ? (
+                    <Button size="small" icon={<SwapOutlined />} disabled={record.status === 'RENTING'} onClick={() => openTransferAsset(record)}>调拨</Button>
+                  ) : null}
+                  {canOperateAssets ? (
+                    <Button size="small" disabled={record.status === 'RENTING' || record.status === 'SCRAPPED' || record.status === 'SOLD'} onClick={() => openStatusAsset(record)}>状态</Button>
+                  ) : null}
+                  <Button size="small" type="link" onClick={() => void openDetail(record)}>详情</Button>
+                  {canManageAssets ? (
+                    <Popconfirm title="删除资产" description="仅空闲且没有任何业务记录的资产可以删除。" onConfirm={() => void deleteAsset(record)}>
+                      <Button size="small" danger icon={<DeleteOutlined />} disabled={record.status !== 'IDLE'} />
+                    </Popconfirm>
+                  ) : null}
+                </Space>
+              )
+            }
           ]}
         />
       </section>
+
+      <Modal
+        title={editingAsset ? '编辑我的资产' : '录入我的资产'}
+        open={assetOpen}
+        onCancel={() => { setAssetOpen(false); setEditingAsset(null); assetForm.resetFields(); }}
+        onOk={() => assetForm.submit()}
+        confirmLoading={saving}
+        destroyOnHidden
+      >
+        <Form form={assetForm} layout="vertical" onFinish={submitAsset}>
+          <Form.Item name="assetTypeId" label="资产类型" rules={[{ required: true, message: '请选择资产类型' }]}>
+            <Select showSearch optionFilterProp="label" options={assetTypeEntryOptions} />
+          </Form.Item>
+          <Form.Item name="serialNo" label="资产编号" rules={[{ required: true, message: '请输入资产编号' }]}>
+            <Input />
+          </Form.Item>
+          {!editingAsset ? (
+            <>
+              <Form.Item name="currentMerchantId" label="关联商户">
+                <Select allowClear showSearch optionFilterProp="label" options={merchantOptions} onChange={() => assetForm.setFieldValue('currentStoreId', undefined)} />
+              </Form.Item>
+              <Form.Item
+                name="currentStoreId"
+                label="关联门店"
+                rules={[({ getFieldValue }) => ({
+                  validator: (_, value) => getFieldValue('currentMerchantId') && !value
+                    ? Promise.reject(new Error('选择商户后必须同时选择门店'))
+                    : Promise.resolve()
+                })]}
+              >
+                <Select allowClear showSearch optionFilterProp="label" disabled={!selectedAssetMerchantId} options={assetStoreOptions} />
+              </Form.Item>
+            </>
+          ) : null}
+          <Form.Item name="purchaseAmount" label="采购金额" rules={[{ required: true, message: '请输入采购金额' }]}>
+            <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="residualValue" label="参考残值">
+            <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="purchasedAt" label="采购日期">
+            <DatePicker format="YYYY-MM-DD" style={{ width: '100%' }} placeholder="点击选择采购日期" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal title={`调拨资产 ${actionAsset?.assetCode || ''}`} open={transferOpen} onCancel={() => { setTransferOpen(false); setActionAsset(null); }} onOk={() => transferForm.submit()} confirmLoading={saving} destroyOnHidden>
+        <Form form={transferForm} layout="vertical" onFinish={submitTransfer}>
+          <Form.Item name="merchantId" label="目标商户" rules={[{ required: true, message: '请选择目标商户' }]}>
+            <Select showSearch optionFilterProp="label" options={merchantOptions} onChange={() => transferForm.setFieldValue('storeId', undefined)} />
+          </Form.Item>
+          <Form.Item name="storeId" label="目标门店" rules={[{ required: true, message: '请选择目标门店' }]}>
+            <Select showSearch optionFilterProp="label" disabled={!selectedTransferMerchantId} options={transferStoreOptions} />
+          </Form.Item>
+          <Form.Item name="remark" label="调拨备注"><Input.TextArea rows={3} /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal title={`变更资产状态 ${actionAsset?.assetCode || ''}`} open={statusOpen} onCancel={() => { setStatusOpen(false); setActionAsset(null); }} onOk={() => statusForm.submit()} confirmLoading={saving} destroyOnHidden>
+        <Form form={statusForm} layout="vertical" onFinish={submitStatus}>
+          <Form.Item name="status" label="目标状态" rules={[{ required: true, message: '请选择目标状态' }]}>
+            <Select options={assetStatusOptions.filter((item) => item.value !== 'RENTING')} />
+          </Form.Item>
+          <Form.Item name="remark" label="变更备注"><Input.TextArea rows={3} /></Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         title={`${selectedAsset?.assetCode ?? ''} / 资产运营详情`}

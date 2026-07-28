@@ -114,6 +114,7 @@ export type ExternalRentalOrder = {
   leaseUnit: 'DAY' | 'MONTH';
   leaseValue: number;
   totalPeriods: number;
+  leaseMultiplier: number;
   rentStartedAt: string;
   expectedReturnAt?: string | null;
   finishedAt?: string | null;
@@ -823,6 +824,7 @@ export type RentalOrder = {
   leaseUnit: 'DAY' | 'MONTH';
   leaseValue: number;
   totalPeriods: number;
+  leaseMultiplier: number;
   billDayMode: 'PAYMENT_DAY' | 'FIXED_DAY';
   billDay?: number | null;
   orderedAt: string;

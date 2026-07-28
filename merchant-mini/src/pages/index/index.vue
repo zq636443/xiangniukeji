@@ -505,8 +505,8 @@ const maintenanceSubmitting = ref(false);
 const voucherStatusIndex = ref(0);
 const incomeStatusIndex = ref(0);
 const form = reactive({
-  username: 'merchant_demo',
-  password: 'admin123'
+  username: '',
+  password: ''
 });
 const fulfillment = reactive({
   orderId: '',

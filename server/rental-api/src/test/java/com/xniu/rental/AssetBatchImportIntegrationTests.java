@@ -6,8 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.xniu.rental.asset.dto.AssetBatchImportRequest;
 import com.xniu.rental.asset.dto.AssetBatchImportRowRequest;
 import com.xniu.rental.asset.dto.AssetRequest;
+import com.xniu.rental.asset.dto.AssetStatusRequest;
+import com.xniu.rental.asset.dto.AssetTransferRequest;
 import com.xniu.rental.asset.dto.AssetTypeRequest;
 import com.xniu.rental.asset.dto.AssetUpdateRequest;
+import com.xniu.rental.asset.dto.InvestorAssetRequest;
+import com.xniu.rental.asset.dto.InvestorAssetUpdateRequest;
 import com.xniu.rental.asset.service.AssetService;
 import com.xniu.rental.asset.service.AssetTypeService;
 import com.xniu.rental.auth.dto.CurrentAccountResponse;
@@ -369,6 +373,93 @@ class AssetBatchImportIntegrationTests {
             .hasMessageContaining("没有该门店权限");
     }
 
+    @Test
+    void investorShouldManageOnlyOwnedAssetsAndAssignThemToStores() {
+        var typeId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_type_definition WHERE type_code = 'VEHICLE_FRAME'",
+            Long.class
+        );
+        var targetStoreCode = "S-INVESTOR-" + UUID.randomUUID().toString().substring(0, 8);
+        jdbcTemplate.update(
+            "INSERT INTO merchant_store (merchant_id, store_code, store_name, address, qr_content) VALUES (1, ?, '出资方调拨门店', '测试地址', ?)",
+            targetStoreCode,
+            "QR-" + targetStoreCode
+        );
+        var targetStoreId = jdbcTemplate.queryForObject(
+            "SELECT id FROM merchant_store WHERE store_code = ?",
+            Long.class,
+            targetStoreCode
+        );
+        jdbcTemplate.update("""
+            INSERT INTO investor
+            (investor_code, investor_name, contact_name, contact_phone, platform_operation_fee_rate, status)
+            VALUES ('I-investor-other', '其他出资方', '其他出资方', '18800009999', 0.0800, 'ENABLED')
+            """);
+        var otherInvestorId = jdbcTemplate.queryForObject(
+            "SELECT id FROM investor WHERE investor_code = 'I-investor-other'",
+            Long.class
+        );
+
+        setInvestorAccount(1L);
+        var serialNo = "INVESTOR-FRAME-" + UUID.randomUUID().toString().substring(0, 8);
+        var created = assetService.createInvestorAsset(new InvestorAssetRequest(
+            typeId,
+            null,
+            serialNo,
+            1L,
+            1L,
+            new BigDecimal("2600.00"),
+            new BigDecimal("300.00"),
+            LocalDate.of(2026, 7, 29)
+        ));
+        assertThat(created.investorId()).isEqualTo(1L);
+        assertThat(created.currentMerchantId()).isEqualTo(1L);
+        assertThat(created.currentStoreId()).isEqualTo(1L);
+
+        var updated = assetService.updateInvestorAsset(created.id(), new InvestorAssetUpdateRequest(
+            typeId,
+            serialNo + "-EDIT",
+            new BigDecimal("2680.00"),
+            new BigDecimal("280.00"),
+            LocalDate.of(2026, 7, 28)
+        ));
+        assertThat(updated.serialNo()).isEqualTo(serialNo + "-EDIT");
+        assertThat(updated.purchaseAmount()).isEqualByComparingTo("2680.00");
+
+        var transferred = assetService.transferInvestorAsset(created.id(), new AssetTransferRequest(
+            1L,
+            targetStoreId,
+            "出资方调拨测试"
+        ));
+        assertThat(transferred.currentStoreId()).isEqualTo(targetStoreId);
+
+        var repairing = assetService.updateInvestorAssetStatus(created.id(), new AssetStatusRequest(
+            "PENDING_REPAIR",
+            "出资方送修"
+        ));
+        assertThat(repairing.status()).isEqualTo("PENDING_REPAIR");
+        assetService.updateInvestorAssetStatus(created.id(), new AssetStatusRequest("IDLE", "检修完成"));
+
+        setInvestorAccount(otherInvestorId);
+        assertThatThrownBy(() -> assetService.updateInvestorAsset(created.id(), new InvestorAssetUpdateRequest(
+            typeId,
+            serialNo + "-CROSS",
+            new BigDecimal("2600.00"),
+            null,
+            LocalDate.of(2026, 7, 29)
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("只能操作当前出资方名下的资产");
+
+        setInvestorAccount(1L);
+        assetService.deleteInvestorAsset(created.id());
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM asset_item WHERE id = ?",
+            Integer.class,
+            created.id()
+        )).isZero();
+    }
+
     private AssetBatchImportRowRequest row(
         int lineNo,
         String assetType,
@@ -407,6 +498,26 @@ class AssetBatchImportIntegrationTests {
 
     private void setStoreManagerAccount(List<String> permissions, List<StoreScopeResponse> storeScopes) {
         setMerchantAccount("STORE_MANAGER", 1L, permissions, storeScopes);
+    }
+
+    private void setInvestorAccount(Long investorId) {
+        AuthContext.set(new CurrentAccount(
+            "investor-test-token",
+            new CurrentAccountResponse(
+                4L,
+                "INVESTOR",
+                "investor-test",
+                "18800000004",
+                null,
+                "出资方测试账号",
+                null,
+                null,
+                investorId,
+                List.of("INVESTOR"),
+                List.of("asset.read", "asset.manage", "asset.operate"),
+                List.of()
+            )
+        ));
     }
 
     private void setMerchantAccount(

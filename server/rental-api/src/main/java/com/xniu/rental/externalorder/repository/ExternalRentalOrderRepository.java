@@ -191,9 +191,9 @@ public class ExternalRentalOrderRepository {
                 INSERT INTO external_rental_order
                 (record_no, source_platform, external_order_no, merchant_id, store_id, store_sku_id, sku_id, package_id,
                  customer_name, customer_phone, frame_asset_id, battery_asset_id, order_status,
-                 external_rental_amount, verification_amount, sign_fee_amount, deposit_amount, lease_unit, lease_value, total_periods,
+                 external_rental_amount, verification_amount, sign_fee_amount, deposit_amount, lease_unit, lease_value, total_periods, lease_multiplier,
                  rent_started_at, expected_return_at, remark, created_by_account_id, updated_by_account_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.recordNo());
             statement.setString(2, row.sourcePlatform().name());
@@ -215,11 +215,12 @@ public class ExternalRentalOrderRepository {
             statement.setString(18, row.leaseUnit());
             statement.setInt(19, row.leaseValue());
             statement.setInt(20, row.totalPeriods());
-            statement.setObject(21, row.rentStartedAt());
-            statement.setObject(22, row.expectedReturnAt());
-            statement.setString(23, row.remark());
-            setNullableLong(statement, 24, row.createdByAccountId());
-            setNullableLong(statement, 25, row.updatedByAccountId());
+            statement.setInt(21, row.leaseMultiplier());
+            statement.setObject(22, row.rentStartedAt());
+            statement.setObject(23, row.expectedReturnAt());
+            statement.setString(24, row.remark());
+            setNullableLong(statement, 25, row.createdByAccountId());
+            setNullableLong(statement, 26, row.updatedByAccountId());
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
@@ -260,6 +261,7 @@ public class ExternalRentalOrderRepository {
                 lease_unit = ?,
                 lease_value = ?,
                 total_periods = ?,
+                lease_multiplier = ?,
                 rent_started_at = ?,
                 expected_return_at = ?,
                 remark = ?,
@@ -269,7 +271,7 @@ public class ExternalRentalOrderRepository {
             row.sourcePlatform().name(), row.externalOrderNo(), row.merchantId(), row.storeId(), row.storeSkuId(),
             row.skuId(), row.packageId(), row.customerName(), row.customerPhone(), row.frameAssetId(), row.batteryAssetId(),
             row.externalRentalAmount(), row.verificationAmount(), row.signFeeAmount(), row.depositAmount(), row.leaseUnit(),
-            row.leaseValue(), row.totalPeriods(), row.rentStartedAt(), row.expectedReturnAt(), row.remark(),
+            row.leaseValue(), row.totalPeriods(), row.leaseMultiplier(), row.rentStartedAt(), row.expectedReturnAt(), row.remark(),
             row.updatedByAccountId(), row.id()
         );
         return findById(row.id()).orElseThrow();
@@ -348,6 +350,7 @@ public class ExternalRentalOrderRepository {
                 rs.getString("lease_unit"),
                 rs.getInt("lease_value"),
                 rs.getInt("total_periods"),
+                rs.getInt("lease_multiplier"),
                 rs.getObject("rent_started_at", LocalDateTime.class),
                 rs.getObject("expected_return_at", LocalDateTime.class),
                 rs.getObject("finished_at", LocalDateTime.class),
@@ -417,6 +420,7 @@ public class ExternalRentalOrderRepository {
         String leaseUnit,
         Integer leaseValue,
         Integer totalPeriods,
+        Integer leaseMultiplier,
         LocalDateTime rentStartedAt,
         LocalDateTime expectedReturnAt,
         String remark,
@@ -445,6 +449,7 @@ public class ExternalRentalOrderRepository {
         String leaseUnit,
         Integer leaseValue,
         Integer totalPeriods,
+        Integer leaseMultiplier,
         LocalDateTime rentStartedAt,
         LocalDateTime expectedReturnAt,
         String remark,

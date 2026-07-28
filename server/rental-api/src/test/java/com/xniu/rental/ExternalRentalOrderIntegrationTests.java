@@ -235,6 +235,36 @@ class ExternalRentalOrderIntegrationTests {
     }
 
     @Test
+    void leaseMultiplierShouldExpandExternalOrderAmountAndUseThirtyDayMonths() {
+        var startedAt = LocalDateTime.of(2026, 7, 29, 10, 0);
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "LEASE-MULTIPLIER-001",
+            1L,
+            2L,
+            2,
+            "倍数补录客户",
+            "13800136666",
+            startedAt,
+            null,
+            1L,
+            2L,
+            null,
+            null,
+            null,
+            null,
+            "租期倍数测试"
+        ));
+
+        assertThat(created.leaseMultiplier()).isEqualTo(2);
+        assertThat(created.leaseValue()).isEqualTo(2);
+        assertThat(created.totalPeriods()).isEqualTo(2);
+        assertThat(created.externalRentalAmount()).isEqualByComparingTo("798.00");
+        assertThat(created.verificationAmount()).isEqualByComparingTo("798.00");
+        assertThat(created.expectedReturnAt()).isEqualTo(startedAt.plusDays(60));
+    }
+
+    @Test
     void batchImportShouldAppearInAssetDetailRentalHistory() {
         jdbcTemplate.update("""
             INSERT INTO asset_item

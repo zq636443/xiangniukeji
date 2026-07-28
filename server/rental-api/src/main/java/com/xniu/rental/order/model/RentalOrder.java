@@ -27,6 +27,7 @@ public record RentalOrder(
     String leaseUnit,
     Integer leaseValue,
     Integer totalPeriods,
+    Integer leaseMultiplier,
     String billDayMode,
     Integer billDay,
     LocalDateTime orderedAt,

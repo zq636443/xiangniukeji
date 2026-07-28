@@ -31,6 +31,7 @@ type CreateForm = {
   externalOrderNo?: string;
   storeSkuId: number;
   packageId: number;
+  leaseMultiplier: number;
   customerName: string;
   customerPhone: string;
   rentStartedAt: Dayjs;
@@ -106,6 +107,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
 
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
   const selectedPackageId = Form.useWatch('packageId', createForm);
+  const selectedLeaseMultiplier = Form.useWatch('leaseMultiplier', createForm) ?? 1;
   const selectedFrameAssetId = Form.useWatch('frameAssetId', createForm);
   const selectedBatteryAssetId = Form.useWatch('batteryAssetId', createForm);
   const selectedStoreSku = useMemo(() => storeSkus.find((item) => item.id === selectedStoreSkuId), [storeSkus, selectedStoreSkuId]);
@@ -240,8 +242,9 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       sourcePlatform: 'OFFLINE',
       storeSkuId: firstStoreSku?.id,
       packageId: firstPackage?.packageId,
+      leaseMultiplier: 1,
       rentStartedAt,
-      expectedReturnAt: calculateExpectedReturnAt(rentStartedAt, firstPackage),
+      expectedReturnAt: calculateExpectedReturnAt(rentStartedAt, firstPackage, 1),
       signFeeAmount: Number(firstStoreSku?.signFeeAmount || 0),
       externalRentalAmount: Number(firstPackage?.rentalAmount || 0),
       verificationAmount: Number(firstPackage?.rentalAmount || 0),
@@ -259,6 +262,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       externalOrderNo: record.externalOrderNo ?? undefined,
       storeSkuId: record.storeSkuId,
       packageId: record.packageId,
+      leaseMultiplier: record.leaseMultiplier || 1,
       customerName: record.customerName,
       customerPhone: record.customerPhone,
       rentStartedAt: dayjs(record.rentStartedAt),
@@ -285,13 +289,14 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     const nextPackage = nextStoreSku?.packages.find((item) => item.status === 'ENABLED') ?? nextStoreSku?.packages[0];
     createForm.setFieldsValue({
       packageId: nextPackage?.packageId,
+      leaseMultiplier: 1,
       frameAssetId: undefined,
       batteryAssetId: undefined,
       signFeeAmount: Number(nextStoreSku?.signFeeAmount || 0),
       externalRentalAmount: Number(nextPackage?.rentalAmount || 0),
       verificationAmount: Number(nextPackage?.rentalAmount || 0),
       depositAmount: Number(nextPackage?.depositAmount || 0),
-      expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), nextPackage)
+      expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), nextPackage, 1)
     });
   }
 
@@ -300,11 +305,24 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     if (!nextPackage) {
       return;
     }
+    const multiplier = createForm.getFieldValue('leaseMultiplier') || 1;
     createForm.setFieldsValue({
-      externalRentalAmount: Number(nextPackage.rentalAmount || 0),
-      verificationAmount: Number(nextPackage.rentalAmount || 0),
+      externalRentalAmount: Number(nextPackage.rentalAmount || 0) * multiplier,
+      verificationAmount: Number(nextPackage.rentalAmount || 0) * multiplier,
       depositAmount: Number(nextPackage.depositAmount || 0),
-      expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), nextPackage)
+      expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), nextPackage, multiplier)
+    });
+  }
+
+  function handleLeaseMultiplierChange(value: number | null) {
+    const multiplier = value || 1;
+    if (!selectedPackage) {
+      return;
+    }
+    createForm.setFieldsValue({
+      externalRentalAmount: Number(selectedPackage.rentalAmount || 0) * multiplier,
+      verificationAmount: Number(selectedPackage.rentalAmount || 0) * multiplier,
+      expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), selectedPackage, multiplier)
     });
   }
 
@@ -586,6 +604,16 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               <Select options={packageOptions} disabled={!selectedStoreSku} onChange={handlePackageChange} />
             </Form.Item>
           </Space>
+          <Form.Item
+            name="leaseMultiplier"
+            label="租期倍数"
+            rules={[{ required: true, message: '请输入租期倍数' }]}
+            extra={selectedPackage
+              ? `最终租期：${selectedPackage.leaseValue * selectedLeaseMultiplier}${selectedPackage.leaseUnit === 'MONTH' ? '个月（每月30天）' : '天'} / ${selectedPackage.totalPeriods * selectedLeaseMultiplier}期`
+              : '例如 1个月 SKU 选择 2 倍，即租用 2个月（60天）'}
+          >
+            <InputNumber min={1} max={120} precision={0} addonAfter="倍" style={{ width: '100%' }} onChange={handleLeaseMultiplierChange} />
+          </Form.Item>
           <Space size={12} style={{ width: '100%' }} align="start">
             <Form.Item name="customerName" label="客户姓名" rules={[{ required: true, message: '请输入客户姓名' }]} style={{ flex: 1 }}>
               <Input />
@@ -603,7 +631,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
                   if (!selectedPackage) {
                     return;
                   }
-                  createForm.setFieldValue('expectedReturnAt', calculateExpectedReturnAt(value, selectedPackage));
+                  createForm.setFieldValue('expectedReturnAt', calculateExpectedReturnAt(value, selectedPackage, selectedLeaseMultiplier));
                 }}
               />
             </Form.Item>
@@ -679,16 +707,13 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             type="info"
             showIcon
             message="一行一单，支持英文逗号或 Tab 分隔"
-            description="字段顺序：来源平台,外部订单号,门店商品ID,SKU ID,客户姓名,客户手机号,起租时间,预计归还时间,主资产ID,电池资产ID,外部订单租金,实际核销金额,签单费,押金,备注。主资产支持车架、车电一体和全部自定义类型。"
+            description="字段顺序：来源平台,外部订单号,门店商品ID,SKU ID,租期倍数,客户姓名,客户手机号,起租时间,预计归还时间,主资产ID,电池资产ID,外部订单租金,实际核销金额,签单费,押金,备注。月租统一按30天计算；旧版不含租期倍数的15列格式仍兼容，默认1倍。"
           />
           <Input.TextArea
             rows={10}
             value={importText}
             onChange={(event) => setImportText(event.target.value)}
-            placeholder={[
-              'MEITUAN,MT-001,1,2,张三,13800138000,2026-07-19 10:00:00,2026-08-19 10:00:00,101,202,399,368.50,30,0,历史在租订单',
-              'OFFLINE,,1,1,李四,13900139000,2026-07-18 09:30:00,,103,,39,35,20,0,线下老单补录'
-            ].join('\n')}
+            placeholder="请粘贴正式订单数据，每行一单"
           />
           {importResult ? (
             <div className="section">
@@ -836,13 +861,14 @@ function formatAssetLabel(asset: Asset) {
   return `${asset.serialNo} / ${asset.assetCode} / ${type}${asset.storeName ? ` / ${asset.storeName}` : ''}`;
 }
 
-function calculateExpectedReturnAt(startedAt: Dayjs | undefined, selectedPackage?: StoreSku['packages'][number]) {
+function calculateExpectedReturnAt(startedAt: Dayjs | undefined, selectedPackage?: StoreSku['packages'][number], leaseMultiplier = 1) {
   if (!startedAt || !selectedPackage) {
     return undefined;
   }
+  const leaseValue = selectedPackage.leaseValue * leaseMultiplier;
   return selectedPackage.leaseUnit === 'MONTH'
-    ? startedAt.add(selectedPackage.leaseValue, 'month')
-    : startedAt.add(selectedPackage.leaseValue, 'day');
+    ? startedAt.add(leaseValue * 30, 'day')
+    : startedAt.add(leaseValue, 'day');
 }
 
 function sourceText(value?: ExternalRentalOrderSourcePlatform | null) {
@@ -920,23 +946,26 @@ function parseImportRows(input: string) {
     .map((line, index) => {
       const columns = line.includes('\t') ? line.split('\t') : line.split(',');
       const values = columns.map((item) => item.trim());
+      const hasLeaseMultiplier = values.length >= 16;
+      const offset = hasLeaseMultiplier ? 1 : 0;
       return {
         lineNo: index + 1,
         sourcePlatform: values[0],
         externalOrderNo: emptyToUndefined(values[1]),
         storeSkuId: Number(values[2]),
         packageId: Number(values[3]),
-        customerName: values[4],
-        customerPhone: values[5],
-        rentStartedAt: normalizeDateText(values[6]),
-        expectedReturnAt: normalizeDateText(values[7]),
-        frameAssetId: parseOptionalNumber(values[8]),
-        batteryAssetId: parseOptionalNumber(values[9]),
-        externalRentalAmount: parseOptionalNumber(values[10]),
-        verificationAmount: parseOptionalNumber(values[11]),
-        signFeeAmount: parseOptionalNumber(values[12]),
-        depositAmount: parseOptionalNumber(values[13]),
-        remark: emptyToUndefined(values[14])
+        leaseMultiplier: hasLeaseMultiplier ? parseOptionalNumber(values[4]) : 1,
+        customerName: values[4 + offset],
+        customerPhone: values[5 + offset],
+        rentStartedAt: normalizeDateText(values[6 + offset]),
+        expectedReturnAt: normalizeDateText(values[7 + offset]),
+        frameAssetId: parseOptionalNumber(values[8 + offset]),
+        batteryAssetId: parseOptionalNumber(values[9 + offset]),
+        externalRentalAmount: parseOptionalNumber(values[10 + offset]),
+        verificationAmount: parseOptionalNumber(values[11 + offset]),
+        signFeeAmount: parseOptionalNumber(values[12 + offset]),
+        depositAmount: parseOptionalNumber(values[13 + offset]),
+        remark: emptyToUndefined(values[14 + offset])
       };
     });
 }

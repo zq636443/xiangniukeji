@@ -1,5 +1,6 @@
 import { DeleteOutlined, DownloadOutlined, EditOutlined, ExportOutlined, PlusOutlined, SearchOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
-import { Button, Checkbox, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
+import { Button, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
+import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { AssetBatchImportModal, downloadAssetImportTemplate } from '../components/AssetBatchImportModal';
 import { http } from '../services/request';
@@ -43,7 +44,7 @@ type AssetForm = {
   currentStoreId?: number;
   purchaseAmount: number;
   residualValue?: number;
-  purchasedAt?: string;
+  purchasedAt?: Dayjs;
 };
 
 type AssetTypeForm = {
@@ -307,7 +308,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
       currentStoreId: record.currentStoreId ?? undefined,
       purchaseAmount: record.purchaseAmount,
       residualValue: record.residualValue ?? undefined,
-      purchasedAt: record.purchasedAt ?? undefined
+      purchasedAt: record.purchasedAt ? dayjs(record.purchasedAt) : undefined
     });
     setAssetOpen(true);
   }
@@ -423,7 +424,7 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
         investorId: values.investorId,
         purchaseAmount: values.purchaseAmount,
         residualValue: values.residualValue,
-        purchasedAt: values.purchasedAt
+        purchasedAt: values.purchasedAt?.format('YYYY-MM-DD')
       };
       if (editingAsset) {
         await http.put(`/api/admin/assets/${editingAsset.id}`, details);
@@ -787,7 +788,9 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
           ) : null}
           <Form.Item name="purchaseAmount" label="采购金额" rules={[{ required: true, message: '请输入采购金额' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="residualValue" label="报废残值"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
-          <Form.Item name="purchasedAt" label="采购日期"><Input type="date" /></Form.Item>
+          <Form.Item name="purchasedAt" label="采购日期">
+            <DatePicker format="YYYY-MM-DD" style={{ width: '100%' }} placeholder="点击选择采购日期" />
+          </Form.Item>
         </Form>
       </Modal>
 

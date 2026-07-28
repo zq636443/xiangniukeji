@@ -49,7 +49,6 @@ import com.xniu.rental.settlement.service.SettlementService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.time.YearMonth;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -254,7 +253,9 @@ public class OrderService {
         }
         var customer = resolveCustomer(userAccountId, request.customerName(), request.customerPhone());
         var orderedAt = resolveOrderedAt(request.orderedAt(), allowCustomOrderedAt);
-        var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), packagePrice.rentalAmount());
+        var leaseMultiplier = normalizeLeaseMultiplier(request.leaseMultiplier());
+        var defaultRentalAmount = packagePrice.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier));
+        var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), defaultRentalAmount);
         var payableAmount = verificationAmount.add(storeSku.signFeeAmount()).add(packagePrice.depositAmount());
         var order = orderRepository.create(new OrderRepository.OrderCreateRow(
             nextOrderNo(),
@@ -277,8 +278,9 @@ public class OrderService {
             BigDecimal.ZERO,
             null,
             packageTemplate.leaseUnit().name(),
-            packageTemplate.leaseValue(),
-            packageTemplate.totalPeriods(),
+            packageTemplate.leaseValue() * leaseMultiplier,
+            packageTemplate.totalPeriods() * leaseMultiplier,
+            leaseMultiplier,
             packageTemplate.billDayMode().name(),
             packageTemplate.billDay(),
             orderedAt,
@@ -288,7 +290,15 @@ public class OrderService {
             packagePrice.renewalAmount(),
             request.expectedPickupAt()
         ));
-        orderRepository.addItem(order.id(), OrderItemType.SKU, storeSku.id(), storeSku.displayName(), 1, verificationAmount, verificationAmount);
+        orderRepository.addItem(
+            order.id(),
+            OrderItemType.SKU,
+            storeSku.id(),
+            storeSku.displayName(),
+            leaseMultiplier,
+            verificationAmount.divide(BigDecimal.valueOf(leaseMultiplier), 2, RoundingMode.HALF_UP),
+            verificationAmount
+        );
         orderRepository.addItem(order.id(), OrderItemType.SIGN_FEE, null, "签单费", 1, storeSku.signFeeAmount(), storeSku.signFeeAmount());
         if (packagePrice.depositAmount().signum() > 0) {
             orderRepository.addItem(order.id(), OrderItemType.DEPOSIT, null, "押金", 1, packagePrice.depositAmount(), packagePrice.depositAmount());
@@ -345,11 +355,15 @@ public class OrderService {
 
         var customer = resolveCustomer(request.userAccountId(), request.customerName(), request.customerPhone());
         var orderedAt = resolveOrderedAt(request.orderedAt() == null ? order.orderedAt() : request.orderedAt(), true);
+        var leaseMultiplier = request.leaseMultiplier() == null ? order.leaseMultiplier() : normalizeLeaseMultiplier(request.leaseMultiplier());
+        var leaseSelectionChanged = productSelectionChanged || !leaseMultiplier.equals(order.leaseMultiplier());
         var signFeeAmount = productSelectionChanged ? product.storeSku().signFeeAmount() : order.signFeeAmount();
         var depositAmount = productSelectionChanged ? product.packagePrice().depositAmount() : order.depositAmount();
         var verificationAmount = normalizeVerificationAmount(
             request.verificationAmount(),
-            productSelectionChanged ? product.packagePrice().rentalAmount() : order.verificationAmount()
+            leaseSelectionChanged
+                ? product.packagePrice().rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier))
+                : order.verificationAmount()
         );
         var payableAmount = verificationAmount
             .add(signFeeAmount)
@@ -371,9 +385,10 @@ public class OrderService {
             signFeeAmount,
             depositAmount,
             payableAmount,
-            productSelectionChanged ? product.packageTemplate().leaseUnit().name() : order.leaseUnit(),
-            productSelectionChanged ? product.packageTemplate().leaseValue() : order.leaseValue(),
-            productSelectionChanged ? product.packageTemplate().totalPeriods() : order.totalPeriods(),
+            leaseSelectionChanged ? product.packageTemplate().leaseUnit().name() : order.leaseUnit(),
+            leaseSelectionChanged ? product.packageTemplate().leaseValue() * leaseMultiplier : order.leaseValue(),
+            leaseSelectionChanged ? product.packageTemplate().totalPeriods() * leaseMultiplier : order.totalPeriods(),
+            leaseMultiplier,
             productSelectionChanged ? product.packageTemplate().billDayMode().name() : order.billDayMode(),
             productSelectionChanged ? product.packageTemplate().billDay() : order.billDay(),
             orderedAt,
@@ -474,7 +489,16 @@ public class OrderService {
         var storeSku = productRepository.findStoreSku(order.storeSkuId())
             .orElseThrow(() -> BusinessException.badRequest("门店商品不存在"));
         orderRepository.deleteItems(order.id());
-        orderRepository.addItem(order.id(), OrderItemType.SKU, storeSku.id(), storeSku.displayName(), 1, order.verificationAmount(), order.verificationAmount());
+        var leaseMultiplier = normalizeLeaseMultiplier(order.leaseMultiplier());
+        orderRepository.addItem(
+            order.id(),
+            OrderItemType.SKU,
+            storeSku.id(),
+            storeSku.displayName(),
+            leaseMultiplier,
+            order.verificationAmount().divide(BigDecimal.valueOf(leaseMultiplier), 2, RoundingMode.HALF_UP),
+            order.verificationAmount()
+        );
         orderRepository.addItem(order.id(), OrderItemType.SIGN_FEE, null, "签单费", 1, order.signFeeAmount(), order.signFeeAmount());
         if (order.depositAmount().signum() > 0) {
             orderRepository.addItem(order.id(), OrderItemType.DEPOSIT, null, "押金", 1, order.depositAmount(), order.depositAmount());
@@ -561,12 +585,7 @@ public class OrderService {
             base = order.orderedAt() != null ? order.orderedAt() : order.createdAt();
         }
         if ("MONTH".equals(order.leaseUnit())) {
-            var target = base.plusMonths(periodNo - 1L);
-            if ("FIXED_DAY".equals(order.billDayMode()) && order.billDay() != null) {
-                var yearMonth = YearMonth.from(target);
-                target = target.withDayOfMonth(Math.min(order.billDay(), yearMonth.lengthOfMonth()));
-            }
-            return target;
+            return base.plusDays(30L * (periodNo - 1L));
         }
         var totalPeriods = Math.max(order.totalPeriods() == null ? 1 : order.totalPeriods(), 1);
         var stepDays = Math.max(1, order.leaseValue() / totalPeriods);
@@ -670,7 +689,7 @@ public class OrderService {
 
     private LocalDateTime baseExpectedReturnAt(LocalDateTime startedAt, RentalOrder order) {
         if ("MONTH".equals(order.leaseUnit())) {
-            return startedAt.plusMonths(order.leaseValue());
+            return startedAt.plusDays(30L * order.leaseValue());
         }
         return startedAt.plusDays(order.leaseValue());
     }
@@ -709,6 +728,7 @@ public class OrderService {
             order.leaseUnit(),
             order.leaseValue(),
             order.totalPeriods(),
+            order.leaseMultiplier(),
             order.billDayMode(),
             order.billDay(),
             order.orderedAt(),
@@ -744,6 +764,14 @@ public class OrderService {
             throw BusinessException.badRequest("实际核销金额不能小于 0");
         }
         return normalized;
+    }
+
+    private Integer normalizeLeaseMultiplier(Integer value) {
+        var multiplier = value == null ? 1 : value;
+        if (multiplier < 1 || multiplier > 120) {
+            throw BusinessException.badRequest("租期倍数必须在 1 到 120 之间");
+        }
+        return multiplier;
     }
 
     private void assertCanGrantLeaseBonus(RentalOrder order) {

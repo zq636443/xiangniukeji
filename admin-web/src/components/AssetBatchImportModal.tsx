@@ -422,8 +422,8 @@ function maxDelimiterCount(lines: string[], delimiter: string) {
 
 function buildExampleRows(options: TemplateOptions) {
   const types = enabledTemplateTypes(options);
-  const investorCode = options.investors?.[0]?.investorCode || 'I-DEMO-001';
-  const storeCode = options.storeCode || options.stores?.[0]?.storeCode || 'S-DEMO-001';
+  const investorCode = options.investors?.[0]?.investorCode || '';
+  const storeCode = options.storeCode || options.stores?.[0]?.storeCode || '';
   const examples = [
     ['VEHICLE_FRAME', '车架示例-001', '2600', '300'],
     ['BATTERY', '电池示例-001', '1800', '200'],
@@ -440,8 +440,8 @@ function buildExampleRows(options: TemplateOptions) {
 }
 
 function buildInstructionRows(options: TemplateOptions) {
-  const investorCode = options.investors?.[0]?.investorCode || 'I-DEMO-001';
-  const storeCode = options.storeCode || options.stores?.[0]?.storeCode || 'S-DEMO-001';
+  const investorCode = options.investors?.[0]?.investorCode || '';
+  const storeCode = options.storeCode || options.stores?.[0]?.storeCode || '';
   return [
     ['字段', '是否必填', '填写示例', '填写说明'],
     [templateHeaders[0], '是', '车架', '填写“资产类型”工作表中的类型名称或类型编码'],

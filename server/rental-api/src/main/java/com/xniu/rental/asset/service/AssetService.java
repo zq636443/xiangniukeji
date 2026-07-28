@@ -7,11 +7,15 @@ import com.xniu.rental.asset.dto.AssetBatchImportRowResultResponse;
 import com.xniu.rental.asset.dto.AssetInvestorChangeRequest;
 import com.xniu.rental.asset.dto.AssetInvestorOptionResponse;
 import com.xniu.rental.asset.dto.AssetLogResponse;
+import com.xniu.rental.asset.dto.AssetMerchantOptionResponse;
 import com.xniu.rental.asset.dto.AssetRequest;
 import com.xniu.rental.asset.dto.AssetResponse;
 import com.xniu.rental.asset.dto.AssetStatusRequest;
+import com.xniu.rental.asset.dto.AssetStoreOptionResponse;
 import com.xniu.rental.asset.dto.AssetTransferRequest;
 import com.xniu.rental.asset.dto.AssetUpdateRequest;
+import com.xniu.rental.asset.dto.InvestorAssetRequest;
+import com.xniu.rental.asset.dto.InvestorAssetUpdateRequest;
 import com.xniu.rental.asset.model.AssetItem;
 import com.xniu.rental.asset.model.AssetStatus;
 import com.xniu.rental.asset.model.AssetType;
@@ -23,6 +27,7 @@ import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.investor.model.InvestorStatus;
 import com.xniu.rental.investor.repository.InvestorRepository;
 import com.xniu.rental.merchant.model.MerchantStore;
+import com.xniu.rental.merchant.model.MerchantStatus;
 import com.xniu.rental.merchant.model.StoreStatus;
 import com.xniu.rental.merchant.repository.MerchantRepository;
 import com.xniu.rental.merchant.repository.StoreRepository;
@@ -298,8 +303,123 @@ public class AssetService {
             .toList();
     }
 
+    @Transactional
+    public AssetResponse createInvestorAsset(InvestorAssetRequest request) {
+        authorizationService.requirePermission("asset.manage");
+        var investorId = currentInvestorId();
+        if ((request.currentMerchantId() == null) != (request.currentStoreId() == null)) {
+            throw BusinessException.badRequest("资产关联商户时，必须同时选择商户和门店");
+        }
+        if (request.currentMerchantId() != null) {
+            ensureStoreBelongsToMerchant(request.currentMerchantId(), request.currentStoreId());
+        }
+        var typeDefinition = assetTypeService.resolveForEntry(request.assetTypeId(), request.assetType());
+        ensureSerialAvailable(request.serialNo(), typeDefinition.assetClass(), null, typeDefinition.serialLabel());
+        return persistAsset(
+            typeDefinition,
+            request.serialNo(),
+            investorId,
+            request.currentMerchantId(),
+            request.currentStoreId(),
+            request.purchaseAmount(),
+            request.residualValue(),
+            request.purchasedAt() == null ? LocalDate.now() : request.purchasedAt()
+        );
+    }
+
+    @Transactional
+    public AssetResponse updateInvestorAsset(Long assetId, InvestorAssetUpdateRequest request) {
+        authorizationService.requirePermission("asset.manage");
+        var investorId = currentInvestorId();
+        var asset = ensureInvestorOwnedAsset(assetId, investorId);
+        return updateAssetInternal(asset, new AssetUpdateRequest(
+            request.assetTypeId(),
+            request.serialNo(),
+            investorId,
+            request.purchaseAmount(),
+            request.residualValue(),
+            request.purchasedAt()
+        ));
+    }
+
+    @Transactional
+    public AssetResponse transferInvestorAsset(Long assetId, AssetTransferRequest request) {
+        authorizationService.requirePermission("asset.operate");
+        var asset = ensureInvestorOwnedAsset(assetId, currentInvestorId());
+        ensureStoreBelongsToMerchant(request.merchantId(), request.storeId());
+        return transferAssetInternal(asset, request.merchantId(), request.storeId(), request.remark());
+    }
+
+    @Transactional
+    public AssetResponse updateInvestorAssetStatus(Long assetId, AssetStatusRequest request) {
+        authorizationService.requirePermission("asset.operate");
+        var asset = ensureInvestorOwnedAsset(assetId, currentInvestorId());
+        if (asset.status() == AssetStatus.RENTING) {
+            throw BusinessException.badRequest("租赁中的资产不能手工变更状态");
+        }
+        if (asset.status() == AssetStatus.SCRAPPED || asset.status() == AssetStatus.SOLD) {
+            throw BusinessException.badRequest("已报废或已售出的资产不能继续变更状态");
+        }
+        var nextStatus = parseAssetStatus(request.status());
+        if (nextStatus == AssetStatus.RENTING) {
+            throw BusinessException.badRequest("租赁中状态只能由订单履约自动更新");
+        }
+        var updated = assetRepository.updateStatus(asset.id(), nextStatus, LocalDateTime.now());
+        assetRepository.insertStatusLog(
+            asset.id(),
+            asset.status(),
+            nextStatus,
+            currentAccountId(),
+            request.remark() == null ? "出资方变更资产状态" : request.remark()
+        );
+        return toResponse(updated);
+    }
+
+    @Transactional
+    public void deleteInvestorAsset(Long assetId) {
+        authorizationService.requirePermission("asset.manage");
+        deleteAssetInternal(ensureInvestorOwnedAsset(assetId, currentInvestorId()));
+    }
+
+    public List<AssetMerchantOptionResponse> listInvestorMerchantOptions() {
+        authorizationService.requirePermission("asset.read");
+        currentInvestorId();
+        return merchantRepository.list(null).stream()
+            .filter(merchant -> merchant.status() == MerchantStatus.ENABLED)
+            .map(merchant -> new AssetMerchantOptionResponse(merchant.id(), merchant.merchantCode(), merchant.merchantName()))
+            .toList();
+    }
+
+    public List<AssetStoreOptionResponse> listInvestorStoreOptions() {
+        authorizationService.requirePermission("asset.read");
+        currentInvestorId();
+        return storeRepository.list(null, null).stream()
+            .filter(store -> store.status() == StoreStatus.ENABLED)
+            .map(store -> new AssetStoreOptionResponse(store.id(), store.merchantId(), store.storeCode(), store.storeName()))
+            .toList();
+    }
+
     private AssetItem ensureAssetExists(Long assetId) {
         return assetRepository.findById(assetId).orElseThrow(() -> BusinessException.badRequest("资产不存在"));
+    }
+
+    private AssetItem ensureInvestorOwnedAsset(Long assetId, Long investorId) {
+        var asset = ensureAssetExists(assetId);
+        if (!investorId.equals(asset.investorId())) {
+            throw BusinessException.forbidden("只能操作当前出资方名下的资产");
+        }
+        return asset;
+    }
+
+    private Long currentInvestorId() {
+        var current = AuthContext.get();
+        if (current == null) {
+            throw BusinessException.unauthorized("请先登录");
+        }
+        if (current.account().investorId() == null) {
+            throw BusinessException.forbidden("当前账号不是出资方账号");
+        }
+        return current.account().investorId();
     }
 
     private AssetBatchImportResponse importAssets(AssetBatchImportRequest request, MerchantStore lockedStore) {
@@ -533,7 +653,10 @@ public class AssetService {
         if (merchantId == null || storeId == null) {
             throw BusinessException.badRequest("调拨到门店时必须选择商户和门店");
         }
-        merchantRepository.findById(merchantId).orElseThrow(() -> BusinessException.badRequest("商户不存在"));
+        var merchant = merchantRepository.findById(merchantId).orElseThrow(() -> BusinessException.badRequest("商户不存在"));
+        if (merchant.status() != MerchantStatus.ENABLED) {
+            throw BusinessException.badRequest("商户已停用");
+        }
         var store = storeRepository.findById(storeId).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
         if (!store.merchantId().equals(merchantId)) {
             throw BusinessException.badRequest("门店不属于所选商户");

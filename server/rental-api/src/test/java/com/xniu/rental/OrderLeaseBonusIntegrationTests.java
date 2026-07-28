@@ -235,7 +235,7 @@ class OrderLeaseBonusIntegrationTests {
 
     private LocalDateTime baseExpectedReturnAt(OrderResponse order) {
         if ("MONTH".equals(order.leaseUnit())) {
-            return order.leaseStartedAt().plusMonths(order.leaseValue());
+            return order.leaseStartedAt().plusDays(30L * order.leaseValue());
         }
         return order.leaseStartedAt().plusDays(order.leaseValue());
     }

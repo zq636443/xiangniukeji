@@ -109,9 +109,9 @@ public class OrderRepository {
                  merchant_id, store_id, store_sku_id, sku_id, package_id,
                  frame_asset_id, battery_asset_id, order_status, rental_amount, verification_amount,
                  sign_fee_amount, deposit_amount, payable_amount, paid_amount, settlement_snapshot_id,
-                 lease_unit, lease_value, total_periods, bill_day_mode, bill_day, ordered_at,
+                 lease_unit, lease_value, total_periods, lease_multiplier, bill_day_mode, bill_day, ordered_at,
                  auto_renew_enabled, renewal_unit, renewal_value, renewal_amount, expected_pickup_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.orderNo());
             setNullableLong(statement, 2, row.userAccountId());
@@ -135,22 +135,23 @@ public class OrderRepository {
             statement.setString(20, row.leaseUnit());
             statement.setInt(21, row.leaseValue());
             statement.setInt(22, row.totalPeriods());
-            statement.setString(23, row.billDayMode());
+            statement.setInt(23, row.leaseMultiplier());
+            statement.setString(24, row.billDayMode());
             if (row.billDay() == null) {
-                statement.setObject(24, null);
+                statement.setObject(25, null);
             } else {
-                statement.setInt(24, row.billDay());
+                statement.setInt(25, row.billDay());
             }
-            statement.setObject(25, row.orderedAt());
-            statement.setBoolean(26, Boolean.TRUE.equals(row.autoRenewEnabled()));
-            statement.setString(27, row.renewalUnit());
+            statement.setObject(26, row.orderedAt());
+            statement.setBoolean(27, Boolean.TRUE.equals(row.autoRenewEnabled()));
+            statement.setString(28, row.renewalUnit());
             if (row.renewalValue() == null) {
-                statement.setObject(28, null);
+                statement.setObject(29, null);
             } else {
-                statement.setInt(28, row.renewalValue());
+                statement.setInt(29, row.renewalValue());
             }
-            statement.setBigDecimal(29, row.renewalAmount());
-            statement.setObject(30, row.expectedPickupAt());
+            statement.setBigDecimal(30, row.renewalAmount());
+            statement.setObject(31, row.expectedPickupAt());
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
@@ -289,6 +290,7 @@ public class OrderRepository {
                 lease_unit = ?,
                 lease_value = ?,
                 total_periods = ?,
+                lease_multiplier = ?,
                 bill_day_mode = ?,
                 bill_day = ?,
                 ordered_at = ?,
@@ -316,6 +318,7 @@ public class OrderRepository {
             row.leaseUnit(),
             row.leaseValue(),
             row.totalPeriods(),
+            row.leaseMultiplier(),
             row.billDayMode(),
             row.billDay(),
             row.orderedAt(),
@@ -461,6 +464,7 @@ public class OrderRepository {
         String leaseUnit,
         Integer leaseValue,
         Integer totalPeriods,
+        Integer leaseMultiplier,
         String billDayMode,
         Integer billDay,
         LocalDateTime orderedAt,
@@ -492,6 +496,7 @@ public class OrderRepository {
         String leaseUnit,
         Integer leaseValue,
         Integer totalPeriods,
+        Integer leaseMultiplier,
         String billDayMode,
         Integer billDay,
         LocalDateTime orderedAt,
@@ -558,6 +563,7 @@ public class OrderRepository {
                 rs.getString("lease_unit"),
                 rs.getInt("lease_value"),
                 rs.getInt("total_periods"),
+                rs.getInt("lease_multiplier"),
                 rs.getString("bill_day_mode"),
                 getNullableInt(rs, "bill_day"),
                 rs.getObject("ordered_at", LocalDateTime.class),

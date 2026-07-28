@@ -1,4 +1,7 @@
 spring:
+  flyway:
+    placeholders:
+      cleanupDemoData: false
   datasource:
     url: jdbc:mysql://localhost:3310/xniu_rental?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: root
@@ -7,4 +10,3 @@ spring:
     redis:
       host: localhost
       port: 6380
-

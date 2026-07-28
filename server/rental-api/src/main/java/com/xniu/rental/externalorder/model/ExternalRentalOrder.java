@@ -26,6 +26,7 @@ public record ExternalRentalOrder(
     String leaseUnit,
     Integer leaseValue,
     Integer totalPeriods,
+    Integer leaseMultiplier,
     LocalDateTime rentStartedAt,
     LocalDateTime expectedReturnAt,
     LocalDateTime finishedAt,
