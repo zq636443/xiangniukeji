@@ -330,7 +330,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
   const [overdues, setOverdues] = useState<OverdueCase[]>([]);
   const [incomeEntries, setIncomeEntries] = useState<SettlementIncomeEntry[]>([]);
   const [statements, setStatements] = useState<SettlementStatement[]>([]);
-  const [period, setPeriod] = useState<CockpitPeriod>('7D');
+  const [period, setPeriod] = useState<CockpitPeriod>('30D');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const canReadSettlement = account.permissions.includes('settlement.read') || account.permissions.includes('system.admin');
