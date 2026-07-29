@@ -186,11 +186,7 @@ SELECT DISTINCT statement_id
 FROM settlement_statement_line
 WHERE @cleanup_demo_data = 1
   AND (
-    EXISTS (
-      SELECT 1
-      FROM cleanup_demo_order_ids
-      WHERE id = order_id OR (source_type = 'ORDER' AND id = source_id)
-    )
+    order_id IN (SELECT id FROM cleanup_demo_order_ids)
     OR bill_id IN (SELECT id FROM cleanup_demo_bill_ids)
     OR asset_id IN (SELECT id FROM cleanup_demo_asset_ids)
     OR merchant_id = @demo_merchant_id
@@ -243,11 +239,7 @@ WHERE @cleanup_demo_data = 1 AND id IN (SELECT id FROM cleanup_demo_statement_id
 DELETE FROM settlement_income_entry
 WHERE @cleanup_demo_data = 1
   AND (
-    EXISTS (
-      SELECT 1
-      FROM cleanup_demo_order_ids
-      WHERE id = order_id OR (source_type = 'ORDER' AND id = source_id)
-    )
+    order_id IN (SELECT id FROM cleanup_demo_order_ids)
     OR snapshot_id IN (SELECT id FROM cleanup_demo_snapshot_ids)
     OR store_id = @demo_store_id
     OR merchant_id = @demo_merchant_id
