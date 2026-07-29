@@ -114,7 +114,7 @@ class MerchantOrderCreationPermissionIntegrationTests {
             null,
             null,
             null,
-            LocalDateTime.of(2026, 7, 29, 10, 0),
+            LocalDateTime.now().minusMinutes(1),
             2,
             null
         )).data();

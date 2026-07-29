@@ -392,7 +392,7 @@ class AssetBatchImportIntegrationTests {
         );
         jdbcTemplate.update("""
             INSERT INTO investor
-            (investor_code, investor_name, contact_name, contact_phone, platform_operation_fee_rate, status)
+            (investor_code, investor_name, contact_name, contact_phone, operation_fee_rate, status)
             VALUES ('I-investor-other', '其他出资方', '其他出资方', '18800009999', 0.0800, 'ENABLED')
             """);
         var otherInvestorId = jdbcTemplate.queryForObject(

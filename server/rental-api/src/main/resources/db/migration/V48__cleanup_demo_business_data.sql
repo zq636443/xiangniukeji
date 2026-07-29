@@ -159,10 +159,14 @@ WHERE @cleanup_demo_data = 1
     OR merchant_id = @demo_merchant_id
     OR store_sku_id IN (SELECT id FROM cleanup_demo_store_sku_ids)
     OR frame_asset_id IN (SELECT id FROM cleanup_demo_asset_ids)
-    OR battery_asset_id IN (SELECT id FROM cleanup_demo_asset_ids)
     OR (source_type = 'ORDER' AND source_id IN (SELECT id FROM cleanup_demo_order_ids))
     OR (source_type = 'EXTERNAL_ORDER' AND source_id IN (SELECT id FROM cleanup_demo_external_order_ids))
   );
+INSERT IGNORE INTO cleanup_demo_snapshot_ids (id)
+SELECT id
+FROM settlement_rule_snapshot
+WHERE @cleanup_demo_data = 1
+  AND battery_asset_id IN (SELECT id FROM cleanup_demo_asset_ids);
 
 CREATE TEMPORARY TABLE cleanup_demo_statement_ids (id BIGINT PRIMARY KEY);
 INSERT IGNORE INTO cleanup_demo_statement_ids (id)
@@ -188,9 +192,14 @@ WHERE @cleanup_demo_data = 1
     OR merchant_id = @demo_merchant_id
     OR store_id = @demo_store_id
     OR investor_id = @demo_investor_id
-    OR (source_type = 'ORDER' AND source_id IN (SELECT id FROM cleanup_demo_order_ids))
     OR (source_type = 'EXTERNAL_ORDER' AND source_id IN (SELECT id FROM cleanup_demo_external_order_ids))
   );
+INSERT IGNORE INTO cleanup_demo_statement_ids (id)
+SELECT DISTINCT statement_id
+FROM settlement_statement_line
+WHERE @cleanup_demo_data = 1
+  AND source_type = 'ORDER'
+  AND source_id IN (SELECT id FROM cleanup_demo_order_ids);
 
 DELETE FROM audit_operation_log
 WHERE @cleanup_demo_data = 1 AND account_id IN (SELECT id FROM cleanup_demo_account_ids);
@@ -235,9 +244,12 @@ WHERE @cleanup_demo_data = 1
     OR store_id = @demo_store_id
     OR merchant_id = @demo_merchant_id
     OR (beneficiary_type = 'INVESTOR' AND beneficiary_id = @demo_investor_id)
-    OR (source_type = 'ORDER' AND source_id IN (SELECT id FROM cleanup_demo_order_ids))
     OR (source_type = 'EXTERNAL_ORDER' AND source_id IN (SELECT id FROM cleanup_demo_external_order_ids))
   );
+DELETE FROM settlement_income_entry
+WHERE @cleanup_demo_data = 1
+  AND source_type = 'ORDER'
+  AND source_id IN (SELECT id FROM cleanup_demo_order_ids);
 DELETE FROM settlement_rule_snapshot
 WHERE @cleanup_demo_data = 1 AND id IN (SELECT id FROM cleanup_demo_snapshot_ids);
 DELETE FROM settlement_profit_rule
@@ -277,16 +289,20 @@ WHERE @cleanup_demo_data = 1
     order_id IN (SELECT id FROM cleanup_demo_order_ids)
     OR store_id = @demo_store_id
     OR frame_asset_id IN (SELECT id FROM cleanup_demo_asset_ids)
-    OR battery_asset_id IN (SELECT id FROM cleanup_demo_asset_ids)
   );
+DELETE FROM rental_asset_handover
+WHERE @cleanup_demo_data = 1
+  AND battery_asset_id IN (SELECT id FROM cleanup_demo_asset_ids);
 DELETE FROM rental_asset_change
 WHERE @cleanup_demo_data = 1
   AND (
     order_id IN (SELECT id FROM cleanup_demo_order_ids)
     OR store_id = @demo_store_id
     OR old_asset_id IN (SELECT id FROM cleanup_demo_asset_ids)
-    OR new_asset_id IN (SELECT id FROM cleanup_demo_asset_ids)
   );
+DELETE FROM rental_asset_change
+WHERE @cleanup_demo_data = 1
+  AND new_asset_id IN (SELECT id FROM cleanup_demo_asset_ids);
 DELETE FROM order_asset_usage
 WHERE @cleanup_demo_data = 1
   AND (
