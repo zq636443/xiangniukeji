@@ -3,8 +3,9 @@ package com.xniu.rental.settlement.repository;
 import com.xniu.rental.settlement.model.IncomeBeneficiaryType;
 import com.xniu.rental.settlement.model.IncomeEntryStatus;
 import com.xniu.rental.settlement.model.IncomeLineType;
+import com.xniu.rental.settlement.model.IncomeSourceType;
 import com.xniu.rental.settlement.model.SettlementIncomeEntry;
-import com.xniu.rental.settlement.model.SnapshotSourceType;
+import com.xniu.rental.settlement.model.StatementBeneficiaryType;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -60,7 +61,7 @@ public class SettlementIncomeRepository {
         return list.stream().findFirst();
     }
 
-    public List<SettlementIncomeEntry> listBySource(SnapshotSourceType sourceType, Long sourceId) {
+    public List<SettlementIncomeEntry> listBySource(IncomeSourceType sourceType, Long sourceId) {
         return jdbcTemplate.query("""
             SELECT *
             FROM settlement_income_entry
@@ -69,7 +70,7 @@ public class SettlementIncomeRepository {
             """, mapper, sourceType.name(), sourceId);
     }
 
-    public boolean hasNonPendingBySource(SnapshotSourceType sourceType, Long sourceId) {
+    public boolean hasNonPendingBySource(IncomeSourceType sourceType, Long sourceId) {
         var count = jdbcTemplate.queryForObject("""
             SELECT COUNT(1)
             FROM settlement_income_entry
@@ -80,7 +81,7 @@ public class SettlementIncomeRepository {
         return count != null && count > 0;
     }
 
-    public void deleteBySource(SnapshotSourceType sourceType, Long sourceId) {
+    public void deleteBySource(IncomeSourceType sourceType, Long sourceId) {
         jdbcTemplate.update(
             "DELETE FROM settlement_income_entry WHERE source_type = ? AND source_id = ?",
             sourceType.name(),
@@ -88,16 +89,32 @@ public class SettlementIncomeRepository {
         );
     }
 
-    public boolean exists(Long snapshotId, IncomeBeneficiaryType beneficiaryType, Long beneficiaryId, IncomeLineType lineType) {
+    public boolean exists(
+        IncomeSourceType sourceType,
+        Long sourceId,
+        IncomeBeneficiaryType beneficiaryType,
+        Long beneficiaryId,
+        IncomeLineType lineType
+    ) {
         var count = jdbcTemplate.queryForObject("""
             SELECT COUNT(1) FROM settlement_income_entry
-            WHERE snapshot_id = ? AND beneficiary_type = ? AND beneficiary_id = ? AND line_type = ?
-            """, Integer.class, snapshotId, beneficiaryType.name(), beneficiaryId, lineType.name());
+            WHERE source_type = ?
+              AND source_id = ?
+              AND beneficiary_type = ?
+              AND beneficiary_id = ?
+              AND line_type = ?
+            """, Integer.class, sourceType.name(), sourceId, beneficiaryType.name(), beneficiaryId, lineType.name());
         return count != null && count > 0;
     }
 
     public Optional<SettlementIncomeEntry> create(CreateRow row) {
-        if (row.amount() == null || row.amount().signum() <= 0 || exists(row.snapshotId(), row.beneficiaryType(), row.beneficiaryId(), row.lineType())) {
+        if (row.amount() == null || row.amount().signum() <= 0 || exists(
+            row.sourceType(),
+            row.sourceId(),
+            row.beneficiaryType(),
+            row.beneficiaryId(),
+            row.lineType()
+        )) {
             return Optional.empty();
         }
         KeyHolder keyHolder = new GeneratedKeyHolder();
@@ -137,9 +154,41 @@ public class SettlementIncomeRepository {
         return findById(id).orElseThrow();
     }
 
+    public int settleByStatement(
+        Long statementId,
+        StatementBeneficiaryType beneficiaryType,
+        Long beneficiaryId,
+        Long storeId
+    ) {
+        var beneficiarySql = beneficiaryType == StatementBeneficiaryType.MERCHANT
+            ? "e.beneficiary_type = 'MERCHANT' AND e.store_id = ?"
+            : "e.beneficiary_type = 'INVESTOR' AND e.beneficiary_id = ?";
+        var targetId = beneficiaryType == StatementBeneficiaryType.MERCHANT ? storeId : beneficiaryId;
+        return jdbcTemplate.update("""
+            UPDATE settlement_income_entry e
+            SET entry_status = 'SETTLED',
+                settled_at = COALESCE(settled_at, CURRENT_TIMESTAMP)
+            WHERE e.entry_status = 'PENDING'
+              AND %s
+              AND EXISTS (
+                SELECT 1
+                FROM settlement_statement_line l
+                WHERE l.statement_id = ?
+                  AND (
+                    (l.source_type = 'BILL' AND e.source_type = 'BILL' AND e.source_id = l.bill_id)
+                    OR (
+                      l.source_type = 'EXTERNAL_ORDER'
+                      AND e.source_type = 'EXTERNAL_ORDER'
+                      AND e.source_id = l.source_id
+                    )
+                  )
+              )
+            """.formatted(beneficiarySql), targetId, statementId);
+    }
+
     public record CreateRow(
         String entryNo,
-        SnapshotSourceType sourceType,
+        IncomeSourceType sourceType,
         Long sourceId,
         String sourceNo,
         Long orderId,
@@ -174,7 +223,7 @@ public class SettlementIncomeRepository {
             return new SettlementIncomeEntry(
                 rs.getLong("id"),
                 rs.getString("entry_no"),
-                SnapshotSourceType.valueOf(rs.getString("source_type")),
+                IncomeSourceType.valueOf(rs.getString("source_type")),
                 rs.getLong("source_id"),
                 rs.getString("source_no"),
                 getNullableLong(rs, "order_id"),

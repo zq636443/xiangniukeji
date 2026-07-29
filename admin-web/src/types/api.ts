@@ -405,6 +405,7 @@ export type AssetMaintenance = {
   costBearerType: 'USER' | 'INVESTOR' | 'MERCHANT' | 'PLATFORM';
   costBearerId?: number | null;
   operatorAccountId?: number | null;
+  operatorAccountName?: string | null;
   remark?: string | null;
   createdAt: string;
   parts: AssetMaintenancePart[];
@@ -617,7 +618,7 @@ export type SettlementSnapshot = {
 export type SettlementIncomeEntry = {
   id: number;
   entryNo: string;
-  sourceType: 'ORDER' | 'EXTERNAL_ORDER';
+  sourceType: 'ORDER' | 'BILL' | 'EXTERNAL_ORDER';
   sourceId: number;
   sourceNo?: string | null;
   orderId?: number | null;
@@ -866,7 +867,7 @@ export type OrderBatchImportResult = {
   results: OrderBatchImportRowResult[];
 };
 
-export type BillType = 'INITIAL' | 'PERIODIC' | 'RENEWAL' | 'OVERDUE';
+export type BillType = 'INITIAL' | 'PERIODIC' | 'RENEWAL' | 'OVERDUE' | 'VOUCHER_RENT';
 
 export type BillStatus =
   | 'PENDING_PAYMENT'

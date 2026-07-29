@@ -17,6 +17,7 @@ import com.xniu.rental.pay.model.PayStatus;
 import com.xniu.rental.pay.model.PaymentCallback;
 import com.xniu.rental.pay.model.PaymentOrder;
 import com.xniu.rental.pay.repository.PaymentRepository;
+import com.xniu.rental.settlement.service.SettlementIncomeService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
@@ -35,6 +36,7 @@ public class PaymentService {
     private final AlipayGatewayClient alipayGatewayClient;
     private final OverdueService overdueService;
     private final OrderRenewalService orderRenewalService;
+    private final SettlementIncomeService settlementIncomeService;
 
     public PaymentService(
         PaymentRepository paymentRepository,
@@ -43,7 +45,8 @@ public class PaymentService {
         AuthorizationService authorizationService,
         AlipayGatewayClient alipayGatewayClient,
         OverdueService overdueService,
-        OrderRenewalService orderRenewalService
+        OrderRenewalService orderRenewalService,
+        SettlementIncomeService settlementIncomeService
     ) {
         this.paymentRepository = paymentRepository;
         this.billRepository = billRepository;
@@ -52,6 +55,7 @@ public class PaymentService {
         this.alipayGatewayClient = alipayGatewayClient;
         this.overdueService = overdueService;
         this.orderRenewalService = orderRenewalService;
+        this.settlementIncomeService = settlementIncomeService;
     }
 
     public List<PaymentResponse> listPayments(String status, Long billId, Long orderId) {
@@ -180,6 +184,7 @@ public class PaymentService {
         billRepository.addLog(bill.id(), bill.billStatus(), BillStatus.PAID, BillOperationType.PAYMENT_SUCCESS, null, remark);
         orderRepository.increasePaidAmount(payment.orderId(), paidAmount.setScale(2, RoundingMode.HALF_UP));
         overdueService.resolveByBillId(bill.id());
+        settlementIncomeService.syncPaidBill(paidBill);
         orderRenewalService.handlePaidBill(paidBill);
         return updatedPayment;
     }

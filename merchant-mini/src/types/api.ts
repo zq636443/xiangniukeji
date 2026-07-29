@@ -192,6 +192,7 @@ export type AssetMaintenance = {
   assetId: number;
   assetCode: string;
   assetType: 'VEHICLE_FRAME' | 'BATTERY' | 'INTEGRATED_VEHICLE' | 'GENERAL';
+  assetTypeName?: string | null;
   serialNo: string;
   orderId?: number | null;
   storeId?: number | null;
@@ -210,6 +211,7 @@ export type AssetMaintenance = {
   costBearerType: 'USER' | 'INVESTOR' | 'MERCHANT' | 'PLATFORM';
   costBearerId?: number | null;
   operatorAccountId?: number | null;
+  operatorAccountName?: string | null;
   remark?: string | null;
   createdAt: string;
   parts: AssetMaintenancePart[];
@@ -340,7 +342,7 @@ export type RentalBill = {
   id: number;
   billNo: string;
   orderId: number;
-  billType: 'INITIAL' | 'PERIODIC' | 'RENEWAL' | 'OVERDUE';
+  billType: 'INITIAL' | 'PERIODIC' | 'RENEWAL' | 'OVERDUE' | 'VOUCHER_RENT';
   periodNo: number;
   billStatus: 'PENDING_PAYMENT' | 'PAYING' | 'PAID' | 'OVERDUE' | 'CANCELLED' | 'FAILED';
   dueAt: string;
@@ -398,7 +400,10 @@ export type SettlementSnapshot = {
 export type SettlementIncomeEntry = {
   id: number;
   entryNo: string;
-  orderId: number;
+  sourceType: 'ORDER' | 'BILL' | 'EXTERNAL_ORDER';
+  sourceId: number;
+  sourceNo?: string | null;
+  orderId?: number | null;
   snapshotId: number;
   merchantId: number;
   storeId: number;
@@ -420,6 +425,7 @@ export type SettlementIncomeEntry = {
   amount: number;
   entryStatus: 'PENDING' | 'SETTLED' | 'FROZEN';
   remark?: string | null;
+  occurredAt: string;
   settledAt?: string | null;
   createdAt: string;
 };

@@ -236,11 +236,13 @@ class ExternalRentalOrderIntegrationTests {
 
     @Test
     void leaseMultiplierShouldExpandExternalOrderAmountAndUseThirtyDayMonths() {
-        var startedAt = LocalDateTime.of(2026, 7, 29, 10, 0);
-        jdbcTemplate.update("UPDATE rental_order SET order_status = 'CANCELLED' WHERE id = 1");
+        var suffix = "lease-" + System.nanoTime();
+        var primaryAssetId = createTestAsset(suffix + "-primary", "VEHICLE_FRAME");
+        var secondaryAssetId = createTestAsset(suffix + "-secondary", "BATTERY");
+        var startedAt = LocalDateTime.now().minusHours(1).withNano(0);
         var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
             "OFFLINE",
-            "LEASE-MULTIPLIER-001",
+            "LEASE-MULTIPLIER-" + suffix,
             1L,
             2L,
             2,
@@ -248,8 +250,8 @@ class ExternalRentalOrderIntegrationTests {
             "13800136666",
             startedAt,
             null,
-            1L,
-            2L,
+            primaryAssetId,
+            secondaryAssetId,
             null,
             null,
             null,
@@ -847,18 +849,23 @@ class ExternalRentalOrderIntegrationTests {
     }
 
     private Long createIntegratedAsset(String suffix) {
+        return createTestAsset(suffix, "INTEGRATED_VEHICLE");
+    }
+
+    private Long createTestAsset(String suffix, String typeCode) {
+        var assetCode = "A-ext-" + suffix;
         jdbcTemplate.update("""
             INSERT INTO asset_item
             (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
              purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
-            VALUES (?, 'INTEGRATED_VEHICLE',
-                    (SELECT id FROM asset_type_definition WHERE type_code = 'INTEGRATED_VEHICLE'),
+            VALUES (?, ?,
+                    (SELECT id FROM asset_type_definition WHERE type_code = ?),
                     ?, 1, 1, 1, 'IDLE', 4200.00, 0.00, NULL, CURRENT_DATE)
-            """, "A-ext-" + suffix, "FRAME-EXT-" + suffix);
+            """, assetCode, typeCode, typeCode, "ASSET-EXT-" + suffix);
         return jdbcTemplate.queryForObject(
             "SELECT id FROM asset_item WHERE asset_code = ?",
             Long.class,
-            "A-ext-" + suffix
+            assetCode
         );
     }
 

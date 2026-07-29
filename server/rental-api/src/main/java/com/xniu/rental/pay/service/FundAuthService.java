@@ -27,6 +27,7 @@ import com.xniu.rental.pay.model.PayChannel;
 import com.xniu.rental.pay.model.PayStatus;
 import com.xniu.rental.pay.repository.FundAuthRepository;
 import com.xniu.rental.pay.repository.PaymentRepository;
+import com.xniu.rental.settlement.service.SettlementIncomeService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
@@ -46,6 +47,7 @@ public class FundAuthService {
     private final AlipayGatewayClient alipayGatewayClient;
     private final OverdueService overdueService;
     private final OrderRenewalService orderRenewalService;
+    private final SettlementIncomeService settlementIncomeService;
 
     public FundAuthService(
         FundAuthRepository fundAuthRepository,
@@ -55,7 +57,8 @@ public class FundAuthService {
         AuthorizationService authorizationService,
         AlipayGatewayClient alipayGatewayClient,
         OverdueService overdueService,
-        OrderRenewalService orderRenewalService
+        OrderRenewalService orderRenewalService,
+        SettlementIncomeService settlementIncomeService
     ) {
         this.fundAuthRepository = fundAuthRepository;
         this.orderRepository = orderRepository;
@@ -65,6 +68,7 @@ public class FundAuthService {
         this.alipayGatewayClient = alipayGatewayClient;
         this.overdueService = overdueService;
         this.orderRenewalService = orderRenewalService;
+        this.settlementIncomeService = settlementIncomeService;
     }
 
     public List<FundAuthResponse> listAdminAuths(String status, Long orderId, Long userAccountId) {
@@ -242,6 +246,7 @@ public class FundAuthService {
                 billRepository.addLog(bill.id(), bill.billStatus(), BillStatus.PAID, BillOperationType.PAYMENT_SUCCESS, currentAccountId(), "资金授权扣费成功");
                 orderRepository.increasePaidAmount(bill.orderId(), amount);
                 overdueService.resolveByBillId(bill.id());
+                settlementIncomeService.syncPaidBill(paidBill);
                 orderRenewalService.handlePaidBill(paidBill);
             }
             fundAuthRepository.markOperationSuccess(operation.id(), result.tradeNo(), null, paymentId);

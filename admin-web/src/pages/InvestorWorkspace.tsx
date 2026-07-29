@@ -142,14 +142,15 @@ export function InvestorIncomePage() {
     void loadData();
   }, []);
 
+  const actualEntries = useMemo(() => entries.filter((item) => item.sourceType !== 'ORDER'), [entries]);
   const incomeMetrics = useMemo(() => ({
-    total: sum(entries.map((item) => item.amount)),
-    settled: sum(entries.filter((item) => item.entryStatus === 'SETTLED').map((item) => item.amount)),
-    pending: sum(entries.filter((item) => item.entryStatus === 'PENDING').map((item) => item.amount)),
-    frozen: sum(entries.filter((item) => item.entryStatus === 'FROZEN').map((item) => item.amount)),
+    total: sum(actualEntries.map((item) => item.amount)),
+    settled: sum(actualEntries.filter((item) => item.entryStatus === 'SETTLED').map((item) => item.amount)),
+    pending: sum(actualEntries.filter((item) => item.entryStatus === 'PENDING').map((item) => item.amount)),
+    frozen: sum(actualEntries.filter((item) => item.entryStatus === 'FROZEN').map((item) => item.amount)),
     paidStatement: sum(statements.filter((item) => item.status === 'PAID').map((item) => item.payableAmount)),
     payableStatement: sum(statements.filter((item) => ['CONFIRMED', 'PAYABLE'].includes(item.status)).map((item) => item.payableAmount))
-  }), [entries, statements]);
+  }), [actualEntries, statements]);
 
   const lineTypeOptions = useMemo(() => [...new Set(entries.map((item) => item.lineType))].map((value) => ({
     value,
@@ -160,6 +161,7 @@ export function InvestorIncomePage() {
     const keyword = entryKeyword.trim().toLowerCase();
     return [...entries]
       .filter((item) => {
+        if (!entrySource && item.sourceType === 'ORDER') return false;
         if (entryStatus && item.entryStatus !== entryStatus) return false;
         if (entrySource && item.sourceType !== entrySource) return false;
         if (entryLineType && item.lineType !== entryLineType) return false;
@@ -214,7 +216,7 @@ export function InvestorIncomePage() {
       '收益单号', '来源', '业务单号', '收益类型', '金额', '状态', '结算时间', '备注'
     ], filteredEntries.map((item) => [
       item.entryNo,
-      item.sourceType === 'EXTERNAL_ORDER' ? '补录订单' : '正式订单',
+      incomeSourceText(item.sourceType),
       item.sourceNo || item.sourceId,
       lineTypeText(item.lineType),
       Number(item.amount || 0).toFixed(2),
@@ -321,8 +323,9 @@ export function InvestorIncomePage() {
                     placeholder="订单来源"
                     style={{ width: 140 }}
                     options={[
-                      { label: '正式订单', value: 'ORDER' },
-                      { label: '补录订单', value: 'EXTERNAL_ORDER' }
+                      { label: '实收账单', value: 'BILL' },
+                      { label: '补录订单', value: 'EXTERNAL_ORDER' },
+                      { label: '历史整单预计', value: 'ORDER' }
                     ]}
                   />
                   <Select
@@ -1170,9 +1173,15 @@ const incomeStatusMap: Record<SettlementIncomeEntry['entryStatus'], { label: str
 };
 
 function incomeSourceTag(value: SettlementIncomeEntry['sourceType']) {
-  return value === 'EXTERNAL_ORDER'
-    ? <Tag color="purple">补录订单</Tag>
-    : <Tag color="blue">正式订单</Tag>;
+  if (value === 'BILL') return <Tag color="green">实收账单</Tag>;
+  if (value === 'EXTERNAL_ORDER') return <Tag color="purple">补录订单</Tag>;
+  return <Tag>历史整单预计</Tag>;
+}
+
+function incomeSourceText(value: SettlementIncomeEntry['sourceType']) {
+  if (value === 'BILL') return '实收账单';
+  if (value === 'EXTERNAL_ORDER') return '补录订单';
+  return '历史整单预计';
 }
 
 function statementStatusTag(value: SettlementStatement['status']) {

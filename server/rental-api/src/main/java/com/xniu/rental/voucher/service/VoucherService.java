@@ -16,6 +16,7 @@ import com.xniu.rental.order.repository.OrderRepository;
 import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
+import com.xniu.rental.settlement.service.SettlementIncomeService;
 import com.xniu.rental.settlement.service.SettlementService;
 import com.xniu.rental.voucher.dto.VoucherPrepareRequest;
 import com.xniu.rental.voucher.dto.VoucherResponse;
@@ -42,6 +43,7 @@ public class VoucherService {
     private final OrderRepository orderRepository;
     private final BillRepository billRepository;
     private final SettlementService settlementService;
+    private final SettlementIncomeService settlementIncomeService;
     private final AuthorizationService authorizationService;
     private final VoucherGatewayClient voucherGatewayClient;
 
@@ -52,6 +54,7 @@ public class VoucherService {
         OrderRepository orderRepository,
         BillRepository billRepository,
         SettlementService settlementService,
+        SettlementIncomeService settlementIncomeService,
         AuthorizationService authorizationService,
         VoucherGatewayClient voucherGatewayClient
     ) {
@@ -61,6 +64,7 @@ public class VoucherService {
         this.orderRepository = orderRepository;
         this.billRepository = billRepository;
         this.settlementService = settlementService;
+        this.settlementIncomeService = settlementIncomeService;
         this.authorizationService = authorizationService;
         this.voucherGatewayClient = voucherGatewayClient;
     }
@@ -193,6 +197,10 @@ public class VoucherService {
     public VoucherResponse consume(Long id) {
         var record = ensureMine(id);
         if (record.verifyStatus() == VoucherVerifyStatus.CONSUMED) {
+            if (record.orderId() != null) {
+                var consumedOrder = orderRepository.findById(record.orderId()).orElseThrow(() -> BusinessException.badRequest("订单不存在"));
+                syncVoucherRentBill(consumedOrder.id(), consumedOrder.userAccountId(), consumedOrder.merchantId(), consumedOrder.storeId(), requireVerificationAmount(record));
+            }
             return toResponse(record);
         }
         if (record.orderId() == null) {
@@ -209,6 +217,7 @@ public class VoucherService {
         }
         var consumed = voucherRepository.markConsumed(record.id(), toGatewayRow(gateway));
         var order = orderRepository.findById(record.orderId()).orElseThrow(() -> BusinessException.badRequest("订单不存在"));
+        syncVoucherRentBill(order.id(), order.userAccountId(), order.merchantId(), order.storeId(), verificationAmount);
         if (order.orderStatus() == OrderStatus.PENDING_PAYMENT) {
             var updated = orderRepository.updateStatus(order.id(), OrderStatus.PENDING_REAL_NAME, null, null, null);
             orderRepository.addLog(order.id(), order.orderStatus(), updated.orderStatus(), OrderOperationType.TRANSITION, currentUserId(), platformText(record.sourcePlatform()) + "核销成功，进入待实名");
@@ -349,6 +358,37 @@ public class VoucherService {
         billRepository.addItem(bill.id(), BillItemType.SIGN_FEE, "平台核销签单费", signFeeAmount.setScale(2, RoundingMode.HALF_UP));
         billRepository.addLog(bill.id(), null, BillStatus.PENDING_PAYMENT, BillOperationType.GENERATE, currentUserId(), "生成平台核销签单费账单");
         return bill.id();
+    }
+
+    private void syncVoucherRentBill(Long orderId, Long userAccountId, Long merchantId, Long storeId, BigDecimal verificationAmount) {
+        var normalizedAmount = verificationAmount.setScale(2, RoundingMode.HALF_UP);
+        var existing = billRepository.findExisting(orderId, BillType.VOUCHER_RENT, 1);
+        var bill = existing.orElseGet(() -> {
+            var created = billRepository.createBill(new BillRepository.BillCreateRow(
+                "BILL-VR-" + UUID.randomUUID().toString().substring(0, 8),
+                orderId,
+                userAccountId,
+                merchantId,
+                storeId,
+                BillType.VOUCHER_RENT,
+                1,
+                BillStatus.PENDING_PAYMENT,
+                LocalDateTime.now(),
+                normalizedAmount,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                "平台核销租金实收",
+                "VOUCHER-RENT-" + orderId
+            ));
+            billRepository.addItem(created.id(), BillItemType.RENT, "平台核销租金实收", normalizedAmount);
+            billRepository.addLog(created.id(), null, BillStatus.PENDING_PAYMENT, BillOperationType.GENERATE, currentUserId(), "生成平台核销租金实收账单");
+            return created;
+        });
+        var paidBill = bill.billStatus() == BillStatus.PAID ? bill : billRepository.markPaid(bill.id(), normalizedAmount);
+        if (bill.billStatus() != BillStatus.PAID) {
+            billRepository.addLog(bill.id(), bill.billStatus(), BillStatus.PAID, BillOperationType.PAYMENT_SUCCESS, currentUserId(), "第三方平台核销成功，确认租金实收");
+        }
+        settlementIncomeService.syncPaidBill(paidBill);
     }
 
     private void assertSignFeePaid(VoucherVerification record) {

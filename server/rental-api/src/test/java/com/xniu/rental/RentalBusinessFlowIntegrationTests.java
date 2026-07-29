@@ -228,9 +228,13 @@ class RentalBusinessFlowIntegrationTests {
         assertThat(assetStatus(1L)).isEqualTo("IDLE");
         assertThat(assetStatus(2L)).isEqualTo("IDLE");
 
+        var unpaidIncome = settlementIncomeService.generateForOrder(order.id());
+        assertThat(unpaidIncome.createdCount()).isZero();
+        billRepository.listBills(null, order.id(), null).forEach(bill -> billRepository.markPaid(bill.id(), bill.payableAmount()));
+
         var income = settlementIncomeService.generateForOrder(order.id());
 
-        assertThat(income.createdCount()).isEqualTo(6);
+        assertThat(income.createdCount()).isEqualTo(19);
         assertThat(income.entries())
             .extracting("lineType")
             .contains(
@@ -239,37 +243,40 @@ class RentalBusinessFlowIntegrationTests {
                 "STORE_OPERATION_SHARE",
                 "MAINTENANCE_FUND_SHARE",
                 "CHANNEL_REFERRAL_SHARE",
-                "INVESTOR_SHARE"
+                "INVESTOR_SHARE",
+                "MERCHANT_ORDER_FEE"
             );
         var incomeAmounts = income.entries().stream().collect(java.util.stream.Collectors.toMap(
             entry -> entry.lineType(),
-            entry -> entry.amount()
+            entry -> entry.amount(),
+            BigDecimal::add
         ));
         assertThat(incomeAmounts).containsAllEntriesOf(Map.of(
             "CHANNEL_VERIFICATION_FEE", new BigDecimal("49.95"),
             "PLATFORM_SERVICE_FEE", new BigDecimal("29.97"),
-            "STORE_OPERATION_SHARE", new BigDecimal("137.86"),
-            "MAINTENANCE_FUND_SHARE", new BigDecimal("91.91"),
-            "CHANNEL_REFERRAL_SHARE", new BigDecimal("183.82"),
-            "INVESTOR_SHARE", new BigDecimal("505.49")
+            "STORE_OPERATION_SHARE", new BigDecimal("137.85"),
+            "MAINTENANCE_FUND_SHARE", new BigDecimal("91.92"),
+            "CHANNEL_REFERRAL_SHARE", new BigDecimal("183.81"),
+            "INVESTOR_SHARE", new BigDecimal("505.50"),
+            "MERCHANT_ORDER_FEE", new BigDecimal("30.00")
         ));
         assertThat(incomeAmounts.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add))
-            .isEqualByComparingTo(new BigDecimal("999.00"));
+            .isEqualByComparingTo(new BigDecimal("1029.00"));
         assertThat(income.entries())
             .filteredOn(entry -> "INVESTOR".equals(entry.beneficiaryType()))
-            .singleElement()
-            .satisfies(entry -> {
-                assertThat(entry.beneficiaryId()).isEqualTo(1L);
-                assertThat(entry.amount()).isPositive();
-            });
+            .allSatisfy(entry -> assertThat(entry.beneficiaryId()).isEqualTo(1L))
+            .hasSize(3);
         assertThat(income.entries())
             .filteredOn(entry -> "MAINTENANCE_FUND_SHARE".equals(entry.lineType()))
-            .singleElement()
-            .satisfies(entry -> {
+            .allSatisfy(entry -> {
                 assertThat(entry.beneficiaryType()).isEqualTo("MERCHANT");
                 assertThat(entry.beneficiaryId()).isEqualTo(1L);
-                assertThat(entry.amount()).isEqualByComparingTo("91.91");
-            });
+            })
+            .hasSize(3);
+        assertThat(income.entries().stream()
+            .filter(entry -> "MAINTENANCE_FUND_SHARE".equals(entry.lineType()))
+            .map(entry -> entry.amount())
+            .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("91.92");
 
         var repeatedIncome = settlementIncomeService.generateForOrder(order.id());
         assertThat(repeatedIncome.createdCount()).isZero();
@@ -705,6 +712,42 @@ class RentalBusinessFlowIntegrationTests {
             Integer.class,
             renewalBill.id()
         )).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'BILL' AND source_id = ? AND entry_status = 'PENDING'
+            """, Integer.class, renewalBill.id())).isGreaterThan(0);
+
+        var merchantStatementId = jdbcTemplate.queryForObject("""
+            SELECT DISTINCT s.id
+            FROM settlement_statement s
+            JOIN settlement_statement_line l ON l.statement_id = s.id
+            WHERE l.bill_id = ? AND s.beneficiary_type = 'MERCHANT'
+            """, Long.class, renewalBill.id());
+        var investorStatementId = jdbcTemplate.queryForObject("""
+            SELECT DISTINCT s.id
+            FROM settlement_statement s
+            JOIN settlement_statement_line l ON l.statement_id = s.id
+            WHERE l.bill_id = ? AND s.beneficiary_type = 'INVESTOR'
+            """, Long.class, renewalBill.id());
+        settlementStatementService.updateStatus(merchantStatementId, "PAID");
+        settlementStatementService.updateStatus(investorStatementId, "PAID");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'BILL'
+              AND source_id = ?
+              AND beneficiary_type IN ('MERCHANT', 'INVESTOR')
+              AND entry_status = 'PENDING'
+            """, Integer.class, renewalBill.id())).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'BILL'
+              AND source_id = ?
+              AND beneficiary_type IN ('MERCHANT', 'INVESTOR')
+              AND entry_status = 'SETTLED'
+            """, Integer.class, renewalBill.id())).isGreaterThan(0);
     }
 
     @Test
@@ -832,6 +875,11 @@ class RentalBusinessFlowIntegrationTests {
             Integer.class,
             renewalBill.id()
         )).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'BILL' AND source_id = ?
+            """, Integer.class, renewalBill.id())).isGreaterThan(0);
     }
 
     @Test
@@ -887,6 +935,33 @@ class RentalBusinessFlowIntegrationTests {
         assertThat(snapshot.get("maintenance_fund_amount")).isEqualTo(new BigDecimal("29.57"));
         assertThat(snapshot.get("channel_referral_amount")).isEqualTo(new BigDecimal("59.15"));
         assertThat(snapshot.get("investor_share_amount")).isEqualTo(new BigDecimal("162.66"));
+
+        var signFeeBill = billRepository.findBill(verified.signFeeBillId()).orElseThrow();
+        billRepository.markPaid(signFeeBill.id(), signFeeBill.payableAmount());
+        var consumed = voucherService.consume(prepared.id());
+        assertThat(consumed.verifyStatus()).isEqualTo("CONSUMED");
+        var voucherRentBill = billRepository.listBills(BillStatus.PAID, order.id(), null).stream()
+            .filter(bill -> bill.billType() == BillType.VOUCHER_RENT)
+            .findFirst()
+            .orElseThrow();
+        assertThat(voucherRentBill.paidAmount()).isEqualByComparingTo("321.45");
+        assertThat(billRepository.listItems(voucherRentBill.id()))
+            .singleElement()
+            .satisfies(item -> {
+                assertThat(item.itemType().name()).isEqualTo("RENT");
+                assertThat(item.amount()).isEqualByComparingTo("321.45");
+            });
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT amount
+            FROM settlement_income_entry
+            WHERE source_type = 'BILL'
+              AND source_id = ?
+              AND line_type = 'STORE_OPERATION_SHARE'
+            """, BigDecimal.class, voucherRentBill.id())).isEqualByComparingTo("44.36");
+        voucherService.consume(prepared.id());
+        assertThat(billRepository.listBills(null, order.id(), null).stream()
+            .filter(bill -> bill.billType() == BillType.VOUCHER_RENT)
+            .count()).isEqualTo(1);
 
         assertThatThrownBy(() -> voucherService.updateMineVerificationAmount(
             prepared.id(),

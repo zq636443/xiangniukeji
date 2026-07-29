@@ -28,6 +28,7 @@ import com.xniu.rental.pay.model.PayStatus;
 import com.xniu.rental.pay.repository.AgreementRepository;
 import com.xniu.rental.pay.repository.DeductRepository;
 import com.xniu.rental.pay.repository.PaymentRepository;
+import com.xniu.rental.settlement.service.SettlementIncomeService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -54,6 +55,7 @@ public class AgreementDeductService {
     private final AlipayProperties alipayProperties;
     private final OverdueService overdueService;
     private final OrderRenewalService orderRenewalService;
+    private final SettlementIncomeService settlementIncomeService;
 
     public AgreementDeductService(
         AgreementRepository agreementRepository,
@@ -65,7 +67,8 @@ public class AgreementDeductService {
         AlipayGatewayClient alipayGatewayClient,
         AlipayProperties alipayProperties,
         OverdueService overdueService,
-        OrderRenewalService orderRenewalService
+        OrderRenewalService orderRenewalService,
+        SettlementIncomeService settlementIncomeService
     ) {
         this.agreementRepository = agreementRepository;
         this.deductRepository = deductRepository;
@@ -77,6 +80,7 @@ public class AgreementDeductService {
         this.alipayProperties = alipayProperties;
         this.overdueService = overdueService;
         this.orderRenewalService = orderRenewalService;
+        this.settlementIncomeService = settlementIncomeService;
     }
 
     public List<AgreementResponse> listAgreements(String status, Long userAccountId, Long orderId) {
@@ -286,6 +290,7 @@ public class AgreementDeductService {
             orderRepository.increasePaidAmount(bill.orderId(), paidAmount);
             deductRepository.markSuccess(record.id(), result.tradeNo());
             overdueService.resolveByBillId(bill.id());
+            settlementIncomeService.syncPaidBill(paidBill);
             orderRenewalService.handlePaidBill(paidBill);
             return true;
         } catch (BusinessException exception) {

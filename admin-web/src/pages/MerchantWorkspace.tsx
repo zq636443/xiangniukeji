@@ -35,6 +35,7 @@ import {
   Typography,
   message
 } from 'antd';
+import type { FormInstance } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { AssetBatchImportModal, downloadAssetImportTemplate } from '../components/AssetBatchImportModal';
@@ -152,6 +153,7 @@ type MerchantAssetForm = {
 };
 
 type MerchantMaintenanceForm = {
+  assetId?: number;
   orderId?: number;
   maintenanceType: string;
   maintenanceStatus?: string;
@@ -162,6 +164,11 @@ type MerchantMaintenanceForm = {
   externalCost?: number;
   remark?: string;
   parts?: { partId?: number; quantity?: number; unitPrice?: number; remark?: string }[];
+};
+
+type MaintenanceSelectOption = {
+  label: string;
+  value: number;
 };
 
 const orderStatusOptions: { label: string; value: OrderStatus }[] = [
@@ -201,6 +208,120 @@ const collectionStatusOptions: { label: string; value: CollectionStatus; color: 
   { label: '已解决', value: 'RESOLVED', color: 'green' },
   { label: '坏账', value: 'BAD_DEBT', color: 'red' }
 ];
+
+function MerchantMaintenanceFormFields({
+  form,
+  partOptions,
+  assetOptions
+}: {
+  form: FormInstance<MerchantMaintenanceForm>;
+  partOptions: MaintenanceSelectOption[];
+  assetOptions?: MaintenanceSelectOption[];
+}) {
+  return (
+    <>
+      {assetOptions ? (
+        <Form.Item
+          name="assetId"
+          label="维修车辆 / 资产"
+          rules={[{ required: true, message: '请按车架号或资产编号选择维修车辆' }]}
+          extra="支持按车架号、资产编码和资产类型搜索；日常维修可直接选择车辆，不需要先归还订单。"
+        >
+          <Select
+            showSearch
+            optionFilterProp="label"
+            placeholder="输入车架号或资产编号搜索"
+            notFoundContent="当前门店没有可选择的资产"
+            options={assetOptions}
+          />
+        </Form.Item>
+      ) : null}
+      <Form.Item
+        name="orderId"
+        label="关联订单 ID（选填）"
+        extra="只有本次维修确实由某个租赁订单触发时才填写；日常巡检、保养和主动维修无需填写。"
+      >
+        <InputNumber min={1} placeholder="日常维修留空" style={{ width: '100%' }} />
+      </Form.Item>
+      <Space style={{ width: '100%' }} size={12} align="start">
+        <Form.Item name="maintenanceType" label="维修类型" rules={[{ required: true, message: '请选择维修类型' }]} style={{ flex: 1 }}>
+          <Select options={[
+            { label: '维修', value: 'REPAIR' },
+            { label: '保养', value: 'MAINTENANCE' },
+            { label: '换件', value: 'REPLACE_PART' },
+            { label: '检测', value: 'INSPECTION' }
+          ]} />
+        </Form.Item>
+        <Form.Item name="responsibilityType" label="责任归因" rules={[{ required: true, message: '请选择责任归因' }]} style={{ flex: 1 }}>
+          <Select onChange={(value) => form.setFieldValue('costBearerType', merchantMaintenanceCostBearerType(value))} options={[
+            { label: '日常资产维护', value: 'ROUTINE_MAINTENANCE' },
+            { label: '客户损坏', value: 'CUSTOMER_DAMAGE' },
+            { label: '门店责任', value: 'MERCHANT_RESPONSIBILITY' },
+            { label: '平台兜底', value: 'PLATFORM_SUBSIDY' }
+          ]} />
+        </Form.Item>
+        <Form.Item name="maintenanceStatus" label="状态" style={{ flex: 1 }}>
+          <Select options={[
+            { label: '已完成', value: 'COMPLETED' },
+            { label: '处理中', value: 'PROCESSING' },
+            { label: '待处理', value: 'PENDING' }
+          ]} />
+        </Form.Item>
+      </Space>
+      <Space style={{ width: '100%' }} size={12} align="start">
+        <Form.Item name="costBearerType" label="成本承担方" rules={[{ required: true, message: '请选择成本承担方' }]} style={{ flex: 1 }}>
+          <Select disabled options={[
+            { label: '商户', value: 'MERCHANT' },
+            { label: '用户', value: 'USER' },
+            { label: '平台', value: 'PLATFORM' }
+          ]} />
+        </Form.Item>
+        <Form.Item name="costBearerId" label="承担方 ID" style={{ flex: 1 }}>
+          <InputNumber min={0} placeholder="默认按资产或订单归属" style={{ width: '100%' }} />
+        </Form.Item>
+      </Space>
+      <Space style={{ width: '100%' }} size={12} align="start">
+        <Form.Item name="laborCost" label="人工费" style={{ flex: 1 }}>
+          <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+        </Form.Item>
+        <Form.Item name="externalCost" label="外协费" style={{ flex: 1 }}>
+          <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+        </Form.Item>
+      </Space>
+      <Form.List name="parts">
+        {(fields, { add, remove }) => (
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Space align="center" className="toolbar">
+              <Typography.Title level={5}>更换 / 消耗配件</Typography.Title>
+              <Button size="small" disabled={!partOptions.length} onClick={() => add({ quantity: 1 })}>添加配件</Button>
+              {!partOptions.length ? <Typography.Text type="secondary">当前门店暂无配件库存</Typography.Text> : null}
+            </Space>
+            {fields.map((field) => (
+              <Space key={field.key} align="start" style={{ width: '100%' }}>
+                <Form.Item name={[field.name, 'partId']} rules={[{ required: true, message: '请选择配件' }]} style={{ width: 260 }}>
+                  <Select showSearch optionFilterProp="label" placeholder="配件" options={partOptions} />
+                </Form.Item>
+                <Form.Item name={[field.name, 'quantity']} rules={[{ required: true, message: '请输入数量' }]} style={{ width: 120 }}>
+                  <InputNumber min={1} placeholder="数量" style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item name={[field.name, 'unitPrice']} style={{ width: 140 }}>
+                  <InputNumber min={0} precision={2} placeholder="单价可空" style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item name={[field.name, 'remark']} style={{ flex: 1 }}>
+                  <Input placeholder="如：更换原因或旧件情况" />
+                </Form.Item>
+                <Button danger onClick={() => remove(field.name)}>删除</Button>
+              </Space>
+            ))}
+          </Space>
+        )}
+      </Form.List>
+      <Form.Item name="remark" label="维修说明">
+        <Input.TextArea rows={3} placeholder="填写故障现象、处理过程和维修结果，便于后续按车架号追溯" />
+      </Form.Item>
+    </>
+  );
+}
 
 export function MerchantDashboard({ account, storeId, stores }: MerchantPageProps) {
   const [orders, setOrders] = useState<RentalOrder[]>([]);
@@ -265,8 +386,9 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     const previousExternal = externalOrders.filter((item) => isInWindow(item.createdAt || item.rentStartedAt, window.previousStart, window.previousEnd));
     const periodCollected = sumNumbers(periodOrders.map((item) => item.paidAmount)) + sumNumbers(periodExternal.map((item) => item.verificationAmount));
     const previousCollected = sumNumbers(previousOrders.map((item) => item.paidAmount)) + sumNumbers(previousExternal.map((item) => item.verificationAmount));
-    const periodIncome = sumNumbers(incomeEntries.filter((item) => isInWindow(item.occurredAt, window.start, window.end)).map((item) => item.amount));
-    const previousIncome = sumNumbers(incomeEntries.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd)).map((item) => item.amount));
+    const actualIncomeEntries = incomeEntries.filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN');
+    const periodIncome = sumNumbers(actualIncomeEntries.filter((item) => isInWindow(item.occurredAt, window.start, window.end)).map((item) => item.amount));
+    const previousIncome = sumNumbers(actualIncomeEntries.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd)).map((item) => item.amount));
     const activeAssets = assets.filter((item) => !['SCRAPPED', 'SOLD'].includes(item.status));
     const rentingAssets = activeAssets.filter((item) => item.status === 'RENTING');
     const deploymentRate = activeAssets.length ? rentingAssets.length / activeAssets.length * 100 : 0;
@@ -1701,7 +1823,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
       </Modal>
 
       <Modal
-        title={maintenanceAsset ? `${maintenanceAsset.assetCode} / 登记维修` : '登记维修'}
+        title={maintenanceAsset ? `${maintenanceAsset.serialNo} / ${maintenanceAsset.assetCode} / 登记维修` : '登记维修'}
         open={maintenanceOpen}
         onCancel={() => {
           maintenanceForm.resetFields();
@@ -1714,83 +1836,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
         destroyOnHidden
       >
         <Form form={maintenanceForm} layout="vertical" onFinish={submitMaintenance}>
-          <Form.Item name="orderId" label="关联订单 ID">
-            <InputNumber min={1} placeholder="需要绑定租赁订单时填写" style={{ width: '100%' }} />
-          </Form.Item>
-          <Space style={{ width: '100%' }} size={12} align="start">
-            <Form.Item name="maintenanceType" label="维修类型" rules={[{ required: true, message: '请选择维修类型' }]} style={{ flex: 1 }}>
-              <Select options={[
-                { label: '维修', value: 'REPAIR' },
-                { label: '保养', value: 'MAINTENANCE' },
-                { label: '换件', value: 'REPLACE_PART' },
-                { label: '检测', value: 'INSPECTION' }
-              ]} />
-            </Form.Item>
-            <Form.Item name="responsibilityType" label="责任归因" rules={[{ required: true, message: '请选择责任归因' }]} style={{ flex: 1 }}>
-              <Select onChange={(value) => maintenanceForm.setFieldValue('costBearerType', merchantMaintenanceCostBearerType(value))} options={[
-                { label: '日常资产维护', value: 'ROUTINE_MAINTENANCE' },
-                { label: '客户损坏', value: 'CUSTOMER_DAMAGE' },
-                { label: '门店责任', value: 'MERCHANT_RESPONSIBILITY' },
-                { label: '平台兜底', value: 'PLATFORM_SUBSIDY' }
-              ]} />
-            </Form.Item>
-            <Form.Item name="maintenanceStatus" label="状态" style={{ flex: 1 }}>
-              <Select options={[
-                { label: '已完成', value: 'COMPLETED' },
-                { label: '处理中', value: 'PROCESSING' },
-                { label: '待处理', value: 'PENDING' }
-              ]} />
-            </Form.Item>
-          </Space>
-          <Space style={{ width: '100%' }} size={12} align="start">
-            <Form.Item name="costBearerType" label="成本承担方" rules={[{ required: true, message: '请选择成本承担方' }]} style={{ flex: 1 }}>
-              <Select disabled options={[
-                { label: '商户', value: 'MERCHANT' },
-                { label: '用户', value: 'USER' },
-                { label: '平台', value: 'PLATFORM' }
-              ]} />
-            </Form.Item>
-            <Form.Item name="costBearerId" label="承担方 ID" style={{ flex: 1 }}>
-              <InputNumber min={0} placeholder="默认按资产或订单归属" style={{ width: '100%' }} />
-            </Form.Item>
-          </Space>
-          <Space style={{ width: '100%' }} size={12} align="start">
-            <Form.Item name="laborCost" label="人工费" style={{ flex: 1 }}>
-              <InputNumber min={0} precision={2} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item name="externalCost" label="外协费" style={{ flex: 1 }}>
-              <InputNumber min={0} precision={2} style={{ width: '100%' }} />
-            </Form.Item>
-          </Space>
-          <Form.List name="parts">
-            {(fields, { add, remove }) => (
-              <Space direction="vertical" style={{ width: '100%' }}>
-                <Space align="center" className="toolbar">
-                  <Typography.Title level={5}>消耗配件</Typography.Title>
-                  <Button size="small" disabled={!maintenancePartOptions.length} onClick={() => add({ quantity: 1 })}>添加配件</Button>
-                  {!maintenancePartOptions.length ? <Typography.Text type="secondary">当前门店暂无配件库存</Typography.Text> : null}
-                </Space>
-                {fields.map((field) => (
-                  <Space key={field.key} align="start" style={{ width: '100%' }}>
-                    <Form.Item name={[field.name, 'partId']} rules={[{ required: true, message: '请选择配件' }]} style={{ width: 260 }}>
-                      <Select placeholder="配件" options={maintenancePartOptions} />
-                    </Form.Item>
-                    <Form.Item name={[field.name, 'quantity']} rules={[{ required: true, message: '请输入数量' }]} style={{ width: 120 }}>
-                      <InputNumber min={1} placeholder="数量" style={{ width: '100%' }} />
-                    </Form.Item>
-                    <Form.Item name={[field.name, 'unitPrice']} style={{ width: 140 }}>
-                      <InputNumber min={0} precision={2} placeholder="单价可空" style={{ width: '100%' }} />
-                    </Form.Item>
-                    <Form.Item name={[field.name, 'remark']} style={{ flex: 1 }}>
-                      <Input placeholder="备注" />
-                    </Form.Item>
-                    <Button danger onClick={() => remove(field.name)}>删除</Button>
-                  </Space>
-                ))}
-              </Space>
-            )}
-          </Form.List>
-          <Form.Item name="remark" label="维修说明"><Input.TextArea rows={3} /></Form.Item>
+          <MerchantMaintenanceFormFields form={maintenanceForm} partOptions={maintenancePartOptions} />
         </Form>
       </Modal>
 
@@ -1852,8 +1898,10 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
                 size="small"
                 dataSource={selectedAsset.maintenances}
                 pagination={false}
+                scroll={{ x: 1750 }}
                 locale={{ emptyText: <Empty description="暂无维修记录" /> }}
                 expandable={{
+                  rowExpandable: (record) => record.parts.length > 0,
                   expandedRowRender: (record) => (
                     <Table
                       rowKey="id"
@@ -2099,26 +2147,85 @@ export function MerchantSparePartWorkspace({ storeId, stores }: MerchantPageProp
   );
 }
 
-export function MerchantMaintenanceWorkspace({ storeId }: MerchantPageProps) {
+export function MerchantMaintenanceWorkspace({ account, storeId }: MerchantPageProps) {
   const [records, setRecords] = useState<AssetMaintenance[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [stocks, setStocks] = useState<StoreSparePartStock[]>([]);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const [maintenanceForm] = Form.useForm<MerchantMaintenanceForm>();
+  const canOperateMaintenance = account.permissions.includes('maintenance.operate') || account.permissions.includes('system.admin');
+  const assetOptions = useMemo(() => assets.map((asset) => ({
+    label: `${asset.serialNo} / ${asset.assetCode} / ${asset.assetTypeName || assetTypeText(asset.assetType)} / ${assetStatusText(asset.status)}`,
+    value: asset.id
+  })), [assets]);
+  const partOptions = useMemo(() => stocks.map((stock) => ({
+    label: `${stock.partName} / 库存 ${stock.stockQuantity}`,
+    value: stock.partId
+  })), [stocks]);
 
-  async function loadRecords() {
+  async function loadData() {
     if (!storeId) {
       setRecords([]);
+      setAssets([]);
+      setStocks([]);
       return;
     }
     setLoading(true);
     try {
-      setRecords(await http.get<unknown, AssetMaintenance[]>('/api/merchant/maintenances', { params: { storeId } }));
+      const [recordData, assetData, stockData] = await Promise.all([
+        http.get<unknown, AssetMaintenance[]>('/api/merchant/maintenances', { params: { storeId } }),
+        canOperateMaintenance
+          ? http.get<unknown, Asset[]>(`/api/merchant/assets/stores/${storeId}`)
+          : Promise.resolve<Asset[]>([]),
+        canOperateMaintenance
+          ? http.get<unknown, StoreSparePartStock[]>('/api/merchant/spare-parts/store-stocks', { params: { storeId } })
+          : Promise.resolve<StoreSparePartStock[]>([])
+      ]);
+      setRecords(recordData);
+      setAssets(assetData);
+      setStocks(stockData);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    void loadRecords();
-  }, [storeId]);
+    void loadData();
+  }, [storeId, canOperateMaintenance]);
+
+  function openDailyMaintenance() {
+    maintenanceForm.resetFields();
+    maintenanceForm.setFieldsValue({
+      maintenanceType: 'REPAIR',
+      maintenanceStatus: 'COMPLETED',
+      responsibilityType: 'ROUTINE_MAINTENANCE',
+      costBearerType: 'MERCHANT',
+      laborCost: 0,
+      externalCost: 0,
+      parts: []
+    });
+    setMaintenanceOpen(true);
+  }
+
+  async function submitMaintenance(values: MerchantMaintenanceForm) {
+    if (!storeId || !values.assetId) return;
+    setSaving(true);
+    try {
+      await http.post('/api/merchant/maintenances', {
+        ...values,
+        storeId,
+        parts: (values.parts || []).filter((item) => item.partId && item.quantity)
+      });
+      message.success('日常维修记录已关联到所选车辆');
+      maintenanceForm.resetFields();
+      setMaintenanceOpen(false);
+      await loadData();
+    } finally {
+      setSaving(false);
+    }
+  }
 
   if (!storeId) {
     return <Empty description="请选择门店后查看维修记录" />;
@@ -2126,19 +2233,30 @@ export function MerchantMaintenanceWorkspace({ storeId }: MerchantPageProps) {
 
   return (
     <Space direction="vertical" size={16} className="page-stack">
-      <Space align="center" className="toolbar">
-        <Typography.Title level={3}>维修记录</Typography.Title>
-        <Button icon={<ReloadOutlined />} onClick={loadRecords}>刷新</Button>
+      <Space align="center" className="toolbar" wrap>
+        <Typography.Title level={3}>维修管理</Typography.Title>
+        {canOperateMaintenance ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openDailyMaintenance}>登记日常维修</Button>
+        ) : null}
+        <Button icon={<ReloadOutlined />} onClick={loadData}>刷新</Button>
       </Space>
+      <Alert
+        type="info"
+        showIcon
+        message="维修是独立的日常作业"
+        description="维修人员可直接按车架号或资产编号登记维修、保养、换件和检测；只有订单触发的维修才需要填写关联订单。"
+      />
       <div className="section">
         <Table
           rowKey="id"
           size="small"
           loading={loading}
           dataSource={records}
-          pagination={false}
+          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 条维修记录` }}
+          scroll={{ x: 1750 }}
           locale={{ emptyText: <Empty description="当前门店暂无维修记录" /> }}
           expandable={{
+            rowExpandable: (record) => record.parts.length > 0,
             expandedRowRender: (record) => (
               <Table
                 rowKey="id"
@@ -2159,6 +2277,27 @@ export function MerchantMaintenanceWorkspace({ storeId }: MerchantPageProps) {
           columns={maintenanceColumns()}
         />
       </div>
+
+      <Modal
+        title="登记日常维修"
+        open={maintenanceOpen}
+        onCancel={() => {
+          maintenanceForm.resetFields();
+          setMaintenanceOpen(false);
+        }}
+        onOk={() => maintenanceForm.submit()}
+        confirmLoading={saving}
+        width={900}
+        destroyOnHidden
+      >
+        <Form form={maintenanceForm} layout="vertical" onFinish={submitMaintenance}>
+          <MerchantMaintenanceFormFields
+            form={maintenanceForm}
+            assetOptions={assetOptions}
+            partOptions={partOptions}
+          />
+        </Form>
+      </Modal>
     </Space>
   );
 }
@@ -2278,6 +2417,7 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
   const [selectedStatement, setSelectedStatement] = useState<SettlementStatement | null>(null);
   const [statementOpen, setStatementOpen] = useState(false);
   const [status, setStatus] = useState<SettlementIncomeEntry['entryStatus'] | undefined>();
+  const [incomeMonth, setIncomeMonth] = useState(dayjs().format('YYYY-MM'));
   const [statementStatus, setStatementStatus] = useState<SettlementStatement['status'] | undefined>();
   const [loading, setLoading] = useState(false);
 
@@ -2304,6 +2444,11 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
     void loadEntries();
   }, [storeId, status, statementStatus]);
 
+  const visibleEntries = useMemo(() => entries.filter((entry) => {
+    if (dayjs(entry.occurredAt).format('YYYY-MM') !== incomeMonth) return false;
+    return entry.sourceType !== 'ORDER';
+  }), [entries, incomeMonth]);
+
   async function openStatement(record: SettlementStatement) {
     setSelectedStatement(record);
     setStatementOpen(true);
@@ -2318,6 +2463,7 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
     <Space direction="vertical" size={16} className="page-stack">
       <Space align="center" className="toolbar">
         <Typography.Title level={3}>门店收益</Typography.Title>
+        <DatePicker picker="month" allowClear={false} value={dayjs(`${incomeMonth}-01`)} onChange={(value) => setIncomeMonth((value || dayjs()).format('YYYY-MM'))} />
         <Select
           allowClear
           placeholder="收益状态"
@@ -2337,11 +2483,11 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
           rowKey="id"
           size="small"
           loading={loading}
-          dataSource={entries}
+          dataSource={visibleEntries}
           pagination={false}
           columns={[
             { title: '收益单号', dataIndex: 'entryNo' },
-            { title: '来源', dataIndex: 'sourceType', render: (value) => value === 'EXTERNAL_ORDER' ? <Tag color="purple">补录订单</Tag> : <Tag color="blue">正式订单</Tag> },
+            { title: '来源', dataIndex: 'sourceType', render: merchantIncomeSourceTag },
             { title: '业务单号', render: (_, record) => record.sourceNo || record.sourceId },
             { title: '收益类型', dataIndex: 'lineType', render: incomeLineText },
             { title: '金额', dataIndex: 'amount', render: money },
@@ -2398,7 +2544,7 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
           pagination={false}
           columns={[
             { title: '类型', dataIndex: 'lineType', render: statementLineText },
-            { title: '来源', dataIndex: 'sourceType', render: (value) => value === 'EXTERNAL_ORDER' ? <Tag color="purple">补录订单</Tag> : <Tag color="blue">正式订单/账单</Tag> },
+            { title: '来源', dataIndex: 'sourceType', render: merchantStatementSourceTag },
             { title: '来源ID', dataIndex: 'sourceId' },
             { title: '订单', dataIndex: 'orderId', render: (value) => value ?? '-' },
             { title: '账单', dataIndex: 'billId', render: (value) => value ?? '-' },
@@ -2564,9 +2710,13 @@ function collectionStatusTag(value: CollectionStatus) {
 }
 
 function assetStatusTag(value: AssetStatus) {
-  const label = assetStatusOptions.find((item) => item.value === value)?.label ?? value;
+  const label = assetStatusText(value);
   const color = value === 'IDLE' ? 'blue' : value === 'RENTING' ? 'green' : ['PENDING_REPAIR', 'REPAIRING'].includes(value) ? 'orange' : value === 'EXCEPTION' ? 'red' : 'default';
   return <Tag color={color}>{label}</Tag>;
+}
+
+function assetStatusText(value: AssetStatus) {
+  return assetStatusOptions.find((item) => item.value === value)?.label ?? value;
 }
 
 function assetTypeText(value: Asset['assetType']) {
@@ -2582,18 +2732,64 @@ function assetSelectLabel(asset: Asset) {
 
 function maintenanceColumns() {
   return [
-    { title: '维修单号', dataIndex: 'maintenanceNo' },
-    { title: '资产编码', dataIndex: 'assetCode' },
-    { title: '资产类型', render: (_value: unknown, record: AssetMaintenance) => record.assetTypeName || assetTypeText(record.assetType) },
-    { title: '维修类型', dataIndex: 'maintenanceType' },
+    { title: '维修单号', dataIndex: 'maintenanceNo', width: 170 },
+    {
+      title: '车架号 / 资产编号',
+      width: 220,
+      render: (_value: unknown, record: AssetMaintenance) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text strong>{record.serialNo || '-'}</Typography.Text>
+          <Typography.Text type="secondary">资产编码：{record.assetCode}</Typography.Text>
+        </Space>
+      )
+    },
+    { title: '资产类型', width: 120, render: (_value: unknown, record: AssetMaintenance) => record.assetTypeName || assetTypeText(record.assetType) },
+    { title: '维修类型', dataIndex: 'maintenanceType', width: 90, render: maintenanceTypeText },
+    { title: '维修说明', dataIndex: 'remark', width: 180, ellipsis: true, render: (value?: string | null) => value || '-' },
+    {
+      title: '更换 / 消耗配件',
+      width: 240,
+      render: (_value: unknown, record: AssetMaintenance) => record.parts.length
+        ? record.parts.map((part) => `${part.partNameSnapshot} ×${part.quantity}`).join('、')
+        : '-'
+    },
+    {
+      title: '业务来源',
+      width: 110,
+      render: (_value: unknown, record: AssetMaintenance) => record.orderId
+        ? <Tag color="purple">订单 #{record.orderId}</Tag>
+        : <Tag color="blue">日常维修</Tag>
+    },
+    {
+      title: '维修登记人',
+      width: 120,
+      render: (_value: unknown, record: AssetMaintenance) => record.operatorAccountName || (record.operatorAccountId ? `账号 #${record.operatorAccountId}` : '-')
+    },
     { title: '归因', dataIndex: 'responsibilityType', render: responsibilityText },
     { title: '配件成本', dataIndex: 'partsCost', render: money },
     { title: '人工+外协', render: (_: unknown, record: AssetMaintenance) => money(Number(record.laborCost || 0) + Number(record.externalCost || 0)) },
     { title: '总成本', dataIndex: 'totalCost', render: money },
-    { title: '平台补门店', dataIndex: 'merchantReimbursementAmount', render: money },
-    { title: '状态', dataIndex: 'maintenanceStatus', render: (value: string) => <Tag>{value}</Tag> },
-    { title: '完成时间', dataIndex: 'completedAt', render: dateText }
+    { title: '状态', dataIndex: 'maintenanceStatus', render: maintenanceStatusTag },
+    { title: '登记时间', dataIndex: 'createdAt', width: 170, render: dateText }
   ];
+}
+
+function maintenanceTypeText(value: string) {
+  return ({
+    REPAIR: '维修',
+    MAINTENANCE: '保养',
+    REPLACE_PART: '换件',
+    INSPECTION: '检测'
+  } as Record<string, string>)[value] || value;
+}
+
+function maintenanceStatusTag(value: string) {
+  const item = ({
+    COMPLETED: { text: '已完成', color: 'green' },
+    PROCESSING: { text: '处理中', color: 'blue' },
+    PENDING: { text: '待处理', color: 'gold' }
+  } as Record<string, { text: string; color: string }>)[value];
+  return <Tag color={item?.color}>{item?.text || value}</Tag>;
 }
 
 function stockTypeTag(value: SparePartStockLog['changeType']) {
@@ -2639,6 +2835,19 @@ function incomeStatusTag(value: SettlementIncomeEntry['entryStatus']) {
   };
   const item = map[value];
   return <Tag color={item.color}>{item.label}</Tag>;
+}
+
+function merchantIncomeSourceTag(value: SettlementIncomeEntry['sourceType']) {
+  if (value === 'BILL') return <Tag color="green">实收账单</Tag>;
+  if (value === 'EXTERNAL_ORDER') return <Tag color="purple">补录订单</Tag>;
+  return <Tag>历史整单预计</Tag>;
+}
+
+function merchantStatementSourceTag(value: string) {
+  if (value === 'BILL') return <Tag color="green">实收账单</Tag>;
+  if (value === 'EXTERNAL_ORDER') return <Tag color="purple">补录订单</Tag>;
+  if (value === 'MAINTENANCE') return <Tag color="orange">维保调整</Tag>;
+  return <Tag>{value}</Tag>;
 }
 
 function statementStatusTag(value: SettlementStatement['status']) {

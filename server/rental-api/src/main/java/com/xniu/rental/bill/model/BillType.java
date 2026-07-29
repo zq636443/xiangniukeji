@@ -4,5 +4,6 @@ public enum BillType {
     INITIAL,
     PERIODIC,
     RENEWAL,
-    OVERDUE
+    OVERDUE,
+    VOUCHER_RENT
 }

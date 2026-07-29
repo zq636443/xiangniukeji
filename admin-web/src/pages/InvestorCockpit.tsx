@@ -80,20 +80,24 @@ export function InvestorOperationsCockpit({ account }: InvestorOperationsCockpit
   }, []);
 
   const window = useMemo(() => getDateWindow(period), [period]);
+  const actualEntries = useMemo(
+    () => entries.filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN'),
+    [entries]
+  );
   const dashboard = useMemo(() => {
     const activeAssets = assets.filter((item) => !['SCRAPPED', 'SOLD'].includes(item.status));
     const rentingAssets = activeAssets.filter((item) => item.status === 'RENTING');
     const idleAssets = activeAssets.filter((item) => item.status === 'IDLE');
     const repairAssets = activeAssets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status));
     const unassignedAssets = activeAssets.filter((item) => !item.currentStoreId);
-    const periodEntries = entries.filter((item) => isInWindow(item.occurredAt, window.start, window.end));
-    const previousEntries = entries.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd));
+    const periodEntries = actualEntries.filter((item) => isInWindow(item.occurredAt, window.start, window.end));
+    const previousEntries = actualEntries.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd));
     const periodIncome = sumNumbers(periodEntries.map((item) => item.amount));
     const previousIncome = sumNumbers(previousEntries.map((item) => item.amount));
     const periodSettledIncome = sumNumbers(periodEntries.filter((item) => item.entryStatus === 'SETTLED').map((item) => item.amount));
-    const settledIncome = sumNumbers(entries.filter((item) => item.entryStatus === 'SETTLED').map((item) => item.amount));
-    const pendingIncome = sumNumbers(entries.filter((item) => item.entryStatus === 'PENDING').map((item) => item.amount));
-    const frozenIncome = sumNumbers(entries.filter((item) => item.entryStatus === 'FROZEN').map((item) => item.amount));
+    const settledIncome = sumNumbers(actualEntries.filter((item) => item.entryStatus === 'SETTLED').map((item) => item.amount));
+    const pendingIncome = sumNumbers(actualEntries.filter((item) => item.entryStatus === 'PENDING').map((item) => item.amount));
+    const frozenIncome = sumNumbers(entries.filter((item) => item.sourceType !== 'ORDER' && item.entryStatus === 'FROZEN').map((item) => item.amount));
     const purchaseAmount = sumNumbers(activeAssets.map((item) => item.purchaseAmount));
     const payableStatements = statements.filter((item) => ['CONFIRMED', 'PAYABLE'].includes(item.status));
     return {
@@ -115,16 +119,16 @@ export function InvestorOperationsCockpit({ account }: InvestorOperationsCockpit
       payableStatementAmount: sumNumbers(payableStatements.map((item) => item.payableAmount)),
       payableStatementCount: payableStatements.length
     };
-  }, [assets, entries, statements, window]);
+  }, [actualEntries, assets, entries, statements, window]);
 
   const trend = useMemo(() => {
     const buckets = buildTimeBuckets(window);
     return {
       labels: buckets.map((item) => item.label),
-      income: valueByBuckets(buckets, entries, (item) => item.occurredAt, (item) => Number(item.amount || 0)),
-      settled: valueByBuckets(buckets, entries.filter((item) => item.entryStatus === 'SETTLED'), (item) => item.occurredAt, (item) => Number(item.amount || 0))
+      income: valueByBuckets(buckets, actualEntries, (item) => item.occurredAt, (item) => Number(item.amount || 0)),
+      settled: valueByBuckets(buckets, actualEntries.filter((item) => item.entryStatus === 'SETTLED'), (item) => item.occurredAt, (item) => Number(item.amount || 0))
     };
-  }, [entries, window]);
+  }, [actualEntries, window]);
 
   const storePerformance = useMemo<StorePerformance[]>(() => {
     const map = new Map<string, Omit<StorePerformance, 'deploymentRate' | 'incomePerAsset'>>();

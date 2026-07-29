@@ -6,7 +6,7 @@ import java.time.LocalDateTime;
 public record SettlementIncomeEntry(
     Long id,
     String entryNo,
-    SnapshotSourceType sourceType,
+    IncomeSourceType sourceType,
     Long sourceId,
     String sourceNo,
     Long orderId,

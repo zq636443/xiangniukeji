@@ -156,6 +156,7 @@ export function SettlementManagement() {
   const [ruleChannelFilter, setRuleChannelFilter] = useState<string>();
   const [ruleStatusFilter, setRuleStatusFilter] = useState<ProfitRule['status']>();
   const [incomeKeyword, setIncomeKeyword] = useState('');
+  const [incomeMonth, setIncomeMonth] = useState(currentMonth());
   const [incomeStoreFilter, setIncomeStoreFilter] = useState<number>();
   const [incomeSourceFilter, setIncomeSourceFilter] = useState<SettlementIncomeEntry['sourceType']>();
   const [incomeBeneficiaryFilter, setIncomeBeneficiaryFilter] = useState<SettlementIncomeEntry['beneficiaryType']>();
@@ -360,6 +361,12 @@ export function SettlementManagement() {
     investor: result.investor + Number(snapshot.investorShareAmount || 0)
   }), { base: 0, platform: 0, store: 0, channel: 0, investor: 0 }), [filteredSnapshots]);
   const filteredEntries = useMemo(() => entries.filter((entry) => {
+    if (incomeMonth && dayjs(entry.occurredAt).format('YYYY-MM') !== incomeMonth) {
+      return false;
+    }
+    if (!incomeSourceFilter && entry.sourceType === 'ORDER') {
+      return false;
+    }
     if (incomeStoreFilter && entry.storeId !== incomeStoreFilter) {
       return false;
     }
@@ -384,11 +391,19 @@ export function SettlementManagement() {
         : beneficiaryText(entry.beneficiaryType);
     return [entry.entryNo, entry.sourceNo, entry.sourceId, entry.orderId, store?.storeName, store?.storeCode, beneficiaryName, entry.remark]
       .some((value) => String(value ?? '').toLowerCase().includes(keyword));
-  }), [entries, incomeBeneficiaryFilter, incomeKeyword, incomeSourceFilter, incomeStatusFilter, incomeStoreFilter, investorMap, merchantMap, storeMap]);
-  const incomeTotals = useMemo(() => filteredEntries.reduce((result, entry) => {
+  }), [entries, incomeBeneficiaryFilter, incomeKeyword, incomeMonth, incomeSourceFilter, incomeStatusFilter, incomeStoreFilter, investorMap, merchantMap, storeMap]);
+  const settlementPayableEntries = useMemo(
+    () => filteredEntries.filter((entry) => entry.beneficiaryType === 'MERCHANT' || entry.beneficiaryType === 'INVESTOR'),
+    [filteredEntries]
+  );
+  const incomeTotals = useMemo(() => settlementPayableEntries.reduce((result, entry) => {
     result[entry.entryStatus] += Number(entry.amount || 0);
     return result;
-  }, { PENDING: 0, SETTLED: 0, FROZEN: 0 }), [filteredEntries]);
+  }, { PENDING: 0, SETTLED: 0, FROZEN: 0 }), [settlementPayableEntries]);
+  const incomeBusinessCount = useMemo(
+    () => new Set(filteredEntries.map((entry) => `${entry.sourceType}:${entry.sourceId}`)).size,
+    [filteredEntries]
+  );
   const filteredStatementLines = useMemo(() => statementLines.filter((line) => {
     if (statementLineTypeFilter && line.lineType !== statementLineTypeFilter) {
       return false;
@@ -813,7 +828,7 @@ export function SettlementManagement() {
       '收益单号', '来源', '业务单号', '门店', '收益方', '收益类型', '金额', '状态', '备注', '计入时间', '结算时间'
     ], filteredEntries.map((record) => [
       record.entryNo,
-      record.sourceType === 'EXTERNAL_ORDER' ? '补录订单' : '正式订单',
+      incomeSourceText(record.sourceType),
       record.sourceNo || record.sourceId,
       storeMap.get(record.storeId)?.storeName,
       incomeBeneficiaryName(record),
@@ -1698,19 +1713,19 @@ export function SettlementManagement() {
           },
           {
             key: 'income',
-            label: <span>收益台账 <span className="tab-count">{entries.length}</span></span>,
+            label: <span>收益台账 <span className="tab-count">{filteredEntries.length}</span></span>,
             children: (
               <Space direction="vertical" size={16} className="page-stack settlement-tab-content">
                 <Row gutter={[12, 12]}>
-                  <Col span={8}><SettlementMetric icon={<ClockCircleOutlined />} tone="blue" label="待结算收益" value={money(incomeTotals.PENDING)} detail="尚未进入已结算状态" /></Col>
-                  <Col span={8}><SettlementMetric icon={<WarningOutlined />} tone="red" label="已冻结收益" value={money(incomeTotals.FROZEN)} detail="需要管理员复核" /></Col>
-                  <Col span={8}><SettlementMetric icon={<CheckCircleOutlined />} tone="green" label="已结算收益" value={money(incomeTotals.SETTLED)} detail="当前筛选结果" /></Col>
+                  <Col span={8}><SettlementMetric icon={<ClockCircleOutlined />} tone="blue" label="待支付分润" value={money(incomeTotals.PENDING)} detail={`${incomeBusinessCount} 笔实收业务 / ${settlementPayableEntries.length} 条门店与出资方流水`} /></Col>
+                  <Col span={8}><SettlementMetric icon={<WarningOutlined />} tone="red" label="已冻结分润" value={money(incomeTotals.FROZEN)} detail="仅统计门店与出资方口径" /></Col>
+                  <Col span={8}><SettlementMetric icon={<CheckCircleOutlined />} tone="green" label="已结算分润" value={money(incomeTotals.SETTLED)} detail="月结打款后自动回写" /></Col>
                 </Row>
                 <div className="section">
                   <div className="section-head settlement-list-head">
                     <div>
                       <Typography.Title level={4}>历史收益补生成</Typography.Title>
-                      <Typography.Text type="secondary">仅用于历史订单缺失收益台账时补生成；正常订单会在核销后自动产生收益。</Typography.Text>
+                      <Typography.Text type="secondary">仅补同步该订单已经支付的账单；未支付账单不会提前计入收益。</Typography.Text>
                     </div>
                     <Form form={incomeForm} layout="inline" onFinish={generateIncome}>
                       <Form.Item name="orderId" rules={[{ required: true, message: '请选择正式订单' }]}>
@@ -1733,14 +1748,15 @@ export function SettlementManagement() {
                   <div className="section-head settlement-list-head">
                     <div>
                       <Typography.Title level={4}>收益流水</Typography.Title>
-                      <Typography.Text type="secondary">按收益方、门店和状态核对每一条分润去向。</Typography.Text>
+                      <Typography.Text type="secondary">默认展示所选月份的实收账单和补录订单；订单笔数与分润流水数分开统计。</Typography.Text>
                     </div>
                     <Button icon={<DownloadOutlined />} disabled={filteredEntries.length === 0} onClick={exportIncomeEntries}>导出收益</Button>
                   </div>
                   <div className="settlement-filter-bar">
                     <Input allowClear prefix={<FileSearchOutlined />} placeholder="搜索收益单号、业务单号、门店或收益方" value={incomeKeyword} onChange={(event) => setIncomeKeyword(event.target.value)} style={{ width: 320 }} />
+                    <DatePicker picker="month" allowClear={false} value={dayjs(`${incomeMonth}-01`)} onChange={(value) => setIncomeMonth(value ? value.format('YYYY-MM') : currentMonth())} />
                     <Select allowClear showSearch optionFilterProp="label" placeholder="所属门店" value={incomeStoreFilter} onChange={setIncomeStoreFilter} options={stores.map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id }))} style={{ width: 220 }} />
-                    <Select allowClear placeholder="业务来源" value={incomeSourceFilter} onChange={setIncomeSourceFilter} options={[{ label: '正式订单', value: 'ORDER' }, { label: '补录订单', value: 'EXTERNAL_ORDER' }]} style={{ width: 140 }} />
+                    <Select allowClear placeholder="业务来源" value={incomeSourceFilter} onChange={setIncomeSourceFilter} options={[{ label: '实收账单', value: 'BILL' }, { label: '补录订单', value: 'EXTERNAL_ORDER' }, { label: '历史整单预计', value: 'ORDER' }]} style={{ width: 160 }} />
                     <Select
                       allowClear
                       placeholder="收益方"
@@ -1758,6 +1774,7 @@ export function SettlementManagement() {
                     <Select allowClear placeholder="收益状态" value={incomeStatusFilter} onChange={setIncomeStatusFilter} options={[{ label: '待结算', value: 'PENDING' }, { label: '已结算', value: 'SETTLED' }, { label: '已冻结', value: 'FROZEN' }]} style={{ width: 140 }} />
                     <Button onClick={() => {
                       setIncomeKeyword('');
+                      setIncomeMonth(currentMonth());
                       setIncomeStoreFilter(undefined);
                       setIncomeSourceFilter(undefined);
                       setIncomeBeneficiaryFilter(undefined);
@@ -1784,7 +1801,7 @@ export function SettlementManagement() {
                           </Space>
                         )
                       },
-                      { title: '来源', dataIndex: 'sourceType', width: 110, render: (value) => value === 'EXTERNAL_ORDER' ? <Tag color="purple">补录订单</Tag> : <Tag color="blue">正式订单</Tag> },
+                      { title: '来源', dataIndex: 'sourceType', width: 130, render: incomeSourceTag },
                       { title: '业务单号', width: 170, render: (_, record) => record.sourceNo || `#${record.sourceId}` },
                       {
                         title: '门店 / 收益方',
@@ -2323,6 +2340,20 @@ function incomeStatusText(value: SettlementIncomeEntry['entryStatus']) {
     FROZEN: '已冻结'
   };
   return map[value];
+}
+
+function incomeSourceText(value: SettlementIncomeEntry['sourceType']) {
+  const map: Record<SettlementIncomeEntry['sourceType'], string> = {
+    BILL: '实收账单',
+    EXTERNAL_ORDER: '补录订单',
+    ORDER: '历史整单预计'
+  };
+  return map[value];
+}
+
+function incomeSourceTag(value: SettlementIncomeEntry['sourceType']) {
+  const color = value === 'BILL' ? 'green' : value === 'EXTERNAL_ORDER' ? 'purple' : 'default';
+  return <Tag color={color}>{incomeSourceText(value)}</Tag>;
 }
 
 function statementLineSourceTypeText(value: string) {

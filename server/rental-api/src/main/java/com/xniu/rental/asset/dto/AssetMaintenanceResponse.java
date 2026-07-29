@@ -29,6 +29,7 @@ public record AssetMaintenanceResponse(
     String costBearerType,
     Long costBearerId,
     Long operatorAccountId,
+    String operatorAccountName,
     String remark,
     LocalDateTime createdAt,
     List<AssetMaintenancePartResponse> parts

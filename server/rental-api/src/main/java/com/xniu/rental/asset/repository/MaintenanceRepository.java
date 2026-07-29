@@ -282,10 +282,12 @@ public class MaintenanceRepository {
     public Optional<MaintenanceRow> findMaintenance(Long id) {
         return jdbcTemplate.query("""
             SELECT r.*, a.asset_code, a.asset_type, a.serial_no,
-                   COALESCE(t.type_name, a.asset_type) AS asset_type_name
+                   COALESCE(t.type_name, a.asset_type) AS asset_type_name,
+                   COALESCE(op.display_name, op.username) AS operator_account_name
             FROM asset_maintenance_record r
             JOIN asset_item a ON a.id = r.asset_id
             LEFT JOIN asset_type_definition t ON t.id = a.asset_type_id
+            LEFT JOIN sys_account op ON op.id = r.operator_account_id
             WHERE r.id = ?
             """, maintenanceMapper, id).stream().findFirst();
     }
@@ -293,10 +295,12 @@ public class MaintenanceRepository {
     public List<MaintenanceRow> listMaintenances(Long assetId, Long orderId) {
         var sql = new StringBuilder("""
             SELECT r.*, a.asset_code, a.asset_type, a.serial_no,
-                   COALESCE(t.type_name, a.asset_type) AS asset_type_name
+                   COALESCE(t.type_name, a.asset_type) AS asset_type_name,
+                   COALESCE(op.display_name, op.username) AS operator_account_name
             FROM asset_maintenance_record r
             JOIN asset_item a ON a.id = r.asset_id
             LEFT JOIN asset_type_definition t ON t.id = a.asset_type_id
+            LEFT JOIN sys_account op ON op.id = r.operator_account_id
             WHERE 1 = 1
             """);
         var params = new ArrayList<Object>();
@@ -417,6 +421,7 @@ public class MaintenanceRepository {
                 rs.getString("cost_bearer_type"),
                 getNullableLong(rs, "cost_bearer_id"),
                 getNullableLong(rs, "operator_account_id"),
+                rs.getString("operator_account_name"),
                 rs.getString("remark"),
                 rs.getObject("created_at", LocalDateTime.class)
             );
@@ -512,6 +517,7 @@ public class MaintenanceRepository {
         String costBearerType,
         Long costBearerId,
         Long operatorAccountId,
+        String operatorAccountName,
         String remark,
         LocalDateTime createdAt
     ) {

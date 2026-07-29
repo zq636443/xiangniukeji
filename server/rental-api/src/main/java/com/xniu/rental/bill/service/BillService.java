@@ -90,6 +90,7 @@ public class BillService {
             case PERIODIC -> generatePeriodic(order, request.periodNo(), request.dueAt(), request.remark());
             case RENEWAL -> generateRenewal(order, request.periodNo(), request.dueAt(), request.remark());
             case OVERDUE -> generateOverdue(order, request.periodNo(), request.overdueAmount(), request.dueAt(), request.remark());
+            case VOUCHER_RENT -> throw BusinessException.badRequest("平台核销租金账单由核销流程自动生成");
         };
     }
 

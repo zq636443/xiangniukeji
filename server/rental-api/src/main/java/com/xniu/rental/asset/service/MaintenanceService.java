@@ -543,6 +543,7 @@ public class MaintenanceService {
             row.costBearerType(),
             row.costBearerId(),
             row.operatorAccountId(),
+            row.operatorAccountName(),
             row.remark(),
             row.createdAt(),
             maintenanceRepository.listMaintenanceParts(row.id()).stream().map(this::toMaintenancePartResponse).toList()

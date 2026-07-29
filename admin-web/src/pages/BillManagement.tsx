@@ -244,6 +244,7 @@ export function BillManagement() {
 }
 
 function billTypeText(value: BillType) {
+  if (value === 'VOUCHER_RENT') return '平台核销租金';
   return billTypeOptions.find((item) => item.value === value)?.label ?? value;
 }
 

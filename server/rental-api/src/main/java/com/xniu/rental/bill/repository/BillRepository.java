@@ -54,6 +54,17 @@ public class BillRepository {
         return jdbcTemplate.query(sql.toString(), billMapper, params.toArray());
     }
 
+    public List<RentalBill> listPaidBills(LocalDateTime startAt, LocalDateTime endAt) {
+        return jdbcTemplate.query("""
+            SELECT *
+            FROM rental_bill
+            WHERE bill_status = 'PAID'
+              AND paid_at >= ?
+              AND paid_at < ?
+            ORDER BY paid_at, id
+            """, billMapper, startAt, endAt);
+    }
+
     public Optional<RentalBill> findExisting(Long orderId, BillType billType, Integer periodNo) {
         var list = jdbcTemplate.query("""
             SELECT * FROM rental_bill

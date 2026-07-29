@@ -225,7 +225,7 @@
           <view class="asset-sub">{{ asset.serialNo }}</view>
           <view class="asset-sub">出资方：{{ asset.investorName || '-' }}</view>
           <view class="asset-sub">残值：{{ asset.residualValue == null ? '-' : asset.residualValue }}</view>
-          <view class="action-row">
+          <view v-if="canOperateMaintenance" class="action-row">
             <button class="mini-btn" @tap="prepareMaintenance(asset.id)">登记维修</button>
           </view>
           <view v-if="asset.status === 'IDLE'" class="action-row">
@@ -259,16 +259,23 @@
           <view class="asset-sub">时间：{{ dateText(log.createdAt) }}</view>
         </view>
       </view>
-      <view v-if="currentStoreId" class="asset-panel">
+      <view v-if="currentStoreId && canOperateMaintenance" class="asset-panel">
         <view class="section-title">发起维修</view>
-        <view class="asset-sub">建议先在上面的资产卡片点“登记维修”，系统会自动带入资产 ID。</view>
+        <view class="asset-sub">日常维修不需要先归还订单。请按车架号或资产编号选择车辆，订单仅在本次维修确实由租赁订单触发时填写。</view>
         <view class="field compact">
-          <text>资产 ID</text>
-          <input v-model="maintenanceForm.assetId" type="number" placeholder="请输入资产 ID" />
+          <text>维修车辆 / 资产</text>
+          <picker
+            :range="maintenanceAssetLabels"
+            :value="maintenanceForm.assetIndex < 0 ? 0 : maintenanceForm.assetIndex"
+            :disabled="assets.length === 0"
+            @change="onMaintenanceAssetChange"
+          >
+            <view class="picker">{{ selectedMaintenanceAsset ? maintenanceAssetLabel(selectedMaintenanceAsset) : '请选择车架号或资产编号' }}</view>
+          </picker>
         </view>
         <view class="field compact">
-          <text>关联订单 ID</text>
-          <input v-model="maintenanceForm.orderId" type="number" placeholder="可空，默认可带入当前选中订单" />
+          <text>关联订单 ID（选填）</text>
+          <input v-model="maintenanceForm.orderId" type="number" placeholder="日常维修留空" />
         </view>
         <view class="field compact">
           <text>维修类型</text>
@@ -324,9 +331,12 @@
         <view v-for="record in maintenanceRecords" :key="record.id" class="asset-item">
           <view class="asset-main">
             <text>{{ record.maintenanceNo }}</text>
-            <text class="asset-status">{{ record.maintenanceStatus }}</text>
+            <text class="asset-status">{{ maintenanceStatusText(record.maintenanceStatus) }}</text>
           </view>
-          <view class="asset-sub">资产 {{ record.assetCode }} / {{ assetTypeText(record.assetType) }} / {{ responsibilityText(record.responsibilityType) }}</view>
+          <view class="asset-sub">车架号/资产编号：{{ record.serialNo || '-' }}</view>
+          <view class="asset-sub">资产编码：{{ record.assetCode }} / {{ record.assetTypeName || assetTypeText(record.assetType) }}</view>
+          <view class="asset-sub">维修人：{{ record.operatorAccountName || (record.operatorAccountId ? `账号 #${record.operatorAccountId}` : '-') }} / {{ record.orderId ? `订单 #${record.orderId}` : '日常维修' }}</view>
+          <view class="asset-sub">类型：{{ maintenanceTypeText(record.maintenanceType) }} / {{ responsibilityText(record.responsibilityType) }}</view>
           <view class="asset-sub">配件费 {{ money(record.partsCost) }} / 总费用 {{ money(record.totalCost) }}</view>
           <view class="asset-sub">平台补门店 {{ money(record.merchantReimbursementAmount) }} / 用户追偿 {{ money(record.customerChargeAmount) }}</view>
           <view class="asset-sub">备注：{{ record.remark || '-' }}</view>
@@ -396,9 +406,9 @@
             <text>{{ incomeLineText(item.lineType) }}</text>
             <text class="asset-status">{{ incomeStatusText(item.entryStatus) }}</text>
           </view>
-          <view class="asset-sub">订单 {{ item.orderId }} / {{ item.entryNo }}</view>
+          <view class="asset-sub">{{ incomeSourceText(item.sourceType) }} {{ item.sourceNo || item.sourceId }} / {{ item.entryNo }}</view>
           <view class="asset-sub">金额：{{ money(item.amount) }} / {{ item.remark || '-' }}</view>
-          <view class="asset-sub">结算时间：{{ dateText(item.settledAt) }}</view>
+          <view class="asset-sub">计入时间：{{ dateText(item.occurredAt) }} / 结算时间：{{ dateText(item.settledAt) }}</view>
         </view>
       </view>
       <view v-if="currentStoreId" class="asset-panel">
@@ -530,7 +540,7 @@ const leaseBonusForm = reactive({
   remark: ''
 });
 const maintenanceForm = reactive({
-  assetId: '',
+  assetIndex: -1,
   orderId: '',
   maintenanceTypeIndex: 0,
   responsibilityIndex: 0,
@@ -558,6 +568,9 @@ const lastFulfillmentNo = ref('');
 
 const canCreateOrder = computed(() => account.value?.permissions.includes('order.create') ?? false);
 const canOperateOrder = computed(() => account.value?.permissions.includes('order.operate') ?? false);
+const canOperateMaintenance = computed(() => Boolean(
+  account.value?.permissions.includes('maintenance.operate') || account.value?.permissions.includes('system.admin')
+));
 const canGrantSelectedOrderBonus = computed(() => {
   if (!selectedOrder.value) {
     return false;
@@ -589,6 +602,8 @@ const scopeText = computed(() => {
 const sparePartLabels = computed(() =>
   spareStocks.value.map((item) => `${item.partName} / 库存 ${item.stockQuantity}`)
 );
+const maintenanceAssetLabels = computed(() => assets.value.map(maintenanceAssetLabel));
+const selectedMaintenanceAsset = computed(() => maintenanceForm.assetIndex >= 0 ? assets.value[maintenanceForm.assetIndex] : undefined);
 
 const filteredOrders = computed(() => {
   const keyword = orderKeyword.value.trim().toLowerCase();
@@ -762,7 +777,8 @@ async function loadIncomeEntries() {
   try {
     const status = incomeStatusValues[incomeStatusIndex.value];
     const query = status ? `&status=${status}` : '';
-    incomeEntries.value = await request<SettlementIncomeEntry[]>(`/api/merchant/settlement/income/entries?storeId=${currentStoreId.value}${query}`);
+    const loadedEntries = await request<SettlementIncomeEntry[]>(`/api/merchant/settlement/income/entries?storeId=${currentStoreId.value}${query}`);
+    incomeEntries.value = loadedEntries.filter((item) => item.sourceType !== 'ORDER');
   } catch (error) {
     uni.showToast({ title: error instanceof Error ? error.message : '收益加载失败', icon: 'none' });
   } finally {
@@ -1186,9 +1202,11 @@ function fillNewAsset(assetId: number, assetType: Asset['assetType']) {
 }
 
 function prepareMaintenance(assetId: number) {
-  maintenanceForm.assetId = String(assetId);
-  maintenanceForm.orderId = selectedOrder.value ? String(selectedOrder.value.id) : '';
-  uni.showToast({ title: `已带入资产 ${assetId}`, icon: 'none' });
+  const assetIndex = assets.value.findIndex((item) => item.id === assetId);
+  maintenanceForm.assetIndex = assetIndex;
+  maintenanceForm.orderId = '';
+  const asset = assets.value[assetIndex];
+  uni.showToast({ title: asset ? `已选择 ${asset.serialNo}` : '未找到该资产', icon: 'none' });
 }
 
 function addMaintenancePart() {
@@ -1203,8 +1221,8 @@ async function submitMaintenance() {
   if (!currentStoreId.value) {
     return;
   }
-  if (!maintenanceForm.assetId) {
-    uni.showToast({ title: '请先选择资产', icon: 'none' });
+  if (!selectedMaintenanceAsset.value) {
+    uni.showToast({ title: '请先按车架号或资产编号选择车辆', icon: 'none' });
     return;
   }
   maintenanceSubmitting.value = true;
@@ -1212,7 +1230,7 @@ async function submitMaintenance() {
     await request('/api/merchant/maintenances', {
       method: 'POST',
       data: {
-        assetId: Number(maintenanceForm.assetId),
+        assetId: selectedMaintenanceAsset.value.id,
         storeId: currentStoreId.value,
         orderId: toOptionalNumber(maintenanceForm.orderId),
         maintenanceType: maintenanceTypeValues[maintenanceForm.maintenanceTypeIndex],
@@ -1241,7 +1259,7 @@ async function submitMaintenance() {
 }
 
 function resetMaintenanceForm() {
-  maintenanceForm.assetId = '';
+  maintenanceForm.assetIndex = -1;
   maintenanceForm.orderId = '';
   maintenanceForm.maintenanceTypeIndex = 0;
   maintenanceForm.responsibilityIndex = 0;
@@ -1253,6 +1271,10 @@ function resetMaintenanceForm() {
 
 function onMaintenanceTypeChange(event: { detail: { value: number } }) {
   maintenanceForm.maintenanceTypeIndex = Number(event.detail.value);
+}
+
+function onMaintenanceAssetChange(event: { detail: { value: number } }) {
+  maintenanceForm.assetIndex = Number(event.detail.value);
 }
 
 function onResponsibilityChange(event: { detail: { value: number } }) {
@@ -1281,6 +1303,27 @@ function assetTypeText(assetType: Asset['assetType']) {
   if (assetType === 'VEHICLE_FRAME') return '车架';
   if (assetType === 'BATTERY') return '电池';
   return '普通资产';
+}
+
+function maintenanceAssetLabel(asset: Asset) {
+  return `${asset.serialNo} / ${asset.assetCode} / ${asset.assetTypeName || assetTypeText(asset.assetType)} / ${statusText(asset.status)}`;
+}
+
+function maintenanceTypeText(value: string) {
+  return ({
+    REPAIR: '维修',
+    MAINTENANCE: '保养',
+    REPLACE_PART: '换件',
+    INSPECTION: '检测'
+  } as Record<string, string>)[value] || value;
+}
+
+function maintenanceStatusText(value: string) {
+  return ({
+    COMPLETED: '已完成',
+    PROCESSING: '处理中',
+    PENDING: '待处理'
+  } as Record<string, string>)[value] || value;
 }
 
 function collectionText(status: CollectionStatus) {
@@ -1318,7 +1361,8 @@ function billTypeText(value: string) {
 	    INITIAL: '首期账单',
 	    PERIODIC: '周期账单',
 	    RENEWAL: '续租账单',
-	    OVERDUE: '逾期账单'
+	    OVERDUE: '逾期账单',
+	    VOUCHER_RENT: '平台核销租金'
 	  };
   return map[value] || value;
 }
@@ -1363,6 +1407,15 @@ function incomeStatusText(value: SettlementIncomeEntry['entryStatus']) {
     PENDING: '待结算',
     SETTLED: '已结算',
     FROZEN: '已冻结'
+  };
+  return map[value] || value;
+}
+
+function incomeSourceText(value: SettlementIncomeEntry['sourceType']) {
+  const map: Record<SettlementIncomeEntry['sourceType'], string> = {
+    BILL: '实收账单',
+    EXTERNAL_ORDER: '补录订单',
+    ORDER: '历史整单预计'
   };
   return map[value] || value;
 }

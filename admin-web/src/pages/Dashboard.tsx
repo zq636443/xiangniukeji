@@ -120,10 +120,10 @@ export function Dashboard() {
     const periodCollected = netPayments(periodPayments) + sumNumbers(periodExternal.map((item) => item.verificationAmount));
     const previousCollected = netPayments(previousPayments) + sumNumbers(previousExternal.map((item) => item.verificationAmount));
     const platformIncome = sumNumbers(data.incomeEntries
-      .filter((item) => item.beneficiaryType === 'PLATFORM' && isInWindow(item.occurredAt, window.start, window.end))
+      .filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN' && item.beneficiaryType === 'PLATFORM' && isInWindow(item.occurredAt, window.start, window.end))
       .map((item) => item.amount));
     const previousPlatformIncome = sumNumbers(data.incomeEntries
-      .filter((item) => item.beneficiaryType === 'PLATFORM' && isInWindow(item.occurredAt, window.previousStart, window.previousEnd))
+      .filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN' && item.beneficiaryType === 'PLATFORM' && isInWindow(item.occurredAt, window.previousStart, window.previousEnd))
       .map((item) => item.amount));
     const dueBills = data.bills.filter((item) => isInWindow(item.dueAt, window.start, window.end) && item.billStatus !== 'CANCELLED');
     const previousDueBills = data.bills.filter((item) => isInWindow(item.dueAt, window.previousStart, window.previousEnd) && item.billStatus !== 'CANCELLED');

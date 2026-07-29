@@ -18,6 +18,7 @@ import com.xniu.rental.settlement.model.SettlementStatementLine;
 import com.xniu.rental.settlement.model.SettlementStatementLineType;
 import com.xniu.rental.settlement.model.SettlementStatementStatus;
 import com.xniu.rental.settlement.model.StatementBeneficiaryType;
+import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
 import com.xniu.rental.settlement.repository.SettlementStatementRepository;
 import java.math.BigDecimal;
@@ -43,20 +44,26 @@ public class SettlementStatementService {
     private static final DateTimeFormatter MONTH_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM");
 
     private final SettlementStatementRepository statementRepository;
+    private final SettlementIncomeRepository incomeRepository;
     private final SettlementRepository settlementRepository;
+    private final SettlementIncomeService settlementIncomeService;
     private final AssetFulfillmentRepository assetFulfillmentRepository;
     private final AssetRepository assetRepository;
     private final AuthorizationService authorizationService;
 
     public SettlementStatementService(
         SettlementStatementRepository statementRepository,
+        SettlementIncomeRepository incomeRepository,
         SettlementRepository settlementRepository,
+        SettlementIncomeService settlementIncomeService,
         AssetFulfillmentRepository assetFulfillmentRepository,
         AssetRepository assetRepository,
         AuthorizationService authorizationService
     ) {
         this.statementRepository = statementRepository;
+        this.incomeRepository = incomeRepository;
         this.settlementRepository = settlementRepository;
+        this.settlementIncomeService = settlementIncomeService;
         this.assetFulfillmentRepository = assetFulfillmentRepository;
         this.assetRepository = assetRepository;
         this.authorizationService = authorizationService;
@@ -72,6 +79,7 @@ public class SettlementStatementService {
         statementRepository.deleteDraftStatements(month);
 
         var range = monthRange(month);
+        settlementIncomeService.syncPaidBills(range.startAt(), range.endAt());
         var paidBillItems = statementRepository.listPaidBillItems(range.startAt(), range.endAt());
         var externalOrderItems = statementRepository.listExternalOrderItems(range.startAt(), range.endAt());
         var maintenanceCosts = statementRepository.listMaintenanceCosts(range.startAt(), range.endAt());
@@ -511,7 +519,16 @@ public class SettlementStatementService {
     @Transactional
     public SettlementStatementResponse updateStatus(Long id, String status) {
         authorizationService.requirePermission("settlement.write");
-        var updated = statementRepository.updateStatementStatus(id, parseStatus(status));
+        var targetStatus = parseStatus(status);
+        var updated = statementRepository.updateStatementStatus(id, targetStatus);
+        if (targetStatus == SettlementStatementStatus.PAID) {
+            incomeRepository.settleByStatement(
+                updated.id(),
+                updated.beneficiaryType(),
+                updated.beneficiaryId(),
+                updated.storeId()
+            );
+        }
         return toResponse(updated);
     }
 

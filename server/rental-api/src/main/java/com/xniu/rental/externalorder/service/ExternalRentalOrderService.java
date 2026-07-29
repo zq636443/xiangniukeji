@@ -36,6 +36,7 @@ import com.xniu.rental.product.model.StoreSkuPackage;
 import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
+import com.xniu.rental.settlement.model.IncomeSourceType;
 import com.xniu.rental.settlement.model.SnapshotSourceType;
 import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
@@ -234,7 +235,7 @@ public class ExternalRentalOrderService {
         if (settlementStatementRepository.hasLinesBySource(SnapshotSourceType.EXTERNAL_ORDER.name(), order.id())) {
             throw BusinessException.badRequest("补录订单已进入月结单，不能删除");
         }
-        if (settlementIncomeRepository.hasNonPendingBySource(SnapshotSourceType.EXTERNAL_ORDER, order.id())) {
+        if (settlementIncomeRepository.hasNonPendingBySource(IncomeSourceType.EXTERNAL_ORDER, order.id())) {
             throw BusinessException.badRequest("补录订单收益已结算或冻结，不能删除");
         }
 
@@ -243,7 +244,7 @@ public class ExternalRentalOrderService {
             releaseDeletedActiveAsset(order.batteryAssetId(), order, "删除补录订单释放第二资产");
         }
 
-        settlementIncomeRepository.deleteBySource(SnapshotSourceType.EXTERNAL_ORDER, order.id());
+        settlementIncomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, order.id());
         externalRentalOrderRepository.deleteLogs(order.id());
         externalRentalOrderRepository.delete(order.id());
         settlementRepository.deleteSnapshotsBySource(SnapshotSourceType.EXTERNAL_ORDER, order.id());
@@ -414,16 +415,15 @@ public class ExternalRentalOrderService {
     }
 
     private void validateRequestAssets(Long frameAssetId, Long batteryAssetId, ProductSku sku) {
-        if (frameAssetId != null) {
-            ensureAsset(frameAssetId);
-        }
+        var primaryAsset = frameAssetId == null ? null : ensureAsset(frameAssetId);
         if (batteryAssetId != null) {
             ensureAsset(batteryAssetId);
         }
+        var primaryAssetCoversBothSlots = primaryAsset != null && primaryAsset.assetType().isIntegratedVehicle();
         if (Boolean.TRUE.equals(sku.needFrameAsset()) && frameAssetId == null) {
             throw BusinessException.badRequest("当前商品链接必须绑定主资产");
         }
-        if (Boolean.TRUE.equals(sku.needBatteryAsset()) && batteryAssetId == null) {
+        if (Boolean.TRUE.equals(sku.needBatteryAsset()) && batteryAssetId == null && !primaryAssetCoversBothSlots) {
             throw BusinessException.badRequest("当前商品链接必须绑定第二资产");
         }
         if (!Boolean.TRUE.equals(sku.needFrameAsset()) && frameAssetId != null) {
