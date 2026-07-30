@@ -11,6 +11,24 @@ public record StoreSkuPackageRequest(
     Boolean autoRenewEnabled,
     String renewalUnit,
     Integer renewalValue,
-    BigDecimal renewalAmount
+    BigDecimal renewalAmount,
+    String renewalBillingMode,
+    BigDecimal renewalDailyAmount,
+    Boolean renewalDailyCapEnabled,
+    Integer renewalGraceHours,
+    BigDecimal overdueDailyAmount
 ) {
+    public StoreSkuPackageRequest(
+        Long packageId,
+        BigDecimal rentalAmount,
+        BigDecimal periodAmount,
+        BigDecimal depositAmount,
+        Boolean autoRenewEnabled,
+        String renewalUnit,
+        Integer renewalValue,
+        BigDecimal renewalAmount
+    ) {
+        this(packageId, rentalAmount, periodAmount, depositAmount, autoRenewEnabled, renewalUnit, renewalValue,
+            renewalAmount, "PERIOD", null, true, 0, null);
+    }
 }

@@ -70,7 +70,7 @@ export type ExternalRentalOrderLog = {
   externalOrderId: number;
   fromStatus?: ExternalRentalOrderStatus | null;
   toStatus: ExternalRentalOrderStatus;
-  operationType: 'CREATE' | 'EDIT' | 'COMPLETE' | 'TERMINATE';
+  operationType: 'CREATE' | 'EDIT' | 'RENEWAL_PRICING_ADJUSTMENT' | 'COMPLETE' | 'TERMINATE';
   operatorAccountId?: number | null;
   remark?: string | null;
   createdAt: string;
@@ -115,6 +115,15 @@ export type ExternalRentalOrder = {
   leaseValue: number;
   totalPeriods: number;
   leaseMultiplier: number;
+  autoRenewEnabled: boolean;
+  renewalUnit?: 'DAY' | 'MONTH' | null;
+  renewalValue?: number | null;
+  renewalAmount?: number | null;
+  renewalBillingMode: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number | null;
+  renewalDailyCapEnabled: boolean;
+  renewalGraceHours: number;
+  overdueDailyAmount?: number | null;
   rentStartedAt: string;
   expectedReturnAt?: string | null;
   finishedAt?: string | null;
@@ -127,6 +136,51 @@ export type ExternalRentalOrder = {
   createdAt: string;
   updatedAt: string;
   logs: ExternalRentalOrderLog[];
+};
+
+export type ExternalOrderPricingRevision = {
+  id: number;
+  externalOrderId: number;
+  batchNo?: string | null;
+  revisionStatus: 'PENDING_CUSTOMER_CONFIRMATION' | 'APPLIED' | 'CANCELLED';
+  requiresCustomerConfirmation: boolean;
+  previousRule: RenewalPricingRule;
+  newRule: RenewalPricingRule;
+  reason: string;
+  confirmationMethod?: 'WECHAT' | 'PHONE' | 'PAPER' | 'OTHER' | null;
+  confirmationReference?: string | null;
+  operatorAccountId?: number | null;
+  customerConfirmedAt?: string | null;
+  appliedAt?: string | null;
+  createdAt: string;
+};
+
+export type ExternalOrderPricingPreview = {
+  matchedCount: number;
+  eligibleCount: number;
+  unchangedCount: number;
+  immediateApplyCount: number;
+  confirmedApplyCount: number;
+  pendingConfirmationCount: number;
+  blockedPendingCount: number;
+  skippedInactiveCount: number;
+};
+
+export type ExternalOrderPricingBatchResult = {
+  batchNo: string;
+  matchedCount: number;
+  successCount: number;
+  pendingConfirmationCount: number;
+  unchangedCount: number;
+  skippedInactiveCount: number;
+  failedCount: number;
+  results: Array<{
+    externalOrderId: number;
+    recordNo: string;
+    success: boolean;
+    revisionStatus?: string | null;
+    message: string;
+  }>;
 };
 
 export type Employee = {
@@ -525,6 +579,11 @@ export type StoreSkuPackage = {
   renewalUnit?: 'DAY' | 'MONTH' | null;
   renewalValue?: number | null;
   renewalAmount?: number | null;
+  renewalBillingMode: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number | null;
+  renewalDailyCapEnabled: boolean;
+  renewalGraceHours: number;
+  overdueDailyAmount?: number | null;
   status: 'ENABLED' | 'DISABLED';
 };
 
@@ -833,6 +892,11 @@ export type RentalOrder = {
   renewalUnit?: 'DAY' | 'MONTH' | null;
   renewalValue?: number | null;
   renewalAmount?: number | null;
+  renewalBillingMode: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number | null;
+  renewalDailyCapEnabled: boolean;
+  renewalGraceHours: number;
+  overdueDailyAmount?: number | null;
   renewalCount: number;
   reviewBonusDays: number;
   campaignBonusDays: number;
@@ -868,6 +932,33 @@ export type OrderBatchImportResult = {
 };
 
 export type BillType = 'INITIAL' | 'PERIODIC' | 'RENEWAL' | 'OVERDUE' | 'VOUCHER_RENT';
+
+export type RenewalPricingRule = {
+  autoRenewEnabled: boolean;
+  renewalUnit?: 'DAY' | 'MONTH' | null;
+  renewalValue?: number | null;
+  renewalAmount?: number | null;
+  renewalBillingMode: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number | null;
+  renewalDailyCapEnabled: boolean;
+  renewalGraceHours: number;
+  overdueDailyAmount?: number | null;
+};
+
+export type OrderPricingRevision = {
+  id: number;
+  orderId: number;
+  revisionStatus: 'PENDING_CUSTOMER_CONFIRMATION' | 'APPLIED' | 'CANCELLED';
+  requiresCustomerConfirmation: boolean;
+  effectiveMode: 'NEXT_UNBILLED_RENEWAL';
+  previousRule: RenewalPricingRule;
+  newRule: RenewalPricingRule;
+  reason: string;
+  operatorAccountId?: number | null;
+  customerConfirmedAt?: string | null;
+  appliedAt?: string | null;
+  createdAt: string;
+};
 
 export type BillStatus =
   | 'PENDING_PAYMENT'
@@ -913,6 +1004,9 @@ export type RentalBill = {
   cancelledAt?: string | null;
   remark?: string | null;
   generatedBatchNo?: string | null;
+  renewalChargeMode?: 'PERIOD' | 'DAILY' | 'RETURN_DAILY' | null;
+  renewalDays?: number | null;
+  renewalUnitPrice?: number | null;
   createdAt: string;
   items: BillItem[];
   logs: BillLog[];
@@ -1208,7 +1302,7 @@ export type ContractTemplate = {
   id: number;
   templateCode: string;
   templateName: string;
-  contractType: 'RENTAL' | 'SALE';
+  contractType: 'RENTAL' | 'SALE' | 'RENEWAL_PRICE_AMENDMENT';
   versionNo: string;
   providerTemplateId?: string | null;
   content: string;
@@ -1225,7 +1319,10 @@ export type RentalContractRecord = {
   merchantId: number;
   storeId: number;
   templateId: number;
-  contractType: 'RENTAL' | 'SALE';
+  contractType: 'RENTAL' | 'SALE' | 'RENEWAL_PRICE_AMENDMENT';
+  contractKind: 'MAIN' | 'PRICE_AMENDMENT';
+  parentContractId?: number | null;
+  pricingRevisionId?: number | null;
   contractStatus: 'DRAFT' | 'SIGNING' | 'SIGNED' | 'ARCHIVED' | 'FAILED' | 'CANCELLED';
   provider?: string | null;
   externalFlowId?: string | null;

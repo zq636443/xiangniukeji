@@ -11,6 +11,7 @@ import com.xniu.rental.product.model.SkuType;
 import com.xniu.rental.product.model.StoreSku;
 import com.xniu.rental.product.model.StoreSkuPackage;
 import com.xniu.rental.product.model.StoreSkuStatus;
+import com.xniu.rental.pricing.model.RenewalBillingMode;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -330,8 +331,10 @@ public class ProductRepository {
             jdbcTemplate.update("""
                 INSERT INTO store_sku_package
                 (store_sku_id, package_id, rental_amount, period_amount, deposit_amount,
-                 auto_renew_enabled, renewal_unit, renewal_value, renewal_amount)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 auto_renew_enabled, renewal_unit, renewal_value, renewal_amount,
+                 renewal_billing_mode, renewal_daily_amount, renewal_daily_cap_enabled,
+                 renewal_grace_hours, overdue_daily_amount)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 storeSkuId,
                 row.packageId(),
@@ -341,7 +344,12 @@ public class ProductRepository {
                 row.autoRenewEnabled(),
                 row.renewalUnit() == null ? null : row.renewalUnit().name(),
                 row.renewalValue(),
-                row.renewalAmount()
+                row.renewalAmount(),
+                row.renewalBillingMode().name(),
+                row.renewalDailyAmount(),
+                row.renewalDailyCapEnabled(),
+                row.renewalGraceHours(),
+                row.overdueDailyAmount()
             );
         }
     }
@@ -358,7 +366,12 @@ public class ProductRepository {
         Boolean autoRenewEnabled,
         LeaseUnit renewalUnit,
         Integer renewalValue,
-        BigDecimal renewalAmount
+        BigDecimal renewalAmount,
+        RenewalBillingMode renewalBillingMode,
+        BigDecimal renewalDailyAmount,
+        Boolean renewalDailyCapEnabled,
+        Integer renewalGraceHours,
+        BigDecimal overdueDailyAmount
     ) {
     }
 
@@ -449,6 +462,11 @@ public class ProductRepository {
                 nullableLeaseUnit(rs, "renewal_unit"),
                 getNullableInt(rs, "renewal_value"),
                 rs.getBigDecimal("renewal_amount"),
+                RenewalBillingMode.valueOf(rs.getString("renewal_billing_mode")),
+                rs.getBigDecimal("renewal_daily_amount"),
+                rs.getBoolean("renewal_daily_cap_enabled"),
+                rs.getInt("renewal_grace_hours"),
+                rs.getBigDecimal("overdue_daily_amount"),
                 ProductStatus.valueOf(rs.getString("status"))
             );
         }

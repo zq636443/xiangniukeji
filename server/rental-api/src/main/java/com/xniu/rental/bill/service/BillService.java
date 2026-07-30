@@ -20,6 +20,8 @@ import com.xniu.rental.bill.repository.BillRepository;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.order.model.RentalOrder;
 import com.xniu.rental.order.repository.OrderRepository;
+import com.xniu.rental.pricing.model.RenewalChargeMode;
+import com.xniu.rental.pricing.service.RenewalPricingCalculator;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -35,11 +37,18 @@ public class BillService {
     private final BillRepository billRepository;
     private final OrderRepository orderRepository;
     private final AuthorizationService authorizationService;
+    private final RenewalPricingCalculator renewalPricingCalculator;
 
-    public BillService(BillRepository billRepository, OrderRepository orderRepository, AuthorizationService authorizationService) {
+    public BillService(
+        BillRepository billRepository,
+        OrderRepository orderRepository,
+        AuthorizationService authorizationService,
+        RenewalPricingCalculator renewalPricingCalculator
+    ) {
         this.billRepository = billRepository;
         this.orderRepository = orderRepository;
         this.authorizationService = authorizationService;
+        this.renewalPricingCalculator = renewalPricingCalculator;
     }
 
     public List<BillResponse> listBills(String status, Long orderId, Long storeId) {
@@ -88,7 +97,14 @@ public class BillService {
         return switch (billType) {
             case INITIAL -> generateInitial(order, request.dueAt(), request.remark());
             case PERIODIC -> generatePeriodic(order, request.periodNo(), request.dueAt(), request.remark());
-            case RENEWAL -> generateRenewal(order, request.periodNo(), request.dueAt(), request.remark());
+            case RENEWAL -> generateRenewal(
+                order,
+                request.periodNo(),
+                request.renewalChargeMode(),
+                request.renewalDays(),
+                request.dueAt(),
+                request.remark()
+            );
             case OVERDUE -> generateOverdue(order, request.periodNo(), request.overdueAmount(), request.dueAt(), request.remark());
             case VOUCHER_RENT -> throw BusinessException.badRequest("平台核销租金账单由核销流程自动生成");
         };
@@ -186,7 +202,14 @@ public class BillService {
         return new BillGenerationResultResponse(toBatchResponse(batch), created.stream().map(this::toResponse).toList());
     }
 
-    private BillGenerationResultResponse generateRenewal(RentalOrder order, Integer requestedPeriodNo, LocalDateTime dueAt, String remark) {
+    private BillGenerationResultResponse generateRenewal(
+        RentalOrder order,
+        Integer requestedPeriodNo,
+        String requestedChargeMode,
+        Integer requestedDays,
+        LocalDateTime dueAt,
+        String remark
+    ) {
         if (!Boolean.TRUE.equals(order.autoRenewEnabled())) {
             throw BusinessException.badRequest("当前订单未开启自动续租");
         }
@@ -198,14 +221,125 @@ public class BillService {
         var existing = billRepository.findExisting(order.id(), BillType.RENEWAL, periodNo);
         var created = new ArrayList<RentalBill>();
         if (existing.isEmpty()) {
-            var payableAmount = order.renewalAmount().setScale(2, RoundingMode.HALF_UP);
-            var bill = createBill(order, BillType.RENEWAL, periodNo, dueAt == null ? LocalDateTime.now() : dueAt, payableAmount, BigDecimal.ZERO, defaultRemark(remark, "生成续租账单"), batchNo);
-            billRepository.addItem(bill.id(), BillItemType.RENEWAL_RENT, "第 " + periodNo + " 期续租租金", payableAmount);
+            var chargeMode = parseRenewalChargeMode(requestedChargeMode);
+            var renewalDays = chargeMode == RenewalChargeMode.DAILY
+                ? requireRenewalDays(requestedDays)
+                : renewalPricingCalculator.periodDays(order);
+            var unitPrice = chargeMode == RenewalChargeMode.DAILY ? order.renewalDailyAmount() : order.renewalAmount();
+            var payableAmount = chargeMode == RenewalChargeMode.DAILY
+                ? renewalPricingCalculator.quoteDaily(order, renewalDays, false).amount()
+                : order.renewalAmount().setScale(2, RoundingMode.HALF_UP);
+            var bill = createRenewalBill(
+                order,
+                periodNo,
+                dueAt == null ? LocalDateTime.now() : dueAt,
+                payableAmount,
+                defaultRemark(remark, "生成续租账单"),
+                batchNo,
+                chargeMode,
+                renewalDays,
+                unitPrice
+            );
+            var itemName = chargeMode == RenewalChargeMode.DAILY
+                ? "按日续租 " + renewalDays + " 天"
+                : "第 " + periodNo + " 期续租租金";
+            billRepository.addItem(bill.id(), BillItemType.RENEWAL_RENT, itemName, payableAmount);
             billRepository.addLog(bill.id(), null, BillStatus.PENDING_PAYMENT, BillOperationType.GENERATE, currentAccountId(), defaultRemark(remark, "生成续租账单"));
             created.add(bill);
         }
         var batch = billRepository.createBatch(batchNo, BillGenerationType.RENEWAL, order.id(), created.size(), defaultRemark(remark, "生成续租账单"));
         return new BillGenerationResultResponse(toBatchResponse(batch), created.stream().map(this::toResponse).toList());
+    }
+
+    @Transactional
+    public RentalBill generateReturnDailyAccrual(RentalOrder order, LocalDateTime returnedAt, String remark) {
+        if (!"DAILY_CAPPED".equals(order.renewalBillingMode()) || order.expectedReturnAt() == null) {
+            return null;
+        }
+        var days = renewalPricingCalculator.elapsedBillableDays(order, returnedAt);
+        if (days <= 0) {
+            return null;
+        }
+        var quote = renewalPricingCalculator.quoteDaily(order, days, true);
+        var openBills = billRepository.listOpenBillsByOrderAndType(order.id(), BillType.RENEWAL);
+        var alreadyBilledDays = openBills.stream()
+            .mapToInt(bill -> coveredRenewalDays(order, bill))
+            .sum();
+        var remainingDays = Math.max(days - alreadyBilledDays, 0);
+        var coveredDays = Math.min(alreadyBilledDays, days);
+        var coveredAmount = coveredDays == 0
+            ? BigDecimal.ZERO
+            : renewalPricingCalculator.quoteDaily(order, coveredDays, true).amount();
+        var remainingAmount = quote.amount().subtract(coveredAmount).setScale(2, RoundingMode.HALF_UP);
+        if (remainingDays <= 0 || remainingAmount.signum() <= 0) {
+            return openBills.isEmpty() ? null : openBills.getLast();
+        }
+        var periodNo = nextRenewalPeriodNo(order);
+        var batchNo = nextBatchNo();
+        var bill = createRenewalBill(
+            order,
+            periodNo,
+            returnedAt,
+            remainingAmount,
+            defaultRemark(remark, "归还时结算按日续租费"),
+            batchNo,
+            RenewalChargeMode.RETURN_DAILY,
+            remainingDays,
+            quote.unitPrice()
+        );
+        billRepository.addItem(
+            bill.id(),
+            BillItemType.RENEWAL_RENT,
+            alreadyBilledDays > 0
+                ? "归还结算补收 " + remainingDays + " 天（累计使用 " + days + " 天）"
+                : "到期后按日使用 " + remainingDays + " 天",
+            remainingAmount
+        );
+        billRepository.addLog(bill.id(), null, BillStatus.PENDING_PAYMENT, BillOperationType.GENERATE, currentAccountId(), defaultRemark(remark, "归还时结算按日续租费"));
+        billRepository.createBatch(batchNo, BillGenerationType.RENEWAL, order.id(), 1, defaultRemark(remark, "归还按日续租结算"));
+        return bill;
+    }
+
+    private int coveredRenewalDays(RentalOrder order, RentalBill bill) {
+        if (bill.renewalDays() != null && bill.renewalDays() > 0) {
+            return bill.renewalDays();
+        }
+        if (bill.renewalChargeMode() == null || RenewalChargeMode.PERIOD.name().equals(bill.renewalChargeMode())) {
+            return renewalPricingCalculator.periodDays(order);
+        }
+        return 0;
+    }
+
+    private RentalBill createRenewalBill(
+        RentalOrder order,
+        Integer periodNo,
+        LocalDateTime dueAt,
+        BigDecimal payableAmount,
+        String remark,
+        String batchNo,
+        RenewalChargeMode chargeMode,
+        Integer renewalDays,
+        BigDecimal unitPrice
+    ) {
+        return billRepository.createBill(new BillRepository.BillCreateRow(
+            nextBillNo(),
+            order.id(),
+            order.userAccountId(),
+            order.merchantId(),
+            order.storeId(),
+            BillType.RENEWAL,
+            periodNo,
+            BillStatus.PENDING_PAYMENT,
+            dueAt,
+            payableAmount,
+            BigDecimal.ZERO,
+            BigDecimal.ZERO,
+            remark,
+            batchNo,
+            chargeMode.name(),
+            renewalDays,
+            unitPrice
+        ));
     }
 
     private CreatedBill createInitialIfAbsent(RentalOrder order, LocalDateTime dueAt, String remark, String batchNo) {
@@ -329,6 +463,9 @@ public class BillService {
             bill.cancelledAt(),
             bill.remark(),
             bill.generatedBatchNo(),
+            bill.renewalChargeMode(),
+            bill.renewalDays(),
+            bill.renewalUnitPrice(),
             bill.createdAt(),
             billRepository.listItems(bill.id()).stream().map(this::toItemResponse).toList(),
             billRepository.listLogs(bill.id()).stream().map(this::toLogResponse).toList()
@@ -373,6 +510,28 @@ public class BillService {
         } catch (Exception exception) {
             throw BusinessException.badRequest("不支持的账单状态");
         }
+    }
+
+    private RenewalChargeMode parseRenewalChargeMode(String value) {
+        if (value == null || value.isBlank()) {
+            return RenewalChargeMode.PERIOD;
+        }
+        try {
+            var mode = RenewalChargeMode.valueOf(value);
+            if (mode == RenewalChargeMode.RETURN_DAILY) {
+                throw BusinessException.badRequest("归还按日结算只能由归还流程生成");
+            }
+            return mode;
+        } catch (IllegalArgumentException exception) {
+            throw BusinessException.badRequest("不支持的续租计费方式");
+        }
+    }
+
+    private int requireRenewalDays(Integer value) {
+        if (value == null || value <= 0 || value > 3650) {
+            throw BusinessException.badRequest("按日续租天数必须在 1 到 3650 天之间");
+        }
+        return value;
     }
 
     private Long currentAccountId() {

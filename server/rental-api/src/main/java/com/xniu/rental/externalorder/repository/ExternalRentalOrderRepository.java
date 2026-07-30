@@ -5,6 +5,8 @@ import com.xniu.rental.externalorder.model.ExternalOrderSourcePlatform;
 import com.xniu.rental.externalorder.model.ExternalRentalOrder;
 import com.xniu.rental.externalorder.model.ExternalRentalOrderLog;
 import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
+import com.xniu.rental.externalorder.dto.ExternalOrderPricingFilterRequest;
+import com.xniu.rental.pricing.model.RenewalPricingRule;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -30,7 +32,19 @@ public class ExternalRentalOrderRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public List<ExternalRentalOrderView> list(ExternalRentalOrderStatus status, Long merchantId, Long storeId, ExternalOrderSourcePlatform sourcePlatform, String keyword) {
+    public List<ExternalRentalOrderView> list(
+        ExternalRentalOrderStatus status,
+        Long merchantId,
+        Long storeId,
+        ExternalOrderSourcePlatform sourcePlatform,
+        Long storeSkuId,
+        Long packageId,
+        LocalDateTime rentStartedFrom,
+        LocalDateTime rentStartedTo,
+        LocalDateTime expectedReturnFrom,
+        LocalDateTime expectedReturnTo,
+        String keyword
+    ) {
         var sql = new StringBuilder("""
             SELECT eo.*,
                    m.merchant_name,
@@ -69,6 +83,30 @@ public class ExternalRentalOrderRepository {
             sql.append(" AND eo.source_platform = ?");
             params.add(sourcePlatform.name());
         }
+        if (storeSkuId != null) {
+            sql.append(" AND eo.store_sku_id = ?");
+            params.add(storeSkuId);
+        }
+        if (packageId != null) {
+            sql.append(" AND eo.package_id = ?");
+            params.add(packageId);
+        }
+        if (rentStartedFrom != null) {
+            sql.append(" AND eo.rent_started_at >= ?");
+            params.add(rentStartedFrom);
+        }
+        if (rentStartedTo != null) {
+            sql.append(" AND eo.rent_started_at <= ?");
+            params.add(rentStartedTo);
+        }
+        if (expectedReturnFrom != null) {
+            sql.append(" AND eo.expected_return_at >= ?");
+            params.add(expectedReturnFrom);
+        }
+        if (expectedReturnTo != null) {
+            sql.append(" AND eo.expected_return_at <= ?");
+            params.add(expectedReturnTo);
+        }
         if (keyword != null && !keyword.isBlank()) {
             sql.append("""
                  AND (
@@ -90,6 +128,80 @@ public class ExternalRentalOrderRepository {
         }
         sql.append(" ORDER BY eo.id DESC");
         return jdbcTemplate.query(sql.toString(), viewMapper, params.toArray());
+    }
+
+    public List<ExternalRentalOrder> listForPricing(ExternalOrderPricingFilterRequest filter) {
+        var sql = new StringBuilder("""
+            SELECT eo.*
+            FROM external_rental_order eo
+            LEFT JOIN asset_item fa ON fa.id = eo.frame_asset_id
+            LEFT JOIN asset_item ba ON ba.id = eo.battery_asset_id
+            WHERE 1 = 1
+            """);
+        var params = new ArrayList<Object>();
+        if (filter.orderIds() != null && !filter.orderIds().isEmpty()) {
+            sql.append(" AND eo.id IN (");
+            sql.append(String.join(",", java.util.Collections.nCopies(filter.orderIds().size(), "?")));
+            sql.append(")");
+            params.addAll(filter.orderIds());
+        }
+        if (filter.storeId() != null) {
+            sql.append(" AND eo.store_id = ?");
+            params.add(filter.storeId());
+        }
+        if (filter.status() != null && !filter.status().isBlank()) {
+            sql.append(" AND eo.order_status = ?");
+            params.add(filter.status());
+        }
+        if (filter.sourcePlatform() != null && !filter.sourcePlatform().isBlank()) {
+            sql.append(" AND eo.source_platform = ?");
+            params.add(filter.sourcePlatform());
+        }
+        if (filter.storeSkuId() != null) {
+            sql.append(" AND eo.store_sku_id = ?");
+            params.add(filter.storeSkuId());
+        }
+        if (filter.packageId() != null) {
+            sql.append(" AND eo.package_id = ?");
+            params.add(filter.packageId());
+        }
+        if (filter.rentStartedFrom() != null) {
+            sql.append(" AND eo.rent_started_at >= ?");
+            params.add(filter.rentStartedFrom());
+        }
+        if (filter.rentStartedTo() != null) {
+            sql.append(" AND eo.rent_started_at <= ?");
+            params.add(filter.rentStartedTo());
+        }
+        if (filter.expectedReturnFrom() != null) {
+            sql.append(" AND eo.expected_return_at >= ?");
+            params.add(filter.expectedReturnFrom());
+        }
+        if (filter.expectedReturnTo() != null) {
+            sql.append(" AND eo.expected_return_at <= ?");
+            params.add(filter.expectedReturnTo());
+        }
+        if (filter.keyword() != null && !filter.keyword().isBlank()) {
+            sql.append("""
+                 AND (
+                    eo.record_no LIKE ?
+                    OR eo.external_order_no LIKE ?
+                    OR eo.customer_name LIKE ?
+                    OR eo.customer_phone LIKE ?
+                    OR fa.serial_no LIKE ?
+                    OR ba.serial_no LIKE ?
+                 )
+                """);
+            var like = "%" + filter.keyword().trim() + "%";
+            params.add(like);
+            params.add(like);
+            params.add(like);
+            params.add(like);
+            params.add(like);
+            params.add(like);
+        }
+        sql.append(" ORDER BY eo.id");
+        return jdbcTemplate.query(sql.toString(), orderMapper, params.toArray());
     }
 
     public Optional<ExternalRentalOrder> findById(Long id) {
@@ -190,10 +302,12 @@ public class ExternalRentalOrderRepository {
             var statement = connection.prepareStatement("""
                 INSERT INTO external_rental_order
                 (record_no, source_platform, external_order_no, merchant_id, store_id, store_sku_id, sku_id, package_id,
-                 customer_name, customer_phone, frame_asset_id, battery_asset_id, order_status,
+                customer_name, customer_phone, frame_asset_id, battery_asset_id, order_status,
                  external_rental_amount, verification_amount, sign_fee_amount, deposit_amount, lease_unit, lease_value, total_periods, lease_multiplier,
+                 auto_renew_enabled, renewal_unit, renewal_value, renewal_amount, renewal_billing_mode,
+                 renewal_daily_amount, renewal_daily_cap_enabled, renewal_grace_hours, overdue_daily_amount,
                  rent_started_at, expected_return_at, remark, created_by_account_id, updated_by_account_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.recordNo());
             statement.setString(2, row.sourcePlatform().name());
@@ -216,11 +330,20 @@ public class ExternalRentalOrderRepository {
             statement.setInt(19, row.leaseValue());
             statement.setInt(20, row.totalPeriods());
             statement.setInt(21, row.leaseMultiplier());
-            statement.setObject(22, row.rentStartedAt());
-            statement.setObject(23, row.expectedReturnAt());
-            statement.setString(24, row.remark());
-            setNullableLong(statement, 25, row.createdByAccountId());
-            setNullableLong(statement, 26, row.updatedByAccountId());
+            statement.setBoolean(22, Boolean.TRUE.equals(row.autoRenewEnabled()));
+            statement.setString(23, row.renewalUnit());
+            if (row.renewalValue() == null) statement.setObject(24, null); else statement.setInt(24, row.renewalValue());
+            statement.setBigDecimal(25, row.renewalAmount());
+            statement.setString(26, row.renewalBillingMode());
+            statement.setBigDecimal(27, row.renewalDailyAmount());
+            statement.setBoolean(28, Boolean.TRUE.equals(row.renewalDailyCapEnabled()));
+            statement.setInt(29, row.renewalGraceHours() == null ? 0 : row.renewalGraceHours());
+            statement.setBigDecimal(30, row.overdueDailyAmount());
+            statement.setObject(31, row.rentStartedAt());
+            statement.setObject(32, row.expectedReturnAt());
+            statement.setString(33, row.remark());
+            setNullableLong(statement, 34, row.createdByAccountId());
+            setNullableLong(statement, 35, row.updatedByAccountId());
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
@@ -262,6 +385,15 @@ public class ExternalRentalOrderRepository {
                 lease_value = ?,
                 total_periods = ?,
                 lease_multiplier = ?,
+                auto_renew_enabled = ?,
+                renewal_unit = ?,
+                renewal_value = ?,
+                renewal_amount = ?,
+                renewal_billing_mode = ?,
+                renewal_daily_amount = ?,
+                renewal_daily_cap_enabled = ?,
+                renewal_grace_hours = ?,
+                overdue_daily_amount = ?,
                 rent_started_at = ?,
                 expected_return_at = ?,
                 remark = ?,
@@ -271,10 +403,28 @@ public class ExternalRentalOrderRepository {
             row.sourcePlatform().name(), row.externalOrderNo(), row.merchantId(), row.storeId(), row.storeSkuId(),
             row.skuId(), row.packageId(), row.customerName(), row.customerPhone(), row.frameAssetId(), row.batteryAssetId(),
             row.externalRentalAmount(), row.verificationAmount(), row.signFeeAmount(), row.depositAmount(), row.leaseUnit(),
-            row.leaseValue(), row.totalPeriods(), row.leaseMultiplier(), row.rentStartedAt(), row.expectedReturnAt(), row.remark(),
+            row.leaseValue(), row.totalPeriods(), row.leaseMultiplier(), row.autoRenewEnabled(), row.renewalUnit(),
+            row.renewalValue(), row.renewalAmount(), row.renewalBillingMode(), row.renewalDailyAmount(),
+            row.renewalDailyCapEnabled(), row.renewalGraceHours(), row.overdueDailyAmount(), row.rentStartedAt(),
+            row.expectedReturnAt(), row.remark(),
             row.updatedByAccountId(), row.id()
         );
         return findById(row.id()).orElseThrow();
+    }
+
+    public ExternalRentalOrder updateRenewalPricing(Long id, RenewalPricingRule rule, Long updatedByAccountId) {
+        jdbcTemplate.update("""
+            UPDATE external_rental_order
+            SET auto_renew_enabled = ?, renewal_unit = ?, renewal_value = ?, renewal_amount = ?,
+                renewal_billing_mode = ?, renewal_daily_amount = ?, renewal_daily_cap_enabled = ?,
+                renewal_grace_hours = ?, overdue_daily_amount = ?, updated_by_account_id = ?
+            WHERE id = ?
+            """,
+            rule.autoRenewEnabled(), rule.renewalUnit(), rule.renewalValue(), rule.renewalAmount(),
+            rule.renewalBillingMode().name(), rule.renewalDailyAmount(), rule.renewalDailyCapEnabled(),
+            rule.renewalGraceHours(), rule.overdueDailyAmount(), updatedByAccountId, id
+        );
+        return findById(id).orElseThrow();
     }
 
     public ExternalRentalOrder updateSettlementSnapshot(Long id, Long settlementSnapshotId) {
@@ -308,6 +458,7 @@ public class ExternalRentalOrderRepository {
     }
 
     public void delete(Long id) {
+        jdbcTemplate.update("DELETE FROM external_order_pricing_revision WHERE external_order_id = ?", id);
         jdbcTemplate.update("DELETE FROM external_rental_order WHERE id = ?", id);
     }
 
@@ -321,6 +472,11 @@ public class ExternalRentalOrderRepository {
 
     private static Long getNullableLong(ResultSet rs, String column) throws SQLException {
         var value = rs.getLong(column);
+        return rs.wasNull() ? null : value;
+    }
+
+    private static Integer getNullableInt(ResultSet rs, String column) throws SQLException {
+        var value = rs.getInt(column);
         return rs.wasNull() ? null : value;
     }
 
@@ -351,6 +507,15 @@ public class ExternalRentalOrderRepository {
                 rs.getInt("lease_value"),
                 rs.getInt("total_periods"),
                 rs.getInt("lease_multiplier"),
+                rs.getBoolean("auto_renew_enabled"),
+                rs.getString("renewal_unit"),
+                getNullableInt(rs, "renewal_value"),
+                rs.getBigDecimal("renewal_amount"),
+                rs.getString("renewal_billing_mode"),
+                rs.getBigDecimal("renewal_daily_amount"),
+                rs.getBoolean("renewal_daily_cap_enabled"),
+                rs.getInt("renewal_grace_hours"),
+                rs.getBigDecimal("overdue_daily_amount"),
                 rs.getObject("rent_started_at", LocalDateTime.class),
                 rs.getObject("expected_return_at", LocalDateTime.class),
                 rs.getObject("finished_at", LocalDateTime.class),
@@ -421,6 +586,15 @@ public class ExternalRentalOrderRepository {
         Integer leaseValue,
         Integer totalPeriods,
         Integer leaseMultiplier,
+        Boolean autoRenewEnabled,
+        String renewalUnit,
+        Integer renewalValue,
+        BigDecimal renewalAmount,
+        String renewalBillingMode,
+        BigDecimal renewalDailyAmount,
+        Boolean renewalDailyCapEnabled,
+        Integer renewalGraceHours,
+        BigDecimal overdueDailyAmount,
         LocalDateTime rentStartedAt,
         LocalDateTime expectedReturnAt,
         String remark,
@@ -450,6 +624,15 @@ public class ExternalRentalOrderRepository {
         Integer leaseValue,
         Integer totalPeriods,
         Integer leaseMultiplier,
+        Boolean autoRenewEnabled,
+        String renewalUnit,
+        Integer renewalValue,
+        BigDecimal renewalAmount,
+        String renewalBillingMode,
+        BigDecimal renewalDailyAmount,
+        Boolean renewalDailyCapEnabled,
+        Integer renewalGraceHours,
+        BigDecimal overdueDailyAmount,
         LocalDateTime rentStartedAt,
         LocalDateTime expectedReturnAt,
         String remark,

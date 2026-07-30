@@ -917,11 +917,30 @@ function leaseText(unit: 'DAY' | 'MONTH', value: number) {
   return `${value}${unit === 'DAY' ? '天' : '个月'}`;
 }
 
-function renewalText(item: { autoRenewEnabled?: boolean; renewalUnit?: 'DAY' | 'MONTH' | null; renewalValue?: number | null; renewalAmount?: number | null }) {
+function renewalText(item: {
+  autoRenewEnabled?: boolean;
+  renewalUnit?: 'DAY' | 'MONTH' | null;
+  renewalValue?: number | null;
+  renewalAmount?: number | null;
+  renewalBillingMode?: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number | null;
+  renewalDailyCapEnabled?: boolean;
+  renewalGraceHours?: number | null;
+  overdueDailyAmount?: number | null;
+}) {
   if (!item.autoRenewEnabled) {
     return '到期未还不自动续租';
   }
-  return `到期未还按 ${money(item.renewalAmount || 0)} / ${leaseText(item.renewalUnit || 'MONTH', item.renewalValue || 1)} 自动续租`;
+  const periodText = `${money(item.renewalAmount || 0)} / ${leaseText(item.renewalUnit || 'MONTH', item.renewalValue || 1)}`;
+  if (item.renewalBillingMode !== 'DAILY_CAPPED') {
+    return `到期未还按 ${periodText} 自动续租`;
+  }
+  const capText = item.renewalDailyCapEnabled
+    ? `，每 ${leaseText(item.renewalUnit || 'MONTH', item.renewalValue || 1)}最高 ${money(item.renewalAmount || 0)}`
+    : '，不设整期封顶';
+  const overdueText = item.overdueDailyAmount != null ? `，未申请续租逾期按 ${money(item.overdueDailyAmount)}/天` : '';
+  const graceText = item.renewalGraceHours ? `，宽限 ${item.renewalGraceHours} 小时` : '';
+  return `按日续租 ${money(item.renewalDailyAmount || 0)}/天${capText}${overdueText}${graceText}；整期参考价 ${periodText}`;
 }
 
 function saleModeText(value: string) {

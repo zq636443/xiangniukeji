@@ -13,6 +13,9 @@ import com.xniu.rental.order.model.OrderOperationType;
 import com.xniu.rental.order.model.OrderStatus;
 import com.xniu.rental.order.model.RentalOrder;
 import com.xniu.rental.order.repository.OrderRepository;
+import com.xniu.rental.pricing.model.RenewalBillingMode;
+import com.xniu.rental.pricing.model.RenewalChargeMode;
+import com.xniu.rental.pricing.service.RenewalPricingCalculator;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -27,11 +30,18 @@ public class OrderRenewalService {
     private final OrderRepository orderRepository;
     private final BillRepository billRepository;
     private final AuthorizationService authorizationService;
+    private final RenewalPricingCalculator renewalPricingCalculator;
 
-    public OrderRenewalService(OrderRepository orderRepository, BillRepository billRepository, AuthorizationService authorizationService) {
+    public OrderRenewalService(
+        OrderRepository orderRepository,
+        BillRepository billRepository,
+        AuthorizationService authorizationService,
+        RenewalPricingCalculator renewalPricingCalculator
+    ) {
         this.orderRepository = orderRepository;
         this.billRepository = billRepository;
         this.authorizationService = authorizationService;
+        this.renewalPricingCalculator = renewalPricingCalculator;
     }
 
     @Transactional
@@ -68,7 +78,7 @@ public class OrderRenewalService {
         if (order == null || order.returnedAt() != null || isTerminal(order.orderStatus()) || !hasValidRenewalRule(order)) {
             return;
         }
-        var nextExpectedReturnAt = nextExpectedReturnAt(order);
+        var nextExpectedReturnAt = nextExpectedReturnAt(order, bill);
         var hasOtherDueUnpaidBills = billRepository.hasDueUnpaidBills(order.id(), LocalDateTime.now());
         var updated = orderRepository.applyRenewalSuccess(order.id(), nextExpectedReturnAt, !hasOtherDueUnpaidBills);
         orderRepository.addLog(
@@ -85,12 +95,30 @@ public class OrderRenewalService {
         if (!hasValidRenewalRule(order) || order.expectedReturnAt() == null || order.expectedReturnAt().isAfter(now)) {
             return false;
         }
+        var billingMode = parseBillingMode(order.renewalBillingMode());
+        var renewalDays = renewalPricingCalculator.periodDays(order);
+        var chargeMode = RenewalChargeMode.PERIOD;
+        var unitPrice = order.renewalAmount();
+        var payableAmount = order.renewalAmount().setScale(2, RoundingMode.HALF_UP);
+        if (billingMode == RenewalBillingMode.DAILY_CAPPED) {
+            var elapsedDays = renewalPricingCalculator.elapsedBillableDays(order, now);
+            if (elapsedDays <= 0) {
+                return false;
+            }
+            markOverdueIfNeeded(order);
+            if (elapsedDays < renewalDays) {
+                return false;
+            }
+            var quote = renewalPricingCalculator.quoteDaily(order, renewalDays, true);
+            chargeMode = RenewalChargeMode.DAILY;
+            unitPrice = quote.unitPrice();
+            payableAmount = quote.amount();
+        }
         if (billRepository.findOpenBillByOrderAndType(order.id(), BillType.RENEWAL).isPresent()) {
             markOverdueIfNeeded(order);
             return false;
         }
         var periodNo = nextRenewalPeriodNo(order);
-        var payableAmount = order.renewalAmount().setScale(2, RoundingMode.HALF_UP);
         var bill = billRepository.createBill(new BillRepository.BillCreateRow(
             nextBillNo(),
             order.id(),
@@ -105,9 +133,15 @@ public class OrderRenewalService {
             java.math.BigDecimal.ZERO,
             java.math.BigDecimal.ZERO,
             defaultRemark(remark, "自动续租账单"),
-            batchNo
+            batchNo,
+            chargeMode.name(),
+            renewalDays,
+            unitPrice
         ));
-        billRepository.addItem(bill.id(), BillItemType.RENEWAL_RENT, "第 " + periodNo + " 期续租租金", payableAmount);
+        var itemName = chargeMode == RenewalChargeMode.DAILY
+            ? "按日累计达到整期封顶 " + renewalDays + " 天"
+            : "第 " + periodNo + " 期续租租金";
+        billRepository.addItem(bill.id(), BillItemType.RENEWAL_RENT, itemName, payableAmount);
         billRepository.addLog(bill.id(), null, BillStatus.PENDING_PAYMENT, BillOperationType.GENERATE, null, defaultRemark(remark, "自动续租账单"));
         markOverdueIfNeeded(order);
         return true;
@@ -133,15 +167,28 @@ public class OrderRenewalService {
             && order.renewalValue() != null
             && order.renewalValue() > 0
             && order.renewalAmount() != null
-            && order.renewalAmount().signum() > 0;
+            && order.renewalAmount().signum() > 0
+            && (parseBillingMode(order.renewalBillingMode()) != RenewalBillingMode.DAILY_CAPPED
+                || (order.renewalDailyAmount() != null && order.renewalDailyAmount().signum() > 0));
     }
 
-    private LocalDateTime nextExpectedReturnAt(RentalOrder order) {
+    private LocalDateTime nextExpectedReturnAt(RentalOrder order, RentalBill bill) {
         var base = order.expectedReturnAt() == null ? LocalDateTime.now() : order.expectedReturnAt();
+        if (bill.renewalDays() != null && bill.renewalDays() > 0) {
+            return base.plusDays(bill.renewalDays());
+        }
         if ("MONTH".equals(order.renewalUnit())) {
             return base.plusDays(30L * order.renewalValue());
         }
         return base.plusDays(order.renewalValue());
+    }
+
+    private RenewalBillingMode parseBillingMode(String value) {
+        try {
+            return value == null || value.isBlank() ? RenewalBillingMode.PERIOD : RenewalBillingMode.valueOf(value);
+        } catch (IllegalArgumentException exception) {
+            return RenewalBillingMode.PERIOD;
+        }
     }
 
     private int nextRenewalPeriodNo(RentalOrder order) {

@@ -29,6 +29,7 @@ import com.xniu.rental.product.model.SignFeePayer;
 import com.xniu.rental.product.model.SkuType;
 import com.xniu.rental.product.model.StoreSku;
 import com.xniu.rental.product.model.StoreSkuStatus;
+import com.xniu.rental.pricing.model.RenewalBillingMode;
 import com.xniu.rental.product.repository.ProductRepository;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -398,12 +399,23 @@ public class ProductService {
                 : parseLeaseUnit(item.renewalUnit());
             var renewalValue = item.renewalValue() == null ? defaultRenewalValue(template) : item.renewalValue();
             var renewalAmount = item.renewalAmount() == null ? item.periodAmount() : item.renewalAmount();
+            var renewalBillingMode = parseRenewalBillingMode(item.renewalBillingMode());
             if (renewalUnit == null || renewalValue <= 0) {
                 throw BusinessException.badRequest("自动续租周期必须大于 0");
             }
             if (renewalAmount == null || renewalAmount.signum() <= 0) {
                 throw BusinessException.badRequest("开启自动续租时，续租金额必须大于 0");
             }
+            validateDailyRenewalRule(
+                renewalBillingMode,
+                item.renewalDailyAmount(),
+                item.renewalDailyCapEnabled() == null || item.renewalDailyCapEnabled(),
+                item.renewalGraceHours(),
+                item.overdueDailyAmount(),
+                renewalUnit,
+                renewalValue,
+                renewalAmount
+            );
         }
     }
 
@@ -433,6 +445,10 @@ public class ProductService {
                 var renewalAmount = autoRenewEnabled
                     ? normalizeMoney(item.renewalAmount() == null ? item.periodAmount() : item.renewalAmount())
                     : null;
+                var renewalBillingMode = autoRenewEnabled ? parseRenewalBillingMode(item.renewalBillingMode()) : RenewalBillingMode.PERIOD;
+                var renewalDailyAmount = autoRenewEnabled && renewalBillingMode == RenewalBillingMode.DAILY_CAPPED
+                    ? normalizeNullableMoney(item.renewalDailyAmount())
+                    : null;
                 return new ProductRepository.PackagePriceRow(
                     item.packageId(),
                     normalizeMoney(template.priceAmount()),
@@ -441,7 +457,14 @@ public class ProductService {
                     autoRenewEnabled,
                     renewalUnit,
                     renewalValue,
-                    renewalAmount
+                    renewalAmount,
+                    renewalBillingMode,
+                    renewalDailyAmount,
+                    item.renewalDailyCapEnabled() == null || item.renewalDailyCapEnabled(),
+                    normalizeGraceHours(item.renewalGraceHours()),
+                    autoRenewEnabled && renewalBillingMode == RenewalBillingMode.DAILY_CAPPED
+                        ? normalizeNullableMoney(item.overdueDailyAmount())
+                        : null
                 );
             })
             .toList();
@@ -453,6 +476,54 @@ public class ProductService {
 
     private BigDecimal normalizeMoney(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private BigDecimal normalizeNullableMoney(BigDecimal value) {
+        return value == null ? null : value.setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private RenewalBillingMode parseRenewalBillingMode(String value) {
+        if (value == null || value.isBlank()) {
+            return RenewalBillingMode.PERIOD;
+        }
+        try {
+            return RenewalBillingMode.valueOf(value);
+        } catch (IllegalArgumentException exception) {
+            throw BusinessException.badRequest("不支持的续租计费模式");
+        }
+    }
+
+    private void validateDailyRenewalRule(
+        RenewalBillingMode mode,
+        BigDecimal dailyAmount,
+        Boolean capEnabled,
+        Integer graceHours,
+        BigDecimal overdueDailyAmount,
+        LeaseUnit renewalUnit,
+        Integer renewalValue,
+        BigDecimal renewalAmount
+    ) {
+        if (mode == RenewalBillingMode.DAILY_CAPPED && (dailyAmount == null || dailyAmount.signum() <= 0)) {
+            throw BusinessException.badRequest("按日续租价格必须大于 0");
+        }
+        if (overdueDailyAmount != null && overdueDailyAmount.signum() <= 0) {
+            throw BusinessException.badRequest("逾期日占用费必须大于 0");
+        }
+        if (mode == RenewalBillingMode.DAILY_CAPPED && Boolean.TRUE.equals(capEnabled)) {
+            var periodDays = renewalUnit == LeaseUnit.MONTH ? renewalValue * 30 : renewalValue;
+            if (dailyAmount.multiply(BigDecimal.valueOf(periodDays)).compareTo(renewalAmount) < 0) {
+                throw BusinessException.badRequest("启用整期封顶时，日租累计整期金额不能低于整期续租价");
+            }
+        }
+        normalizeGraceHours(graceHours);
+    }
+
+    private int normalizeGraceHours(Integer value) {
+        var normalized = value == null ? 0 : value;
+        if (normalized < 0 || normalized > 72) {
+            throw BusinessException.badRequest("续租宽限时间必须在 0 到 72 小时之间");
+        }
+        return normalized;
     }
 
     private CategoryResponse toResponse(ProductCategory category) {
@@ -518,6 +589,11 @@ public class ProductService {
                     packagePrice.renewalUnit() == null ? null : packagePrice.renewalUnit().name(),
                     packagePrice.renewalValue(),
                     packagePrice.renewalAmount(),
+                    packagePrice.renewalBillingMode().name(),
+                    packagePrice.renewalDailyAmount(),
+                    packagePrice.renewalDailyCapEnabled(),
+                    packagePrice.renewalGraceHours(),
+                    packagePrice.overdueDailyAmount(),
                     packagePrice.status().name()
                 );
             })

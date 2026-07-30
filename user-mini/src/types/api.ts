@@ -62,6 +62,11 @@ export type StoreSkuPackage = {
   renewalUnit?: 'DAY' | 'MONTH' | null;
   renewalValue?: number | null;
   renewalAmount?: number | null;
+  renewalBillingMode: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number | null;
+  renewalDailyCapEnabled: boolean;
+  renewalGraceHours: number;
+  overdueDailyAmount?: number | null;
   status: 'ENABLED' | 'DISABLED';
 };
 
@@ -162,6 +167,11 @@ export type RentalOrder = {
   renewalUnit?: 'DAY' | 'MONTH' | null;
   renewalValue?: number | null;
   renewalAmount?: number | null;
+  renewalBillingMode: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number | null;
+  renewalDailyCapEnabled: boolean;
+  renewalGraceHours: number;
+  overdueDailyAmount?: number | null;
   renewalCount: number;
   reviewBonusDays: number;
   campaignBonusDays: number;
@@ -268,7 +278,10 @@ export type RentalContract = {
   contractNo: string;
   orderId: number;
   userAccountId: number;
-  contractType: 'RENTAL' | 'SALE';
+  contractType: 'RENTAL' | 'SALE' | 'RENEWAL_PRICE_AMENDMENT';
+  contractKind: 'MAIN' | 'PRICE_AMENDMENT';
+  parentContractId?: number | null;
+  pricingRevisionId?: number | null;
   contractStatus: 'DRAFT' | 'SIGNING' | 'SIGNED' | 'ARCHIVED' | 'FAILED' | 'CANCELLED';
   signUrl?: string | null;
   archivePdfUrl?: string | null;

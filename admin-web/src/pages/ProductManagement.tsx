@@ -34,6 +34,11 @@ type PackagePriceForm = {
   renewalUnit?: 'DAY' | 'MONTH';
   renewalValue?: number;
   renewalAmount?: number;
+  renewalBillingMode?: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number;
+  renewalDailyCapEnabled?: boolean;
+  renewalGraceHours?: number;
+  overdueDailyAmount?: number;
 };
 type StoreSkuForm = {
   merchantId: number;
@@ -332,7 +337,12 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
         autoRenewEnabled: item.autoRenewEnabled,
         renewalUnit: item.renewalUnit ?? item.leaseUnit,
         renewalValue: item.renewalValue ?? defaultRenewalValue(item),
-        renewalAmount: item.renewalAmount ?? item.periodAmount
+        renewalAmount: item.renewalAmount ?? item.periodAmount,
+        renewalBillingMode: item.renewalBillingMode ?? 'PERIOD',
+        renewalDailyAmount: item.renewalDailyAmount ?? undefined,
+        renewalDailyCapEnabled: item.renewalDailyCapEnabled ?? true,
+        renewalGraceHours: item.renewalGraceHours ?? 0,
+        overdueDailyAmount: item.overdueDailyAmount ?? undefined
       }))
     });
     setStoreSkuOpen(true);
@@ -810,6 +820,48 @@ function storeSkuFields(
                     <InputNumber min={0} precision={2} style={{ width: '100%' }} />
                   </Form.Item>
                 </Space.Compact>
+                <Space.Compact block>
+                  <Form.Item
+                    style={{ width: '34%' }}
+                    name={[field.name, 'renewalBillingMode']}
+                    label="续租计费方式"
+                  >
+                    <Select options={[
+                      { label: '只按整期续租', value: 'PERIOD' },
+                      { label: '按日计费（可选整期封顶）', value: 'DAILY_CAPPED' }
+                    ]} />
+                  </Form.Item>
+                  <Form.Item
+                    style={{ width: '33%' }}
+                    name={[field.name, 'renewalDailyAmount']}
+                    label="日续租价"
+                  >
+                    <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item
+                    style={{ width: '33%' }}
+                    name={[field.name, 'overdueDailyAmount']}
+                    label="逾期日占用费"
+                  >
+                    <InputNumber min={0} precision={2} placeholder="不填则同日续租价" style={{ width: '100%' }} />
+                  </Form.Item>
+                </Space.Compact>
+                <Space.Compact block>
+                  <Form.Item
+                    style={{ width: '50%' }}
+                    name={[field.name, 'renewalGraceHours']}
+                    label="超时宽限（小时）"
+                  >
+                    <InputNumber min={0} max={72} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item
+                    style={{ width: '50%', paddingLeft: 16, paddingTop: 30 }}
+                    name={[field.name, 'renewalDailyCapEnabled']}
+                    valuePropName="checked"
+                  >
+                    <Checkbox>按日累计达到整期价格后封顶</Checkbox>
+                  </Form.Item>
+                </Space.Compact>
               </div>
             ))}
           </Space>
@@ -828,7 +880,10 @@ function defaultPackagePrice(): PackagePriceForm {
     autoRenewEnabled: true,
     renewalUnit: 'MONTH',
     renewalValue: 1,
-    renewalAmount: 0
+    renewalAmount: 0,
+    renewalBillingMode: 'PERIOD',
+    renewalDailyCapEnabled: true,
+    renewalGraceHours: 0
   };
 }
 
@@ -845,16 +900,32 @@ function applyRenewalDefaults(form: FormInstance, fieldName: number, template?: 
   form.setFieldValue(['packages', fieldName, 'renewalUnit'], template.leaseUnit);
   form.setFieldValue(['packages', fieldName, 'renewalValue'], defaultRenewalValue(template));
   form.setFieldValue(['packages', fieldName, 'renewalAmount'], current?.renewalAmount || periodAmount);
+  form.setFieldValue(['packages', fieldName, 'renewalBillingMode'], current?.renewalBillingMode || 'PERIOD');
+  form.setFieldValue(['packages', fieldName, 'renewalDailyCapEnabled'], current?.renewalDailyCapEnabled ?? true);
+  form.setFieldValue(['packages', fieldName, 'renewalGraceHours'], current?.renewalGraceHours ?? 0);
 }
 
 function defaultRenewalValue(template: Pick<ProductPackage, 'leaseValue' | 'totalPeriods'>) {
   return Math.max(1, Math.floor(template.leaseValue / Math.max(template.totalPeriods, 1)));
 }
 
-function renewalText(item: { autoRenewEnabled?: boolean; renewalUnit?: 'DAY' | 'MONTH' | null; renewalValue?: number | null; renewalAmount?: number | null }) {
+function renewalText(item: {
+  autoRenewEnabled?: boolean;
+  renewalUnit?: 'DAY' | 'MONTH' | null;
+  renewalValue?: number | null;
+  renewalAmount?: number | null;
+  renewalBillingMode?: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number | null;
+  renewalDailyCapEnabled?: boolean;
+  overdueDailyAmount?: number | null;
+}) {
   if (!item.autoRenewEnabled) {
     return '续租关闭';
   }
   const unit = item.renewalUnit === 'DAY' ? '天' : '个月';
-  return `续租 ${item.renewalValue || 1}${unit} / ${item.renewalAmount ?? 0}`;
+  const periodText = `续租 ${item.renewalValue || 1}${unit} / ${item.renewalAmount ?? 0}`;
+  if (item.renewalBillingMode !== 'DAILY_CAPPED') return periodText;
+  const capText = item.renewalDailyCapEnabled ? `，每 ${item.renewalValue || 1}${unit}封顶 ${item.renewalAmount ?? 0}` : '，不设整期封顶';
+  const overdueText = item.overdueDailyAmount != null ? `，逾期 ${item.overdueDailyAmount}/天` : '';
+  return `按日续租 ${item.renewalDailyAmount ?? 0}/天${capText}${overdueText}（整期参考 ${periodText}）`;
 }

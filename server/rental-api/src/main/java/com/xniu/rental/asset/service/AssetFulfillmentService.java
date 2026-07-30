@@ -15,6 +15,7 @@ import com.xniu.rental.asset.repository.AssetFulfillmentRepository;
 import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.AuthorizationService;
+import com.xniu.rental.bill.service.BillService;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.merchant.model.MerchantStore;
 import com.xniu.rental.merchant.model.StoreStatus;
@@ -40,6 +41,7 @@ public class AssetFulfillmentService {
     private final StoreRepository storeRepository;
     private final ProductRepository productRepository;
     private final AuthorizationService authorizationService;
+    private final BillService billService;
 
     public AssetFulfillmentService(
         AssetFulfillmentRepository fulfillmentRepository,
@@ -47,7 +49,8 @@ public class AssetFulfillmentService {
         OrderRepository orderRepository,
         StoreRepository storeRepository,
         ProductRepository productRepository,
-        AuthorizationService authorizationService
+        AuthorizationService authorizationService,
+        BillService billService
     ) {
         this.fulfillmentRepository = fulfillmentRepository;
         this.assetRepository = assetRepository;
@@ -55,6 +58,7 @@ public class AssetFulfillmentService {
         this.storeRepository = storeRepository;
         this.productRepository = productRepository;
         this.authorizationService = authorizationService;
+        this.billService = billService;
     }
 
     public List<AssetHandoverResponse> listHandovers(Long orderId, Long storeId, String handoverType) {
@@ -209,8 +213,10 @@ public class AssetFulfillmentService {
         if (order.batteryAssetId() != null) {
             returnAssetToStore(order.batteryAssetId(), batteryStatus, order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "归还电池"));
         }
+        var returnedAt = LocalDateTime.now();
+        billService.generateReturnDailyAccrual(order, returnedAt, "归还资产时按实际超期天数结算");
         fulfillmentRepository.closeAllActiveUsage(order.id(), "RETURN");
-        var completed = orderRepository.completeReturn(order.id(), LocalDateTime.now());
+        var completed = orderRepository.completeReturn(order.id(), returnedAt);
         orderRepository.addLog(order.id(), order.orderStatus(), OrderStatus.COMPLETED, OrderOperationType.TRANSITION, currentAccountId(), defaultRemark(request.remark(), "归还资产并结束订单，归还门店：" + returnStore.storeName()));
         var handover = fulfillmentRepository.createHandover(new AssetFulfillmentRepository.HandoverCreateRow(
             nextHandoverNo(),

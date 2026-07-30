@@ -1,10 +1,10 @@
-import { CarOutlined, EditOutlined, ExportOutlined, GiftOutlined, PlusOutlined, RollbackOutlined, SearchOutlined, SwapOutlined, UploadOutlined } from '@ant-design/icons';
-import { Button, DatePicker, Descriptions, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { CarOutlined, DollarOutlined, EditOutlined, ExportOutlined, GiftOutlined, PlusOutlined, RollbackOutlined, SearchOutlined, SwapOutlined, UploadOutlined } from '@ant-design/icons';
+import { Button, Checkbox, DatePicker, Descriptions, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { OrderBatchImportModal, OrderImportTemplateButton } from '../components/OrderBatchImportModal';
 import { http } from '../services/request';
-import type { Asset, AssetStatus, OrderStatus, RentalOrder, Store, StoreSku } from '../types/api';
+import type { Asset, AssetStatus, OrderPricingRevision, OrderStatus, RentalOrder, Store, StoreSku } from '../types/api';
 import { downloadCsv } from '../utils/csv';
 
 const statusOptions: { label: string; value: OrderStatus }[] = [
@@ -96,6 +96,19 @@ type OrderFilterForm = {
   userAccountId?: number;
 };
 
+type RenewalPricingForm = {
+  autoRenewEnabled: boolean;
+  renewalUnit?: 'DAY' | 'MONTH';
+  renewalValue?: number;
+  renewalAmount?: number;
+  renewalBillingMode: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number;
+  renewalDailyCapEnabled: boolean;
+  renewalGraceHours: number;
+  overdueDailyAmount?: number;
+  reason: string;
+};
+
 export function OrderManagement() {
   const [orders, setOrders] = useState<RentalOrder[]>([]);
   const [storeSkus, setStoreSkus] = useState<StoreSku[]>([]);
@@ -113,6 +126,8 @@ export function OrderManagement() {
   const [returnOpen, setReturnOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [exceptionOpen, setExceptionOpen] = useState(false);
+  const [renewalPricingOpen, setRenewalPricingOpen] = useState(false);
+  const [pricingRevisions, setPricingRevisions] = useState<OrderPricingRevision[]>([]);
   const [actionLoading, setActionLoading] = useState(false);
   const [createForm] = Form.useForm<CreateForm>();
   const [transitionForm] = Form.useForm<TransitionForm>();
@@ -122,6 +137,7 @@ export function OrderManagement() {
   const [returnForm] = Form.useForm<ReturnForm>();
   const [cancelForm] = Form.useForm<ReasonForm>();
   const [exceptionForm] = Form.useForm<ReasonForm>();
+  const [renewalPricingForm] = Form.useForm<RenewalPricingForm>();
   const [filterForm] = Form.useForm<OrderFilterForm>();
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
   const selectedPackageId = Form.useWatch('packageId', createForm);
@@ -131,6 +147,8 @@ export function OrderManagement() {
   const selectedPickupFrameAssetId = Form.useWatch('frameAssetId', pickupForm);
   const selectedPickupBatteryAssetId = Form.useWatch('batteryAssetId', pickupForm);
   const replaceAssetType = Form.useWatch('assetType', replaceForm);
+  const renewalBillingMode = Form.useWatch('renewalBillingMode', renewalPricingForm);
+  const renewalEnabled = Form.useWatch('autoRenewEnabled', renewalPricingForm);
 
   useEffect(() => {
     void loadAll({});
@@ -462,6 +480,62 @@ export function OrderManagement() {
     await loadAll();
   }
 
+  function openRenewalPricing(order: RentalOrder) {
+    setSelectedOrder(order);
+    setPricingRevisions([]);
+    renewalPricingForm.resetFields();
+    renewalPricingForm.setFieldsValue({
+      autoRenewEnabled: order.autoRenewEnabled,
+      renewalUnit: order.renewalUnit ?? 'MONTH',
+      renewalValue: order.renewalValue ?? 1,
+      renewalAmount: order.renewalAmount == null ? undefined : Number(order.renewalAmount),
+      renewalBillingMode: order.renewalBillingMode ?? 'PERIOD',
+      renewalDailyAmount: order.renewalDailyAmount == null ? undefined : Number(order.renewalDailyAmount),
+      renewalDailyCapEnabled: order.renewalDailyCapEnabled ?? true,
+      renewalGraceHours: order.renewalGraceHours ?? 0,
+      overdueDailyAmount: order.overdueDailyAmount == null ? undefined : Number(order.overdueDailyAmount)
+    });
+    setRenewalPricingOpen(true);
+    void loadPricingRevisions(order.id);
+  }
+
+  async function loadPricingRevisions(orderId: number) {
+    const revisions = await http.get<unknown, OrderPricingRevision[]>(
+      `/api/admin/orders/${orderId}/renewal-pricing-revisions`
+    );
+    setPricingRevisions(revisions);
+  }
+
+  async function generatePricingAmendment(revisionId: number) {
+    await http.post('/api/admin/contracts/generate-pricing-amendment', { pricingRevisionId: revisionId });
+    message.success('续租调价补充协议已生成，可在实名合同中发起签署');
+  }
+
+  async function submitRenewalPricing(values: RenewalPricingForm) {
+    if (!selectedOrder) return;
+    setActionLoading(true);
+    try {
+      const revision = await http.post<unknown, OrderPricingRevision>(
+        `/api/admin/orders/${selectedOrder.id}/renewal-pricing-adjustments`,
+        values
+      );
+      if (revision.revisionStatus === 'PENDING_CUSTOMER_CONFIRMATION') {
+        try {
+          await generatePricingAmendment(revision.id);
+        } catch {
+          message.warning(`调价记录 #${revision.id} 已保存为待确认，可在下方调价记录中重试生成补充协议`);
+        }
+      } else {
+        message.success('续租计费规则已调整，从下一笔未生成账单生效');
+      }
+      setRenewalPricingOpen(false);
+      renewalPricingForm.resetFields();
+      await loadAll();
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   function openPickup(order: RentalOrder, mode: 'PICKUP' | 'SHIP') {
     setSelectedOrder(order);
     setPickupMode(mode);
@@ -669,12 +743,15 @@ export function OrderManagement() {
             { title: '下单时间', dataIndex: 'orderedAt', width: 170, render: dateText },
             {
               title: '操作',
-              width: 360,
+              width: 430,
               fixed: 'right',
               render: (_, record) => (
                 <Space wrap>
                   {canEditOrder(record) ? (
                     <Button size="small" icon={<EditOutlined />} onClick={() => openEditOrder(record)}>编辑</Button>
+                  ) : null}
+                  {canAdjustRenewalPricing(record) ? (
+                    <Button size="small" icon={<DollarOutlined />} onClick={() => openRenewalPricing(record)}>续租调价</Button>
                   ) : null}
                   {transitionOptionsFor(record.orderStatus).length ? (
                     <Button size="small" onClick={() => openTransition(record)}>流转</Button>
@@ -930,6 +1007,80 @@ export function OrderManagement() {
           <Form.Item name="reason" label="异常原因" rules={[{ required: true, message: '请输入异常原因' }]}><Input /></Form.Item>
         </Form>
       </Modal>
+
+      <Modal
+        title="调整续租计费规则"
+        open={renewalPricingOpen}
+        onCancel={() => setRenewalPricingOpen(false)}
+        onOk={() => renewalPricingForm.submit()}
+        okButtonProps={{ loading: actionLoading }}
+        width={720}
+        destroyOnHidden
+      >
+        <Typography.Paragraph type="secondary">
+          新规则从下一笔尚未生成的续租账单生效；已支付及已生成账单不会被修改。涨价或新增收费项将生成补充协议，用户签署后生效。
+        </Typography.Paragraph>
+        <Form form={renewalPricingForm} layout="vertical" onFinish={submitRenewalPricing}>
+          <Form.Item name="autoRenewEnabled" valuePropName="checked"><Checkbox>开启自动续租</Checkbox></Form.Item>
+          <Space.Compact block>
+            <Form.Item style={{ width: '34%' }} name="renewalUnit" label="整期单位" rules={renewalEnabled ? [{ required: true }] : []}>
+              <Select disabled={!renewalEnabled} options={[{ label: '天', value: 'DAY' }, { label: '月', value: 'MONTH' }]} />
+            </Form.Item>
+            <Form.Item style={{ width: '33%' }} name="renewalValue" label="整期周期" rules={renewalEnabled ? [{ required: true }] : []}>
+              <InputNumber disabled={!renewalEnabled} min={1} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item style={{ width: '33%' }} name="renewalAmount" label="整期续租价" rules={renewalEnabled ? [{ required: true }] : []}>
+              <InputNumber disabled={!renewalEnabled} min={0.01} precision={2} style={{ width: '100%' }} />
+            </Form.Item>
+          </Space.Compact>
+          <Form.Item name="renewalBillingMode" label="续租计费方式" rules={[{ required: true }]}>
+            <Select disabled={!renewalEnabled} options={[
+              { label: '只按整期续租', value: 'PERIOD' },
+              { label: '按日计费（可选整期封顶）', value: 'DAILY_CAPPED' }
+            ]} />
+          </Form.Item>
+          {renewalEnabled && renewalBillingMode === 'DAILY_CAPPED' ? (
+            <>
+              <Space.Compact block>
+                <Form.Item style={{ width: '34%' }} name="renewalDailyAmount" label="正常日续租价" rules={[{ required: true }]}>
+                  <InputNumber min={0.01} precision={2} style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item style={{ width: '33%' }} name="overdueDailyAmount" label="逾期日占用费">
+                  <InputNumber min={0.01} precision={2} placeholder="不填则同日续租价" style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item style={{ width: '33%' }} name="renewalGraceHours" label="宽限小时" rules={[{ required: true }]}>
+                  <InputNumber min={0} max={72} style={{ width: '100%' }} />
+                </Form.Item>
+              </Space.Compact>
+              <Form.Item name="renewalDailyCapEnabled" valuePropName="checked">
+                <Checkbox>按日累计达到整期续租价后封顶</Checkbox>
+              </Form.Item>
+            </>
+          ) : null}
+          <Form.Item name="reason" label="调整原因" rules={[{ required: true, message: '请输入调价原因' }]}>
+            <Input.TextArea rows={3} maxLength={255} />
+          </Form.Item>
+        </Form>
+        <Typography.Title level={5}>调价记录</Typography.Title>
+        <Table
+          rowKey="id"
+          size="small"
+          pagination={false}
+          dataSource={pricingRevisions}
+          columns={[
+            { title: '记录', dataIndex: 'id', render: (value) => `#${value}` },
+            { title: '状态', dataIndex: 'revisionStatus', render: pricingRevisionStatusText },
+            { title: '原因', dataIndex: 'reason', ellipsis: true },
+            { title: '创建时间', dataIndex: 'createdAt', render: dateText },
+            {
+              title: '操作',
+              render: (_, record) => record.revisionStatus === 'PENDING_CUSTOMER_CONFIRMATION' ? (
+                <Button size="small" onClick={() => void generatePricingAmendment(record.id)}>生成/重试补充协议</Button>
+              ) : '-'
+            }
+          ]}
+        />
+      </Modal>
     </Space>
   );
 }
@@ -964,7 +1115,25 @@ function leaseText(order: RentalOrder) {
 function renewalText(order: RentalOrder) {
   if (!order.autoRenewEnabled) return '未开启';
   const unit = order.renewalUnit === 'DAY' ? '天' : '个月';
-  return `${order.renewalValue || 1}${unit} / ${moneyText(order.renewalAmount)} / 已续 ${order.renewalCount} 次`;
+  const periodText = `${order.renewalValue || 1}${unit} / ${moneyText(order.renewalAmount)}`;
+  if (order.renewalBillingMode !== 'DAILY_CAPPED') return `${periodText} / 已续 ${order.renewalCount} 次`;
+  const capText = order.renewalDailyCapEnabled ? `，每 ${order.renewalValue || 1}${unit}封顶 ${moneyText(order.renewalAmount)}` : '，不设整期封顶';
+  const overdueText = order.overdueDailyAmount != null ? `，逾期 ${moneyText(order.overdueDailyAmount)}/天` : '';
+  return `按日续租 ${moneyText(order.renewalDailyAmount)}/天${capText}${overdueText}（整期参考 ${periodText}）/ 已续 ${order.renewalCount} 次`;
+}
+
+function pricingRevisionStatusText(value: OrderPricingRevision['revisionStatus']) {
+  const textMap: Record<OrderPricingRevision['revisionStatus'], string> = {
+    PENDING_CUSTOMER_CONFIRMATION: '待用户确认',
+    APPLIED: '已生效',
+    CANCELLED: '已取消'
+  };
+  const color = value === 'APPLIED' ? 'green' : value === 'CANCELLED' ? 'default' : 'orange';
+  return <Tag color={color}>{textMap[value]}</Tag>;
+}
+
+function canAdjustRenewalPricing(order: RentalOrder) {
+  return !['COMPLETED', 'CANCELLED', 'EXCEPTION'].includes(order.orderStatus);
 }
 
 function canGrantLeaseBonus(order: RentalOrder) {

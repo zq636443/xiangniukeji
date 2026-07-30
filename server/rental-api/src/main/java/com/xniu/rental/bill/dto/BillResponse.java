@@ -22,6 +22,9 @@ public record BillResponse(
     LocalDateTime cancelledAt,
     String remark,
     String generatedBatchNo,
+    String renewalChargeMode,
+    Integer renewalDays,
+    BigDecimal renewalUnitPrice,
     LocalDateTime createdAt,
     List<BillItemResponse> items,
     List<BillLogResponse> logs

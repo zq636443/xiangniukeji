@@ -75,6 +75,11 @@ export type StoreSkuPackage = {
   renewalUnit?: 'DAY' | 'MONTH' | null;
   renewalValue?: number | null;
   renewalAmount?: number | null;
+  renewalBillingMode: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number | null;
+  renewalDailyCapEnabled: boolean;
+  renewalGraceHours: number;
+  overdueDailyAmount?: number | null;
   status: 'ENABLED' | 'DISABLED';
 };
 
@@ -318,6 +323,11 @@ export type RentalOrder = {
   renewalUnit?: 'DAY' | 'MONTH' | null;
   renewalValue?: number | null;
   renewalAmount?: number | null;
+  renewalBillingMode: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number | null;
+  renewalDailyCapEnabled: boolean;
+  renewalGraceHours: number;
+  overdueDailyAmount?: number | null;
   renewalCount: number;
   reviewBonusDays: number;
   campaignBonusDays: number;

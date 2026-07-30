@@ -91,6 +91,17 @@ public class BillRepository {
         return list.stream().findFirst();
     }
 
+    public List<RentalBill> listOpenBillsByOrderAndType(Long orderId, BillType billType) {
+        return jdbcTemplate.query("""
+            SELECT *
+            FROM rental_bill
+            WHERE order_id = ?
+              AND bill_type = ?
+              AND bill_status NOT IN ('PAID', 'CANCELLED')
+            ORDER BY id ASC
+            """, billMapper, orderId, billType.name());
+    }
+
     public List<RentalBill> listDueBillsForDeduct(LocalDateTime now, Integer limit) {
         return jdbcTemplate.query("""
             SELECT * FROM rental_bill
@@ -137,8 +148,9 @@ public class BillRepository {
             var statement = connection.prepareStatement("""
                 INSERT INTO rental_bill
                 (bill_no, order_id, user_account_id, merchant_id, store_id, bill_type, period_no,
-                 bill_status, due_at, payable_amount, paid_amount, overdue_amount, remark, generated_batch_no)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 bill_status, due_at, payable_amount, paid_amount, overdue_amount, remark, generated_batch_no,
+                 renewal_charge_mode, renewal_days, renewal_unit_price)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.billNo());
             statement.setLong(2, row.orderId());
@@ -154,6 +166,13 @@ public class BillRepository {
             statement.setBigDecimal(12, row.overdueAmount());
             statement.setString(13, row.remark());
             statement.setString(14, row.generatedBatchNo());
+            statement.setString(15, row.renewalChargeMode());
+            if (row.renewalDays() == null) {
+                statement.setObject(16, null);
+            } else {
+                statement.setInt(16, row.renewalDays());
+            }
+            statement.setBigDecimal(17, row.renewalUnitPrice());
             return statement;
         }, keyHolder);
         return findBill(keyHolder.getKey().longValue()).orElseThrow();
@@ -285,6 +304,11 @@ public class BillRepository {
         return rs.wasNull() ? null : value;
     }
 
+    private static Integer getNullableInt(ResultSet rs, String column) throws SQLException {
+        var value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
+    }
+
     public record BillCreateRow(
         String billNo,
         Long orderId,
@@ -299,8 +323,30 @@ public class BillRepository {
         BigDecimal paidAmount,
         BigDecimal overdueAmount,
         String remark,
-        String generatedBatchNo
+        String generatedBatchNo,
+        String renewalChargeMode,
+        Integer renewalDays,
+        BigDecimal renewalUnitPrice
     ) {
+        public BillCreateRow(
+            String billNo,
+            Long orderId,
+            Long userAccountId,
+            Long merchantId,
+            Long storeId,
+            BillType billType,
+            Integer periodNo,
+            BillStatus billStatus,
+            LocalDateTime dueAt,
+            BigDecimal payableAmount,
+            BigDecimal paidAmount,
+            BigDecimal overdueAmount,
+            String remark,
+            String generatedBatchNo
+        ) {
+            this(billNo, orderId, userAccountId, merchantId, storeId, billType, periodNo, billStatus,
+                dueAt, payableAmount, paidAmount, overdueAmount, remark, generatedBatchNo, null, null, null);
+        }
     }
 
     private static class BillMapper implements RowMapper<RentalBill> {
@@ -324,6 +370,9 @@ public class BillRepository {
                 rs.getObject("cancelled_at", LocalDateTime.class),
                 rs.getString("remark"),
                 rs.getString("generated_batch_no"),
+                rs.getString("renewal_charge_mode"),
+                getNullableInt(rs, "renewal_days"),
+                rs.getBigDecimal("renewal_unit_price"),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class)
             );

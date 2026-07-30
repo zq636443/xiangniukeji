@@ -4,6 +4,7 @@ import com.xniu.rental.common.ApiResponse;
 import com.xniu.rental.contract.dto.ContractArchiveRequest;
 import com.xniu.rental.contract.dto.ContractGenerateRequest;
 import com.xniu.rental.contract.dto.ContractNotifyResponse;
+import com.xniu.rental.contract.dto.PricingAmendmentGenerateRequest;
 import com.xniu.rental.contract.dto.ContractResponse;
 import com.xniu.rental.contract.dto.ContractSignRequest;
 import com.xniu.rental.contract.dto.ContractTemplateRequest;
@@ -66,6 +67,11 @@ public class AdminContractController {
     @PostMapping("/generate")
     public ApiResponse<ContractResponse> generate(@Valid @RequestBody ContractGenerateRequest request) {
         return ApiResponse.ok(contractService.generateContract(request));
+    }
+
+    @PostMapping("/generate-pricing-amendment")
+    public ApiResponse<ContractResponse> generatePricingAmendment(@Valid @RequestBody PricingAmendmentGenerateRequest request) {
+        return ApiResponse.ok(contractService.generatePricingAmendment(request));
     }
 
     @PostMapping("/{id}/start-sign")

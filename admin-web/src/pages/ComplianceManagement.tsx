@@ -7,7 +7,7 @@ import type { ContractNotifyRecord, ContractTemplate, IdentityVerification, Rent
 type TemplateForm = {
   templateCode: string;
   templateName: string;
-  contractType: 'RENTAL' | 'SALE';
+  contractType: 'RENTAL' | 'SALE' | 'RENEWAL_PRICE_AMENDMENT';
   versionNo: string;
   providerTemplateId?: string;
   content: string;
@@ -24,6 +24,7 @@ const defaultTemplate = [
   '承租人：{{userName}}，证件号：{{idNo}}',
   '租期：{{leaseText}}，期数：{{totalPeriods}}',
   '租金：{{rentalAmount}}，签单费：{{signFeeAmount}}，押金：{{depositAmount}}，应付：{{payableAmount}}',
+  '续租规则：{{renewalRule}}',
   '本合同不写入具体车架号、电池号；实际交付资产以取车交接单、资产更换单、归还单为准。',
   '签署日期：{{signDate}}'
 ].join('\\n');
@@ -192,6 +193,8 @@ export function ComplianceManagement() {
                     { title: '合同号', dataIndex: 'contractNo' },
                     { title: '订单', dataIndex: 'orderId' },
                     { title: '用户', dataIndex: 'userAccountId' },
+                    { title: '合同类别', dataIndex: 'contractKind', render: (value) => value === 'PRICE_AMENDMENT' ? '续租调价补充协议' : '主合同' },
+                    { title: '调价记录', dataIndex: 'pricingRevisionId', render: (value) => value || '-' },
                     { title: '状态', dataIndex: 'contractStatus', render: statusTag },
                     { title: '签署链接', dataIndex: 'signUrl', ellipsis: true, render: (value) => value || '-' },
                     { title: '归档 PDF', dataIndex: 'archivePdfUrl', ellipsis: true, render: (value) => value || '-' },
@@ -241,7 +244,11 @@ export function ComplianceManagement() {
         <Form form={templateForm} layout="vertical" onFinish={createTemplate}>
           <Form.Item name="templateCode" label="模板编码" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="templateName" label="模板名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="contractType" label="合同类型" rules={[{ required: true }]}><Select options={[{ label: '租赁', value: 'RENTAL' }, { label: '售卖', value: 'SALE' }]} /></Form.Item>
+          <Form.Item name="contractType" label="合同类型" rules={[{ required: true }]}><Select options={[
+            { label: '租赁', value: 'RENTAL' },
+            { label: '售卖', value: 'SALE' },
+            { label: '续租价格调整补充协议', value: 'RENEWAL_PRICE_AMENDMENT' }
+          ]} /></Form.Item>
           <Form.Item name="versionNo" label="版本号" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="providerTemplateId" label="服务商模板 ID"><Input /></Form.Item>
           <Form.Item name="content" label="模板内容" rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item>
@@ -252,7 +259,7 @@ export function ComplianceManagement() {
         <Form form={generateForm} layout="vertical" onFinish={generateContract}>
           <Form.Item name="orderId" label="订单 ID" rules={[{ required: true }]}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="templateId" label="模板">
-            <Select allowClear options={templates.map((item) => ({ label: `${item.templateName} / ${item.versionNo}`, value: item.id }))} />
+            <Select allowClear options={templates.filter((item) => item.contractType !== 'RENEWAL_PRICE_AMENDMENT').map((item) => ({ label: `${item.templateName} / ${item.versionNo}`, value: item.id }))} />
           </Form.Item>
         </Form>
       </Modal>

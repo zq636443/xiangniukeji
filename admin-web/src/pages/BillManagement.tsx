@@ -26,6 +26,8 @@ type GenerateForm = {
   billType: BillType;
   periodNo?: number;
   overdueAmount?: number;
+  renewalChargeMode?: 'PERIOD' | 'DAILY';
+  renewalDays?: number;
   dueAt?: Dayjs;
   remark?: string;
 };
@@ -51,6 +53,8 @@ export function BillManagement() {
   const [generateForm] = Form.useForm<GenerateForm>();
   const [planForm] = Form.useForm<PlanForm>();
   const [cancelForm] = Form.useForm<CancelForm>();
+  const selectedGenerateBillType = Form.useWatch('billType', generateForm);
+  const selectedRenewalChargeMode = Form.useWatch('renewalChargeMode', generateForm);
 
   useEffect(() => {
     void loadAll();
@@ -122,7 +126,7 @@ export function BillManagement() {
           <Button icon={<ReloadOutlined />} onClick={loadAll}>刷新</Button>
           <Button icon={<CalendarOutlined />} onClick={() => setPlanOpen(true)}>生成整单计划</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => {
-            generateForm.setFieldsValue({ billType: 'INITIAL' });
+            generateForm.setFieldsValue({ billType: 'INITIAL', renewalChargeMode: 'PERIOD' });
             setGenerateOpen(true);
           }}>生成单笔账单</Button>
         </Space>
@@ -174,6 +178,8 @@ export function BillManagement() {
             { title: '应付', dataIndex: 'payableAmount' },
             { title: '已付', dataIndex: 'paidAmount' },
             { title: '逾期金额', dataIndex: 'overdueAmount' },
+            { title: '续租方式', dataIndex: 'renewalChargeMode', render: renewalChargeModeText },
+            { title: '续租天数', dataIndex: 'renewalDays', render: (value) => value ? `${value} 天` : '-' },
             { title: '到期时间', dataIndex: 'dueAt' },
             { title: '批次', dataIndex: 'generatedBatchNo' },
             {
@@ -222,6 +228,18 @@ export function BillManagement() {
           <Form.Item name="billType" label="账单类型" rules={[{ required: true, message: '请选择账单类型' }]}><Select options={billTypeOptions} /></Form.Item>
           <Form.Item name="periodNo" label="期数"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="overdueAmount" label="逾期金额"><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item>
+          {selectedGenerateBillType === 'RENEWAL' ? (
+            <>
+              <Form.Item name="renewalChargeMode" label="续租计费方式" rules={[{ required: true }]}>
+                <Select options={[{ label: '按整期续租', value: 'PERIOD' }, { label: '按实际天数续租', value: 'DAILY' }]} />
+              </Form.Item>
+              {selectedRenewalChargeMode === 'DAILY' ? (
+                <Form.Item name="renewalDays" label="续租天数" rules={[{ required: true, message: '请输入续租天数' }]}>
+                  <InputNumber min={1} max={3650} style={{ width: '100%' }} />
+                </Form.Item>
+              ) : null}
+            </>
+          ) : null}
           <Form.Item name="dueAt" label="到期时间"><DatePicker showTime style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="remark" label="备注"><Input /></Form.Item>
         </Form>
@@ -273,6 +291,16 @@ function generationTypeText(value: string) {
     RENEWAL: '续租',
     OVERDUE: '逾期',
     MANUAL: '手动'
+  };
+  return map[value] ?? value;
+}
+
+function renewalChargeModeText(value?: string | null) {
+  if (!value) return '-';
+  const map: Record<string, string> = {
+    PERIOD: '整期续租',
+    DAILY: '按日续租',
+    RETURN_DAILY: '归还按日结算'
   };
   return map[value] ?? value;
 }

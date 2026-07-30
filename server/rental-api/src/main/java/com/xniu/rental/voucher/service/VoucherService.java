@@ -293,6 +293,11 @@ public class VoucherService {
             packagePrice.renewalUnit() == null ? null : packagePrice.renewalUnit().name(),
             packagePrice.renewalValue(),
             packagePrice.renewalAmount(),
+            packagePrice.renewalBillingMode().name(),
+            packagePrice.renewalDailyAmount(),
+            packagePrice.renewalDailyCapEnabled(),
+            packagePrice.renewalGraceHours(),
+            packagePrice.overdueDailyAmount(),
             null
         ));
         orderRepository.addItem(order.id(), OrderItemType.SKU, storeSku.id(), storeSku.displayName() + "（外部平台已付）", 1, verificationAmount, verificationAmount);

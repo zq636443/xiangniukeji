@@ -10,6 +10,8 @@ public record BillGenerateRequest(
     @NotBlank(message = "请选择账单类型") String billType,
     Integer periodNo,
     BigDecimal overdueAmount,
+    String renewalChargeMode,
+    Integer renewalDays,
     LocalDateTime dueAt,
     String remark
 ) {

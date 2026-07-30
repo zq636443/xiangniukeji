@@ -19,6 +19,9 @@ import com.xniu.rental.order.dto.OrderUpdateRequest;
 import com.xniu.rental.order.service.OrderBatchImportService;
 import com.xniu.rental.order.service.OrderCreationService;
 import com.xniu.rental.order.service.OrderService;
+import com.xniu.rental.pricing.dto.OrderPricingRevisionResponse;
+import com.xniu.rental.pricing.dto.RenewalPricingRuleRequest;
+import com.xniu.rental.pricing.service.OrderRenewalPricingService;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,17 +41,20 @@ public class AdminOrderController {
     private final OrderCreationService orderCreationService;
     private final OrderBatchImportService orderBatchImportService;
     private final AssetFulfillmentService assetFulfillmentService;
+    private final OrderRenewalPricingService orderRenewalPricingService;
 
     public AdminOrderController(
         OrderService orderService,
         OrderCreationService orderCreationService,
         OrderBatchImportService orderBatchImportService,
-        AssetFulfillmentService assetFulfillmentService
+        AssetFulfillmentService assetFulfillmentService,
+        OrderRenewalPricingService orderRenewalPricingService
     ) {
         this.orderService = orderService;
         this.orderCreationService = orderCreationService;
         this.orderBatchImportService = orderBatchImportService;
         this.assetFulfillmentService = assetFulfillmentService;
+        this.orderRenewalPricingService = orderRenewalPricingService;
     }
 
     @GetMapping
@@ -74,6 +80,19 @@ public class AdminOrderController {
     @PutMapping("/{id}")
     public ApiResponse<OrderResponse> updateOrder(@PathVariable Long id, @Valid @RequestBody OrderUpdateRequest request) {
         return ApiResponse.ok(orderService.updateOrder(id, request));
+    }
+
+    @GetMapping("/{id}/renewal-pricing-revisions")
+    public ApiResponse<List<OrderPricingRevisionResponse>> listRenewalPricingRevisions(@PathVariable Long id) {
+        return ApiResponse.ok(orderRenewalPricingService.list(id));
+    }
+
+    @PostMapping("/{id}/renewal-pricing-adjustments")
+    public ApiResponse<OrderPricingRevisionResponse> adjustRenewalPricing(
+        @PathVariable Long id,
+        @Valid @RequestBody RenewalPricingRuleRequest request
+    ) {
+        return ApiResponse.ok(orderRenewalPricingService.createAdjustment(id, request));
     }
 
     @PostMapping("/batch-import")

@@ -5,6 +5,7 @@ import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.contract.dto.ContractArchiveRequest;
 import com.xniu.rental.contract.dto.ContractGenerateRequest;
+import com.xniu.rental.contract.dto.PricingAmendmentGenerateRequest;
 import com.xniu.rental.contract.dto.ContractNotifyResponse;
 import com.xniu.rental.contract.dto.ContractResponse;
 import com.xniu.rental.contract.dto.ContractSignRequest;
@@ -12,6 +13,7 @@ import com.xniu.rental.contract.dto.ContractTemplateRequest;
 import com.xniu.rental.contract.dto.ContractTemplateResponse;
 import com.xniu.rental.contract.model.ContractNotify;
 import com.xniu.rental.contract.model.ContractStatus;
+import com.xniu.rental.contract.model.ContractKind;
 import com.xniu.rental.contract.model.ContractTemplate;
 import com.xniu.rental.contract.model.ContractTemplateStatus;
 import com.xniu.rental.contract.model.ContractType;
@@ -21,6 +23,9 @@ import com.xniu.rental.order.model.OrderOperationType;
 import com.xniu.rental.order.model.OrderStatus;
 import com.xniu.rental.order.model.RentalOrder;
 import com.xniu.rental.order.repository.OrderRepository;
+import com.xniu.rental.pricing.model.OrderPricingRevision;
+import com.xniu.rental.pricing.model.RenewalPricingRule;
+import com.xniu.rental.pricing.service.OrderRenewalPricingService;
 import com.xniu.rental.verify.model.RealNameStatus;
 import com.xniu.rental.verify.repository.IdentityRepository;
 import java.math.BigDecimal;
@@ -38,12 +43,20 @@ public class ContractService {
     private final OrderRepository orderRepository;
     private final IdentityRepository identityRepository;
     private final AuthorizationService authorizationService;
+    private final OrderRenewalPricingService orderRenewalPricingService;
 
-    public ContractService(ContractRepository contractRepository, OrderRepository orderRepository, IdentityRepository identityRepository, AuthorizationService authorizationService) {
+    public ContractService(
+        ContractRepository contractRepository,
+        OrderRepository orderRepository,
+        IdentityRepository identityRepository,
+        AuthorizationService authorizationService,
+        OrderRenewalPricingService orderRenewalPricingService
+    ) {
         this.contractRepository = contractRepository;
         this.orderRepository = orderRepository;
         this.identityRepository = identityRepository;
         this.authorizationService = authorizationService;
+        this.orderRenewalPricingService = orderRenewalPricingService;
     }
 
     public List<ContractTemplateResponse> listTemplates(String type, String status) {
@@ -94,12 +107,15 @@ public class ContractService {
         var template = request.templateId() == null
             ? contractRepository.findEnabledTemplate(ContractType.RENTAL).orElseThrow(() -> BusinessException.badRequest("请先启用租赁合同模板"))
             : contractRepository.findTemplate(request.templateId()).orElseThrow(() -> BusinessException.badRequest("合同模板不存在"));
+        if (template.contractType() == ContractType.RENEWAL_PRICE_AMENDMENT) {
+            throw BusinessException.badRequest("续租价格调整模板只能用于生成补充协议");
+        }
         var identity = identityRepository.findLatestByUserAndOrder(order.userAccountId(), order.id())
             .orElseThrow(() -> BusinessException.badRequest("订单用户尚未实名"));
         if (identity.realNameStatus() != RealNameStatus.VERIFIED) {
             throw BusinessException.badRequest("订单用户实名未完成");
         }
-        var existing = contractRepository.findLatestByOrder(order.id());
+        var existing = contractRepository.findLatestMainByOrder(order.id());
         if (existing.isPresent() && existing.get().contractStatus() != ContractStatus.CANCELLED) {
             return toResponse(existing.get());
         }
@@ -113,6 +129,48 @@ public class ContractService {
             template.contractType(),
             "ESIGN",
             render(template.content(), order, identity.realNameMasked(), identity.idNoMasked())
+        ));
+        return toResponse(contract);
+    }
+
+    @Transactional
+    public ContractResponse generatePricingAmendment(PricingAmendmentGenerateRequest request) {
+        authorizationService.requirePermission("order.operate");
+        var revision = orderRenewalPricingService.getRevision(request.pricingRevisionId());
+        if (!"PENDING_CUSTOMER_CONFIRMATION".equals(revision.revisionStatus().name())) {
+            throw BusinessException.badRequest("只有待用户确认的调价记录才能生成补充协议");
+        }
+        var order = ensureOrder(revision.orderId());
+        authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
+        var existing = contractRepository.findByPricingRevisionId(revision.id());
+        if (existing.isPresent() && existing.get().contractStatus() != ContractStatus.CANCELLED) {
+            return toResponse(existing.get());
+        }
+        var template = request.templateId() == null
+            ? contractRepository.findEnabledTemplate(ContractType.RENEWAL_PRICE_AMENDMENT)
+                .orElseThrow(() -> BusinessException.badRequest("请先启用续租价格调整补充协议模板"))
+            : contractRepository.findTemplate(request.templateId())
+                .filter(item -> item.contractType() == ContractType.RENEWAL_PRICE_AMENDMENT)
+                .orElseThrow(() -> BusinessException.badRequest("补充协议模板不存在或类型不正确"));
+        var identity = identityRepository.findLatestByUserAndOrder(order.userAccountId(), order.id())
+            .orElseThrow(() -> BusinessException.badRequest("订单用户尚未实名"));
+        if (identity.realNameStatus() != RealNameStatus.VERIFIED) {
+            throw BusinessException.badRequest("订单用户实名未完成");
+        }
+        var parentContractId = contractRepository.findLatestMainByOrder(order.id()).map(RentalContract::id).orElse(null);
+        var contract = contractRepository.createContract(new ContractRepository.ContractCreateRow(
+            nextNo("AMD"),
+            order.id(),
+            order.userAccountId(),
+            order.merchantId(),
+            order.storeId(),
+            template.id(),
+            ContractType.RENEWAL_PRICE_AMENDMENT,
+            ContractKind.PRICE_AMENDMENT,
+            parentContractId,
+            revision.id(),
+            "ESIGN",
+            renderPricingAmendment(template.content(), order, revision, identity.realNameMasked(), identity.idNoMasked())
         ));
         return toResponse(contract);
     }
@@ -135,7 +193,11 @@ public class ContractService {
             throw BusinessException.forbidden("不能签署其他用户合同");
         }
         var signed = contractRepository.markSigned(id);
-        updateOrderAfterContract(signed.orderId(), current);
+        if (signed.pricingRevisionId() != null) {
+            orderRenewalPricingService.confirmAndApply(signed.pricingRevisionId());
+        } else {
+            updateOrderAfterContract(signed.orderId(), current);
+        }
         return toResponse(signed);
     }
 
@@ -158,7 +220,11 @@ public class ContractService {
         var status = params.get("contract_status");
         if ("SIGNED".equalsIgnoreCase(status) || "ARCHIVED".equalsIgnoreCase(status)) {
             var signed = contractRepository.markSigned(contract.id());
-            updateOrderAfterContract(signed.orderId(), null);
+            if (signed.pricingRevisionId() != null) {
+                orderRenewalPricingService.confirmAndApply(signed.pricingRevisionId());
+            } else {
+                updateOrderAfterContract(signed.orderId(), null);
+            }
         }
         contractRepository.createNotify(new ContractRepository.NotifyCreateRow(contract.id(), flowId, params.get("notify_id"), status, true, true, params.toString(), null));
         return true;
@@ -182,9 +248,65 @@ public class ContractService {
             .replace("{{signFeeAmount}}", money(order.signFeeAmount()))
             .replace("{{depositAmount}}", money(order.depositAmount()))
             .replace("{{payableAmount}}", money(order.payableAmount()))
+            .replace("{{renewalAmount}}", moneyNullable(order.renewalAmount()))
+            .replace("{{renewalDailyAmount}}", moneyNullable(order.renewalDailyAmount()))
+            .replace("{{overdueDailyAmount}}", moneyNullable(order.overdueDailyAmount()))
+            .replace("{{renewalRule}}", renewalRuleText(new RenewalPricingRule(
+                order.autoRenewEnabled(), order.renewalUnit(), order.renewalValue(), order.renewalAmount(),
+                parseBillingMode(order.renewalBillingMode()), order.renewalDailyAmount(), order.renewalDailyCapEnabled(),
+                order.renewalGraceHours(), order.overdueDailyAmount()
+            )))
             .replace("{{leaseText}}", order.leaseValue() + ("MONTH".equals(order.leaseUnit()) ? "个月" : "天"))
             .replace("{{totalPeriods}}", String.valueOf(order.totalPeriods()))
             .replace("{{signDate}}", LocalDate.now().toString());
+    }
+
+    private String renderPricingAmendment(
+        String content,
+        RentalOrder order,
+        OrderPricingRevision revision,
+        String realNameMasked,
+        String idNoMasked
+    ) {
+        return content
+            .replace("{{orderNo}}", order.orderNo())
+            .replace("{{userName}}", valueOr(realNameMasked, "用户"))
+            .replace("{{idNo}}", valueOr(idNoMasked, "已实名"))
+            .replace("{{previousRenewalRule}}", renewalRuleText(revision.previousRule()))
+            .replace("{{newRenewalRule}}", renewalRuleText(revision.newRule()))
+            .replace("{{adjustmentReason}}", revision.reason())
+            .replace("{{signDate}}", LocalDate.now().toString());
+    }
+
+    private String renewalRuleText(RenewalPricingRule rule) {
+        if (!Boolean.TRUE.equals(rule.autoRenewEnabled())) {
+            return "不自动续租";
+        }
+        var unit = "MONTH".equals(rule.renewalUnit()) ? "个月" : "天";
+        var base = rule.renewalValue() + unit + "/" + moneyNullable(rule.renewalAmount());
+        if (rule.renewalBillingMode() == com.xniu.rental.pricing.model.RenewalBillingMode.DAILY_CAPPED) {
+            base = "按 " + moneyNullable(rule.renewalDailyAmount()) + "/天续租";
+            if (Boolean.TRUE.equals(rule.renewalDailyCapEnabled())) {
+                base += "，每 " + rule.renewalValue() + unit + "封顶 " + moneyNullable(rule.renewalAmount());
+            } else {
+                base += "，不设整期封顶";
+            }
+            if (rule.overdueDailyAmount() != null) {
+                base += "；逾期占用 " + moneyNullable(rule.overdueDailyAmount()) + "/天";
+            }
+            base += "；宽限 " + (rule.renewalGraceHours() == null ? 0 : rule.renewalGraceHours()) + " 小时";
+        }
+        return base;
+    }
+
+    private com.xniu.rental.pricing.model.RenewalBillingMode parseBillingMode(String value) {
+        try {
+            return value == null || value.isBlank()
+                ? com.xniu.rental.pricing.model.RenewalBillingMode.PERIOD
+                : com.xniu.rental.pricing.model.RenewalBillingMode.valueOf(value);
+        } catch (IllegalArgumentException exception) {
+            return com.xniu.rental.pricing.model.RenewalBillingMode.PERIOD;
+        }
     }
 
     private RentalOrder ensureOrder(Long orderId) {
@@ -205,6 +327,10 @@ public class ContractService {
 
     private String money(BigDecimal amount) {
         return "¥" + amount.toPlainString();
+    }
+
+    private String moneyNullable(BigDecimal amount) {
+        return amount == null ? "未配置" : money(amount);
     }
 
     private String valueOr(String value, String fallback) {
@@ -250,7 +376,13 @@ public class ContractService {
     }
 
     private ContractResponse toResponse(RentalContract contract) {
-        return new ContractResponse(contract.id(), contract.contractNo(), contract.orderId(), contract.userAccountId(), contract.merchantId(), contract.storeId(), contract.templateId(), contract.contractType().name(), contract.contractStatus().name(), contract.provider(), contract.externalFlowId(), contract.signUrl(), contract.archivePdfUrl(), contract.renderedContent(), contract.failureReason(), contract.sentAt(), contract.signedAt(), contract.archivedAt(), contract.createdAt());
+        return new ContractResponse(
+            contract.id(), contract.contractNo(), contract.orderId(), contract.userAccountId(), contract.merchantId(),
+            contract.storeId(), contract.templateId(), contract.contractType().name(), contract.contractKind().name(),
+            contract.parentContractId(), contract.pricingRevisionId(), contract.contractStatus().name(), contract.provider(),
+            contract.externalFlowId(), contract.signUrl(), contract.archivePdfUrl(), contract.renderedContent(),
+            contract.failureReason(), contract.sentAt(), contract.signedAt(), contract.archivedAt(), contract.createdAt()
+        );
     }
 
     private ContractNotifyResponse toNotifyResponse(ContractNotify notify) {

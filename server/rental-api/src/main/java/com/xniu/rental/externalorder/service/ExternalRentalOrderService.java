@@ -21,6 +21,7 @@ import com.xniu.rental.externalorder.model.ExternalOrderSourcePlatform;
 import com.xniu.rental.externalorder.model.ExternalRentalOrder;
 import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
 import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
+import com.xniu.rental.externalorder.repository.ExternalOrderPricingRevisionRepository;
 import com.xniu.rental.merchant.model.MerchantStore;
 import com.xniu.rental.merchant.model.MerchantStatus;
 import com.xniu.rental.merchant.model.StoreStatus;
@@ -60,6 +61,7 @@ public class ExternalRentalOrderService {
     private static final Logger log = LoggerFactory.getLogger(ExternalRentalOrderService.class);
 
     private final ExternalRentalOrderRepository externalRentalOrderRepository;
+    private final ExternalOrderPricingRevisionRepository pricingRevisionRepository;
     private final ProductRepository productRepository;
     private final AssetRepository assetRepository;
     private final OrderRepository orderRepository;
@@ -75,6 +77,7 @@ public class ExternalRentalOrderService {
 
     public ExternalRentalOrderService(
         ExternalRentalOrderRepository externalRentalOrderRepository,
+        ExternalOrderPricingRevisionRepository pricingRevisionRepository,
         ProductRepository productRepository,
         AssetRepository assetRepository,
         OrderRepository orderRepository,
@@ -89,6 +92,7 @@ public class ExternalRentalOrderService {
         TransactionTemplate transactionTemplate
     ) {
         this.externalRentalOrderRepository = externalRentalOrderRepository;
+        this.pricingRevisionRepository = pricingRevisionRepository;
         this.productRepository = productRepository;
         this.assetRepository = assetRepository;
         this.orderRepository = orderRepository;
@@ -103,20 +107,48 @@ public class ExternalRentalOrderService {
         this.transactionTemplate = transactionTemplate;
     }
 
-    public List<ExternalRentalOrderResponse> listOrders(String status, Long storeId, String sourcePlatform, String keyword) {
+    public List<ExternalRentalOrderResponse> listOrders(
+        String status,
+        Long storeId,
+        String sourcePlatform,
+        Long storeSkuId,
+        Long packageId,
+        LocalDateTime rentStartedFrom,
+        LocalDateTime rentStartedTo,
+        LocalDateTime expectedReturnFrom,
+        LocalDateTime expectedReturnTo,
+        String keyword
+    ) {
         authorizationService.requirePermission("order.read");
         return externalRentalOrderRepository.list(
                 parseStatusNullable(status),
                 null,
                 storeId,
                 parseSourceNullable(sourcePlatform),
+                storeSkuId,
+                packageId,
+                rentStartedFrom,
+                rentStartedTo,
+                expectedReturnFrom,
+                expectedReturnTo,
                 keyword
             ).stream()
             .map(this::toResponse)
             .toList();
     }
 
-    public List<ExternalRentalOrderResponse> listMerchantOrders(Long storeId, String status, String sourcePlatform, String keyword) {
+    public List<ExternalRentalOrderResponse> listMerchantOrders(
+        Long storeId,
+        String status,
+        String sourcePlatform,
+        Long storeSkuId,
+        Long packageId,
+        LocalDateTime rentStartedFrom,
+        LocalDateTime rentStartedTo,
+        LocalDateTime expectedReturnFrom,
+        LocalDateTime expectedReturnTo,
+        String keyword
+    ) {
         authorizationService.requirePermission("order.read");
         if (storeId == null) {
             throw BusinessException.badRequest("请选择门店");
@@ -128,6 +160,12 @@ public class ExternalRentalOrderService {
                 store.merchantId(),
                 storeId,
                 parseSourceNullable(sourcePlatform),
+                storeSkuId,
+                packageId,
+                rentStartedFrom,
+                rentStartedTo,
+                expectedReturnFrom,
+                expectedReturnTo,
                 keyword
             ).stream()
             .map(this::toResponse)
@@ -208,6 +246,15 @@ public class ExternalRentalOrderService {
             packageTemplate.leaseValue() * leaseMultiplier,
             packageTemplate.totalPeriods() * leaseMultiplier,
             leaseMultiplier,
+            order.autoRenewEnabled(),
+            order.renewalUnit(),
+            order.renewalValue(),
+            order.renewalAmount(),
+            order.renewalBillingMode(),
+            order.renewalDailyAmount(),
+            order.renewalDailyCapEnabled(),
+            order.renewalGraceHours(),
+            order.overdueDailyAmount(),
             request.rentStartedAt(),
             expectedReturnAt,
             blankToNull(request.remark()),
@@ -329,6 +376,15 @@ public class ExternalRentalOrderService {
             packageTemplate.leaseValue() * leaseMultiplier,
             packageTemplate.totalPeriods() * leaseMultiplier,
             leaseMultiplier,
+            packagePricing.autoRenewEnabled(),
+            packagePricing.renewalUnit() == null ? null : packagePricing.renewalUnit().name(),
+            packagePricing.renewalValue(),
+            packagePricing.renewalAmount(),
+            packagePricing.renewalBillingMode().name(),
+            packagePricing.renewalDailyAmount(),
+            packagePricing.renewalDailyCapEnabled(),
+            packagePricing.renewalGraceHours(),
+            packagePricing.overdueDailyAmount(),
             request.rentStartedAt(),
             expectedReturnAt,
             blankToNull(request.remark()),
@@ -370,6 +426,7 @@ public class ExternalRentalOrderService {
             blankToNull(request.remark()) == null ? order.remark() : request.remark().trim(),
             currentAccountId()
         );
+        pricingRevisionRepository.cancelPendingByOrder(id);
         externalRentalOrderRepository.addLog(
             id,
             order.orderStatus(),
@@ -403,6 +460,7 @@ public class ExternalRentalOrderService {
             blankToNull(request.remark()) == null ? order.remark() : request.remark().trim(),
             currentAccountId()
         );
+        pricingRevisionRepository.cancelPendingByOrder(id);
         externalRentalOrderRepository.addLog(
             id,
             order.orderStatus(),
@@ -691,6 +749,15 @@ public class ExternalRentalOrderService {
             order.leaseValue(),
             order.totalPeriods(),
             order.leaseMultiplier(),
+            order.autoRenewEnabled(),
+            order.renewalUnit(),
+            order.renewalValue(),
+            order.renewalAmount(),
+            order.renewalBillingMode(),
+            order.renewalDailyAmount(),
+            order.renewalDailyCapEnabled(),
+            order.renewalGraceHours(),
+            order.overdueDailyAmount(),
             order.rentStartedAt(),
             order.expectedReturnAt(),
             order.finishedAt(),

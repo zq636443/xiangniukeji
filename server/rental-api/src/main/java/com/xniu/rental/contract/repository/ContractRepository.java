@@ -1,6 +1,7 @@
 package com.xniu.rental.contract.repository;
 
 import com.xniu.rental.contract.model.ContractNotify;
+import com.xniu.rental.contract.model.ContractKind;
 import com.xniu.rental.contract.model.ContractStatus;
 import com.xniu.rental.contract.model.ContractTemplate;
 import com.xniu.rental.contract.model.ContractTemplateStatus;
@@ -118,14 +119,31 @@ public class ContractRepository {
         return list.stream().findFirst();
     }
 
+    public Optional<RentalContract> findLatestMainByOrder(Long orderId) {
+        var list = jdbcTemplate.query("""
+            SELECT * FROM rental_contract
+            WHERE order_id = ? AND contract_kind = 'MAIN'
+            ORDER BY id DESC LIMIT 1
+            """, contractMapper, orderId);
+        return list.stream().findFirst();
+    }
+
+    public Optional<RentalContract> findByPricingRevisionId(Long pricingRevisionId) {
+        var list = jdbcTemplate.query("""
+            SELECT * FROM rental_contract WHERE pricing_revision_id = ? ORDER BY id DESC LIMIT 1
+            """, contractMapper, pricingRevisionId);
+        return list.stream().findFirst();
+    }
+
     public RentalContract createContract(ContractCreateRow row) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             var statement = connection.prepareStatement("""
                 INSERT INTO rental_contract
                 (contract_no, order_id, user_account_id, merchant_id, store_id, template_id,
-                 contract_type, contract_status, provider, rendered_content)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?)
+                 contract_type, contract_kind, parent_contract_id, pricing_revision_id,
+                 contract_status, provider, rendered_content)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.contractNo());
             statement.setLong(2, row.orderId());
@@ -134,8 +152,11 @@ public class ContractRepository {
             statement.setLong(5, row.storeId());
             statement.setLong(6, row.templateId());
             statement.setString(7, row.contractType().name());
-            statement.setString(8, row.provider());
-            statement.setString(9, row.renderedContent());
+            statement.setString(8, row.contractKind().name());
+            setNullableLong(statement, 9, row.parentContractId());
+            setNullableLong(statement, 10, row.pricingRevisionId());
+            statement.setString(11, row.provider());
+            statement.setString(12, row.renderedContent());
             return statement;
         }, keyHolder);
         return findContract(keyHolder.getKey().longValue()).orElseThrow();
@@ -218,7 +239,34 @@ public class ContractRepository {
     public record TemplateCreateRow(String templateCode, String templateName, ContractType contractType, String versionNo, String providerTemplateId, String content, String remark) {
     }
 
-    public record ContractCreateRow(String contractNo, Long orderId, Long userAccountId, Long merchantId, Long storeId, Long templateId, ContractType contractType, String provider, String renderedContent) {
+    public record ContractCreateRow(
+        String contractNo,
+        Long orderId,
+        Long userAccountId,
+        Long merchantId,
+        Long storeId,
+        Long templateId,
+        ContractType contractType,
+        ContractKind contractKind,
+        Long parentContractId,
+        Long pricingRevisionId,
+        String provider,
+        String renderedContent
+    ) {
+        public ContractCreateRow(
+            String contractNo,
+            Long orderId,
+            Long userAccountId,
+            Long merchantId,
+            Long storeId,
+            Long templateId,
+            ContractType contractType,
+            String provider,
+            String renderedContent
+        ) {
+            this(contractNo, orderId, userAccountId, merchantId, storeId, templateId, contractType,
+                ContractKind.MAIN, null, null, provider, renderedContent);
+        }
     }
 
     public record NotifyCreateRow(Long contractId, String externalFlowId, String notifyId, String contractStatus, Boolean verified, Boolean processed, String rawPayload, String failureReason) {
@@ -234,7 +282,23 @@ public class ContractRepository {
     private static class ContractMapper implements RowMapper<RentalContract> {
         @Override
         public RentalContract mapRow(ResultSet rs, int rowNum) throws SQLException {
-            return new RentalContract(rs.getLong("id"), rs.getString("contract_no"), rs.getLong("order_id"), rs.getLong("user_account_id"), rs.getLong("merchant_id"), rs.getLong("store_id"), rs.getLong("template_id"), ContractType.valueOf(rs.getString("contract_type")), ContractStatus.valueOf(rs.getString("contract_status")), rs.getString("provider"), rs.getString("external_flow_id"), rs.getString("sign_url"), rs.getString("archive_pdf_url"), rs.getString("rendered_content"), rs.getString("failure_reason"), rs.getObject("sent_at", LocalDateTime.class), rs.getObject("signed_at", LocalDateTime.class), rs.getObject("archived_at", LocalDateTime.class), rs.getObject("created_at", LocalDateTime.class), rs.getObject("updated_at", LocalDateTime.class));
+            return new RentalContract(
+                rs.getLong("id"), rs.getString("contract_no"), rs.getLong("order_id"), rs.getLong("user_account_id"),
+                rs.getLong("merchant_id"), rs.getLong("store_id"), rs.getLong("template_id"),
+                ContractType.valueOf(rs.getString("contract_type")), ContractKind.valueOf(rs.getString("contract_kind")),
+                nullableLong(rs, "parent_contract_id"), nullableLong(rs, "pricing_revision_id"),
+                ContractStatus.valueOf(rs.getString("contract_status")), rs.getString("provider"),
+                rs.getString("external_flow_id"), rs.getString("sign_url"), rs.getString("archive_pdf_url"),
+                rs.getString("rendered_content"), rs.getString("failure_reason"),
+                rs.getObject("sent_at", LocalDateTime.class), rs.getObject("signed_at", LocalDateTime.class),
+                rs.getObject("archived_at", LocalDateTime.class), rs.getObject("created_at", LocalDateTime.class),
+                rs.getObject("updated_at", LocalDateTime.class)
+            );
+        }
+
+        private Long nullableLong(ResultSet rs, String column) throws SQLException {
+            var value = rs.getLong(column);
+            return rs.wasNull() ? null : value;
         }
     }
 

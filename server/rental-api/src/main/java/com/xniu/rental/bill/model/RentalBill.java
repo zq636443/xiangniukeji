@@ -21,6 +21,9 @@ public record RentalBill(
     LocalDateTime cancelledAt,
     String remark,
     String generatedBatchNo,
+    String renewalChargeMode,
+    Integer renewalDays,
+    BigDecimal renewalUnitPrice,
     LocalDateTime createdAt,
     LocalDateTime updatedAt
 ) {

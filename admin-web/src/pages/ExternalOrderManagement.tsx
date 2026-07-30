@@ -1,5 +1,5 @@
-import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
-import { Alert, Button, DatePicker, Descriptions, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { DeleteOutlined, DollarOutlined, EditOutlined } from '@ant-design/icons';
+import { Alert, Button, Checkbox, DatePicker, Descriptions, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
@@ -7,6 +7,9 @@ import type {
   Asset,
   ExternalRentalOrder,
   ExternalRentalOrderBatchImportResult,
+  ExternalOrderPricingBatchResult,
+  ExternalOrderPricingPreview,
+  ExternalOrderPricingRevision,
   ExternalRentalOrderSourcePlatform,
   ExternalRentalOrderStatus,
   Store,
@@ -21,9 +24,37 @@ type Props = {
 };
 
 type FilterForm = {
+  storeId?: number;
   status?: ExternalRentalOrderStatus;
   sourcePlatform?: ExternalRentalOrderSourcePlatform;
+  storeSkuId?: number;
+  packageId?: number;
+  rentStartedRange?: [Dayjs, Dayjs];
+  expectedReturnRange?: [Dayjs, Dayjs];
   keyword?: string;
+};
+
+type PricingForm = {
+  autoRenewEnabled: boolean;
+  renewalUnit?: 'DAY' | 'MONTH';
+  renewalValue?: number;
+  renewalAmount?: number;
+  renewalBillingMode: 'PERIOD' | 'DAILY_CAPPED';
+  renewalDailyAmount?: number;
+  renewalDailyCapEnabled: boolean;
+  renewalGraceHours: number;
+  overdueDailyAmount?: number;
+  reason: string;
+  customerConfirmed: boolean;
+  confirmationMethod?: 'WECHAT' | 'PHONE' | 'PAPER' | 'OTHER';
+  confirmationReference?: string;
+  customerConfirmedAt?: Dayjs;
+};
+
+type ConfirmPricingForm = {
+  confirmationMethod: 'WECHAT' | 'PHONE' | 'PAPER' | 'OTHER';
+  confirmationReference: string;
+  customerConfirmedAt?: Dayjs;
 };
 
 type CreateForm = {
@@ -97,19 +128,36 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   const [importOpen, setImportOpen] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [terminateOpen, setTerminateOpen] = useState(false);
+  const [pricingOpen, setPricingOpen] = useState(false);
+  const [batchPricingOpen, setBatchPricingOpen] = useState(false);
+  const [confirmPricingOpen, setConfirmPricingOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deletingOrderId, setDeletingOrderId] = useState<number | null>(null);
   const [importText, setImportText] = useState('');
   const [importResult, setImportResult] = useState<ExternalRentalOrderBatchImportResult | null>(null);
+  const [pricingRevisions, setPricingRevisions] = useState<ExternalOrderPricingRevision[]>([]);
+  const [pricingPreview, setPricingPreview] = useState<ExternalOrderPricingPreview | null>(null);
+  const [batchPricingResult, setBatchPricingResult] = useState<ExternalOrderPricingBatchResult | null>(null);
+  const [selectedPricingRevision, setSelectedPricingRevision] = useState<ExternalOrderPricingRevision | null>(null);
+  const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
   const [createForm] = Form.useForm<CreateForm>();
   const [completeForm] = Form.useForm<CompleteForm>();
   const [terminateForm] = Form.useForm<TerminateForm>();
+  const [pricingForm] = Form.useForm<PricingForm>();
+  const [batchPricingForm] = Form.useForm<PricingForm>();
+  const [confirmPricingForm] = Form.useForm<ConfirmPricingForm>();
 
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
   const selectedPackageId = Form.useWatch('packageId', createForm);
   const selectedLeaseMultiplier = Form.useWatch('leaseMultiplier', createForm) ?? 1;
   const selectedFrameAssetId = Form.useWatch('frameAssetId', createForm);
   const selectedBatteryAssetId = Form.useWatch('batteryAssetId', createForm);
+  const pricingBillingMode = Form.useWatch('renewalBillingMode', pricingForm);
+  const pricingEnabled = Form.useWatch('autoRenewEnabled', pricingForm);
+  const pricingCustomerConfirmed = Form.useWatch('customerConfirmed', pricingForm);
+  const batchPricingBillingMode = Form.useWatch('renewalBillingMode', batchPricingForm);
+  const batchPricingEnabled = Form.useWatch('autoRenewEnabled', batchPricingForm);
+  const batchCustomerConfirmed = Form.useWatch('customerConfirmed', batchPricingForm);
   const selectedStoreSku = useMemo(() => storeSkus.find((item) => item.id === selectedStoreSkuId), [storeSkus, selectedStoreSkuId]);
   const selectedPackage = useMemo(
     () => selectedStoreSku?.packages.find((item) => item.packageId === selectedPackageId),
@@ -124,7 +172,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       return;
     }
     void loadAll();
-  }, [scope, storeId, filters.status, filters.sourcePlatform, filters.keyword]);
+  }, [scope, storeId, filters.storeId, filters.status, filters.sourcePlatform, filters.storeSkuId, filters.packageId, filters.rentStartedRange, filters.expectedReturnRange, filters.keyword]);
 
   const storeSkuOptions = useMemo(() => {
     return storeSkus.map((item) => ({
@@ -173,6 +221,16 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     value: item.id
   })), [stores]);
 
+  const filterStoreSkus = useMemo(
+    () => storeSkus.filter((item) => !filters.storeId || item.storeId === filters.storeId),
+    [storeSkus, filters.storeId]
+  );
+
+  const filterPackages = useMemo(() => {
+    const selected = storeSkus.find((item) => item.id === filters.storeSkuId);
+    return selected?.packages ?? [];
+  }, [storeSkus, filters.storeSkuId]);
+
   async function loadAll() {
     if (scope === 'merchant' && !storeId) {
       return;
@@ -189,9 +247,15 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       const [orderData, storeSkuData, assetData, storeData] = await Promise.all([
         http.get<unknown, ExternalRentalOrder[]>(orderUrl, {
           params: {
-            ...(scope === 'merchant' ? { storeId } : {}),
+            storeId: scope === 'merchant' ? storeId : filters.storeId,
             status: filters.status,
             sourcePlatform: filters.sourcePlatform,
+            storeSkuId: filters.storeSkuId,
+            packageId: filters.packageId,
+            rentStartedFrom: filters.rentStartedRange?.[0].startOf('day').format('YYYY-MM-DDTHH:mm:ss'),
+            rentStartedTo: filters.rentStartedRange?.[1].endOf('day').format('YYYY-MM-DDTHH:mm:ss'),
+            expectedReturnFrom: filters.expectedReturnRange?.[0].startOf('day').format('YYYY-MM-DDTHH:mm:ss'),
+            expectedReturnTo: filters.expectedReturnRange?.[1].endOf('day').format('YYYY-MM-DDTHH:mm:ss'),
             keyword: filters.keyword
           }
         }),
@@ -202,6 +266,10 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
         storeRequest
       ]);
       setOrders(orderData);
+      setSelectedOrderIds((previous) => {
+        const visibleOrderIds = new Set(orderData.map((item) => item.id));
+        return previous.filter((id) => visibleOrderIds.has(id));
+      });
       setStoreSkus(storeSkuData);
       setAssets(assetData);
       setStores(storeData);
@@ -314,6 +382,144 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     setImportText('');
     setImportResult(null);
     setImportOpen(true);
+  }
+
+  function openPricing(record: ExternalRentalOrder) {
+    setSelectedOrder(record);
+    setPricingRevisions([]);
+    pricingForm.resetFields();
+    pricingForm.setFieldsValue(pricingFormValues(record));
+    setPricingOpen(true);
+    void loadPricingRevisions(record.id);
+  }
+
+  function openBatchPricing() {
+    const referenceOrder = selectedOrderIds.length
+      ? orders.find((item) => item.id === selectedOrderIds[0])
+      : orders.find((item) => item.orderStatus === 'ACTIVE');
+    batchPricingForm.resetFields();
+    batchPricingForm.setFieldsValue(pricingFormValues(referenceOrder));
+    setPricingPreview(null);
+    setBatchPricingResult(null);
+    setBatchPricingOpen(true);
+  }
+
+  async function loadPricingRevisions(orderId: number) {
+    const endpoint = scope === 'merchant' ? '/api/merchant/external-orders' : '/api/admin/external-orders';
+    const revisions = await http.get<unknown, ExternalOrderPricingRevision[]>(
+      `${endpoint}/${orderId}/renewal-pricing-revisions`
+    );
+    setPricingRevisions(revisions);
+  }
+
+  async function submitPricing(values: PricingForm) {
+    if (!selectedOrder) return;
+    setSubmitting(true);
+    try {
+      const endpoint = scope === 'merchant' ? '/api/merchant/external-orders' : '/api/admin/external-orders';
+      const revision = await http.post<unknown, ExternalOrderPricingRevision>(
+        `${endpoint}/${selectedOrder.id}/renewal-pricing-adjustments`,
+        pricingPayload(values)
+      );
+      if (revision.revisionStatus === 'APPLIED') {
+        message.success('补录订单续租规则已生效');
+      } else {
+        message.warning('调价记录已保存，需完成人工客户确认后生效');
+      }
+      await loadPricingRevisions(selectedOrder.id);
+      await loadAll();
+      setPricingOpen(false);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function previewBatchPricing() {
+    const values = await batchPricingForm.validateFields();
+    setSubmitting(true);
+    try {
+      const endpoint = scope === 'merchant' ? '/api/merchant/external-orders' : '/api/admin/external-orders';
+      const preview = await http.post<unknown, ExternalOrderPricingPreview>(
+        `${endpoint}/renewal-pricing/batch-preview`,
+        { filter: pricingFilterPayload(), adjustment: pricingPayload(values) }
+      );
+      setPricingPreview(preview);
+      setBatchPricingResult(null);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function submitBatchPricing(values: PricingForm) {
+    if (!pricingPreview) {
+      message.warning('请先预览命中范围');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const endpoint = scope === 'merchant' ? '/api/merchant/external-orders' : '/api/admin/external-orders';
+      const result = await http.post<unknown, ExternalOrderPricingBatchResult>(
+        `${endpoint}/renewal-pricing/batch-adjust`,
+        {
+          filter: pricingFilterPayload(),
+          adjustment: pricingPayload(values),
+          expectedMatchedCount: pricingPreview.matchedCount
+        }
+      );
+      setBatchPricingResult(result);
+      setPricingPreview(null);
+      message.success(`批次 ${result.batchNo} 已处理：成功 ${result.successCount}，失败 ${result.failedCount}`);
+      await loadAll();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function openConfirmPricing(revision: ExternalOrderPricingRevision) {
+    setSelectedPricingRevision(revision);
+    confirmPricingForm.resetFields();
+    confirmPricingForm.setFieldsValue({ confirmationMethod: 'WECHAT', customerConfirmedAt: dayjs() });
+    setConfirmPricingOpen(true);
+  }
+
+  async function submitConfirmPricing(values: ConfirmPricingForm) {
+    if (!selectedPricingRevision || !selectedOrder) return;
+    setSubmitting(true);
+    try {
+      const endpoint = scope === 'merchant' ? '/api/merchant/external-orders' : '/api/admin/external-orders';
+      await http.post(`${endpoint}/renewal-pricing-revisions/${selectedPricingRevision.id}/confirm`, {
+        ...values,
+        customerConfirmedAt: values.customerConfirmedAt?.format('YYYY-MM-DDTHH:mm:ss')
+      });
+      message.success('人工确认已登记，续租规则已生效');
+      setConfirmPricingOpen(false);
+      setSelectedPricingRevision(null);
+      await loadPricingRevisions(selectedOrder.id);
+      await loadAll();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function pricingFilterPayload() {
+    if (selectedOrderIds.length) {
+      return {
+        orderIds: selectedOrderIds,
+        storeId: scope === 'merchant' ? storeId : undefined
+      };
+    }
+    return {
+      storeId: scope === 'merchant' ? storeId : filters.storeId,
+      status: filters.status,
+      sourcePlatform: filters.sourcePlatform,
+      storeSkuId: filters.storeSkuId,
+      packageId: filters.packageId,
+      rentStartedFrom: filters.rentStartedRange?.[0].startOf('day').format('YYYY-MM-DDTHH:mm:ss'),
+      rentStartedTo: filters.rentStartedRange?.[1].endOf('day').format('YYYY-MM-DDTHH:mm:ss'),
+      expectedReturnFrom: filters.expectedReturnRange?.[0].startOf('day').format('YYYY-MM-DDTHH:mm:ss'),
+      expectedReturnTo: filters.expectedReturnRange?.[1].endOf('day').format('YYYY-MM-DDTHH:mm:ss'),
+      keyword: filters.keyword
+    };
   }
 
   function openComplete(record: ExternalRentalOrder) {
@@ -435,6 +641,18 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     <Space direction="vertical" size={16} className="page-stack">
       <Space align="center" className="toolbar" wrap>
         <Typography.Title level={3}>{scope === 'merchant' ? '外部补录订单' : '外部补录订单台账'}</Typography.Title>
+        {scope === 'admin' ? (
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="门店"
+            style={{ width: 190 }}
+            options={storeOptions}
+            value={filters.storeId}
+            onChange={(value) => setFilters((prev) => ({ ...prev, storeId: value, storeSkuId: undefined, packageId: undefined }))}
+          />
+        ) : null}
         <Select
           allowClear
           placeholder="订单状态"
@@ -451,6 +669,35 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           value={filters.sourcePlatform}
           onChange={(value) => setFilters((prev) => ({ ...prev, sourcePlatform: value }))}
         />
+        <Select
+          allowClear
+          showSearch
+          optionFilterProp="label"
+          placeholder="门店商品"
+          style={{ width: 210 }}
+          options={filterStoreSkus.map((item) => ({ label: item.displayName, value: item.id }))}
+          value={filters.storeSkuId}
+          onChange={(value) => setFilters((prev) => ({ ...prev, storeSkuId: value, packageId: undefined }))}
+        />
+        <Select
+          allowClear
+          placeholder="SKU"
+          style={{ width: 170 }}
+          options={filterPackages.map((item) => ({ label: item.packageName, value: item.packageId }))}
+          value={filters.packageId}
+          disabled={!filters.storeSkuId}
+          onChange={(value) => setFilters((prev) => ({ ...prev, packageId: value }))}
+        />
+        <DatePicker.RangePicker
+          placeholder={['起租开始', '起租结束']}
+          value={filters.rentStartedRange}
+          onChange={(value) => setFilters((prev) => ({ ...prev, rentStartedRange: value as [Dayjs, Dayjs] | undefined }))}
+        />
+        <DatePicker.RangePicker
+          placeholder={['预计归还开始', '预计归还结束']}
+          value={filters.expectedReturnRange}
+          onChange={(value) => setFilters((prev) => ({ ...prev, expectedReturnRange: value as [Dayjs, Dayjs] | undefined }))}
+        />
         <Input.Search
           allowClear
           placeholder="搜索单号/客户/手机号/资产"
@@ -458,6 +705,9 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           onSearch={(value) => setFilters((prev) => ({ ...prev, keyword: value || undefined }))}
         />
         <Button onClick={() => void loadAll()}>刷新</Button>
+        <Button icon={<DollarOutlined />} onClick={openBatchPricing}>
+          {selectedOrderIds.length ? `调价已选 ${selectedOrderIds.length} 单` : '按条件批量调价'}
+        </Button>
         <Button onClick={openImport}>批量导入</Button>
         <Button type="primary" onClick={openCreate}>新建补录单</Button>
       </Space>
@@ -468,6 +718,10 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           size="small"
           loading={loading}
           dataSource={orders}
+          rowSelection={{
+            selectedRowKeys: selectedOrderIds,
+            onChange: (keys) => setSelectedOrderIds(keys.map(Number))
+          }}
           pagination={false}
           locale={{ emptyText: <Empty description="暂无补录订单" /> }}
           columns={[
@@ -501,12 +755,13 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               ) : <Tag color="warning">待计算</Tag>
             },
             { title: '签单费', dataIndex: 'signFeeAmount', width: 110, render: moneyText },
+            { title: '续租规则', width: 260, render: (_, record) => externalRenewalText(record) },
             { title: '状态', dataIndex: 'orderStatus', width: 110, render: statusTag },
             { title: '起租时间', dataIndex: 'rentStartedAt', width: 170, render: dateText },
             { title: '预计归还', dataIndex: 'expectedReturnAt', width: 170, render: dateText },
             {
               title: '操作',
-              width: 370,
+              width: 470,
               fixed: 'right',
               render: (_, record) => (
                 <Space>
@@ -514,6 +769,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
                   <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>编辑</Button>
                   {record.orderStatus === 'ACTIVE' ? (
                     <>
+                      <Button size="small" icon={<DollarOutlined />} onClick={() => openPricing(record)}>续租调价</Button>
                       <Button size="small" onClick={() => openComplete(record)}>完结</Button>
                       <Button size="small" danger onClick={() => openTerminate(record)}>提前终止</Button>
                     </>
@@ -539,7 +795,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               )
             }
           ]}
-          scroll={{ x: 2000 }}
+          scroll={{ x: 2200 }}
         />
       </div>
 
@@ -789,6 +1045,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               <Descriptions.Item label="门店商品">{selectedOrder.storeSkuDisplayName || '-'}</Descriptions.Item>
               <Descriptions.Item label="SKU">{selectedOrder.packageName || '-'}</Descriptions.Item>
               <Descriptions.Item label="租期">{leaseText(selectedOrder.leaseUnit, selectedOrder.leaseValue, selectedOrder.totalPeriods)}</Descriptions.Item>
+              <Descriptions.Item label="续租规则" span={2}>{externalRenewalText(selectedOrder)}</Descriptions.Item>
               <Descriptions.Item label="主资产">{selectedOrder.frameAssetSerialNo || '-'}</Descriptions.Item>
               <Descriptions.Item label="第二资产">{selectedOrder.batteryAssetSerialNo || '-'}</Descriptions.Item>
               <Descriptions.Item label="外部订单租金">{moneyText(selectedOrder.externalRentalAmount)}</Descriptions.Item>
@@ -829,6 +1086,134 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             </div>
           </Space>
         ) : null}
+      </Modal>
+
+      <Modal
+        title="补录订单续租调价"
+        open={pricingOpen}
+        onCancel={() => setPricingOpen(false)}
+        onOk={() => pricingForm.submit()}
+        confirmLoading={submitting}
+        width={820}
+        destroyOnHidden
+      >
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Alert
+            type="info"
+            showIcon
+            message={selectedOrder ? `${selectedOrder.recordNo} / ${selectedOrder.customerName}` : '续租调价'}
+            description="降价、关闭自动续租等对客户有利的变更可立即生效；涨价、新增收费、切换计费模式等需登记人工客户确认，未确认前保持旧规则。"
+          />
+          <Form form={pricingForm} layout="vertical" onFinish={submitPricing}>
+            {renewalPricingFields(pricingEnabled, pricingBillingMode, pricingCustomerConfirmed)}
+          </Form>
+          <div>
+            <Typography.Title level={5}>调价历史</Typography.Title>
+            <Table
+              rowKey="id"
+              size="small"
+              pagination={false}
+              dataSource={pricingRevisions}
+              columns={[
+                { title: '批次', dataIndex: 'batchNo', render: textOrDash },
+                { title: '状态', dataIndex: 'revisionStatus', render: pricingRevisionTag },
+                { title: '原因', dataIndex: 'reason', ellipsis: true },
+                { title: '确认方式', dataIndex: 'confirmationMethod', render: confirmationMethodText },
+                { title: '创建时间', dataIndex: 'createdAt', render: dateText },
+                {
+                  title: '操作',
+                  render: (_, record) => record.revisionStatus === 'PENDING_CUSTOMER_CONFIRMATION' ? (
+                    <Button size="small" onClick={() => openConfirmPricing(record)}>登记确认并生效</Button>
+                  ) : '-'
+                }
+              ]}
+            />
+          </div>
+        </Space>
+      </Modal>
+
+      <Modal
+        title="外部补录订单批量续租调价"
+        open={batchPricingOpen}
+        onCancel={() => setBatchPricingOpen(false)}
+        width={960}
+        destroyOnHidden
+        footer={[
+          <Button key="cancel" onClick={() => setBatchPricingOpen(false)}>关闭</Button>,
+          <Button key="preview" loading={submitting} onClick={() => void previewBatchPricing()}>预览命中范围</Button>,
+          <Popconfirm
+            key="apply"
+            title="确认执行批量调价？"
+            description={pricingPreview ? `将按预览的 ${pricingPreview.matchedCount} 笔命中订单执行，数量变化时后端会拦截。` : '请先预览范围。'}
+            onConfirm={() => batchPricingForm.submit()}
+            disabled={!pricingPreview}
+          >
+            <Button type="primary" loading={submitting} disabled={!pricingPreview}>执行批量调价</Button>
+          </Popconfirm>
+        ]}
+      >
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Alert
+            type="warning"
+            showIcon
+            message={selectedOrderIds.length ? `按已勾选的 ${selectedOrderIds.length} 笔订单处理` : '按当前页面筛选条件处理'}
+            description="执行前必须先预览。如果勾选“已逐单人工确认”，请确保命中的每位客户均已确认；否则需确认的变更会批量生成待确认记录，不会直接生效。"
+          />
+          <Form
+            form={batchPricingForm}
+            layout="vertical"
+            onFinish={submitBatchPricing}
+            onValuesChange={() => { setPricingPreview(null); setBatchPricingResult(null); }}
+          >
+            {renewalPricingFields(batchPricingEnabled, batchPricingBillingMode, batchCustomerConfirmed)}
+          </Form>
+          {pricingPreview ? (
+            <Alert
+              type={pricingPreview.blockedPendingCount || pricingPreview.skippedInactiveCount ? 'warning' : 'success'}
+              showIcon
+              message={`命中 ${pricingPreview.matchedCount} 笔，可处理 ${pricingPreview.eligibleCount} 笔`}
+              description={`立即生效 ${pricingPreview.immediateApplyCount} 笔；已确认生效 ${pricingPreview.confirmedApplyCount} 笔；待人工确认 ${pricingPreview.pendingConfirmationCount} 笔；规则相同 ${pricingPreview.unchangedCount} 笔；已有待确认 ${pricingPreview.blockedPendingCount} 笔；非进行中 ${pricingPreview.skippedInactiveCount} 笔。`}
+            />
+          ) : null}
+          {batchPricingResult ? (
+            <div className="section">
+              <Typography.Text>批次：{batchPricingResult.batchNo}</Typography.Text>
+              <Table
+                rowKey="externalOrderId"
+                size="small"
+                pagination={{ pageSize: 10 }}
+                dataSource={batchPricingResult.results}
+                columns={[
+                  { title: '台账号', dataIndex: 'recordNo' },
+                  { title: '结果', dataIndex: 'success', render: (value) => <Tag color={value ? 'green' : 'red'}>{value ? '成功' : '失败'}</Tag> },
+                  { title: '状态', dataIndex: 'revisionStatus', render: (value) => value ? pricingRevisionTag(value) : '-' },
+                  { title: '说明', dataIndex: 'message' }
+                ]}
+              />
+            </div>
+          ) : null}
+        </Space>
+      </Modal>
+
+      <Modal
+        title="登记客户确认"
+        open={confirmPricingOpen}
+        onCancel={() => setConfirmPricingOpen(false)}
+        onOk={() => confirmPricingForm.submit()}
+        confirmLoading={submitting}
+        destroyOnHidden
+      >
+        <Form form={confirmPricingForm} layout="vertical" onFinish={submitConfirmPricing}>
+          <Form.Item name="confirmationMethod" label="确认方式" rules={[{ required: true }]}>
+            <Select options={confirmationMethodOptions} />
+          </Form.Item>
+          <Form.Item name="confirmationReference" label="确认凭证/备注" rules={[{ required: true, message: '请填写微信记录、电话记录、纸质文件编号或其他说明' }]}>
+            <Input.TextArea rows={3} maxLength={500} />
+          </Form.Item>
+          <Form.Item name="customerConfirmedAt" label="确认时间">
+            <DatePicker showTime style={{ width: '100%' }} />
+          </Form.Item>
+        </Form>
       </Modal>
     </Space>
   );
@@ -877,6 +1262,9 @@ function operationText(value?: string | null) {
   if (value === 'EDIT') {
     return '编辑';
   }
+  if (value === 'RENEWAL_PRICING_ADJUSTMENT') {
+    return '续租调价';
+  }
   if (value === 'COMPLETE') {
     return '正常完结';
   }
@@ -914,6 +1302,198 @@ function leaseText(leaseUnit?: string | null, leaseValue?: number | null, totalP
     return '-';
   }
   return `${leaseValue}${leaseUnit === 'DAY' ? '天' : '月'} / ${totalPeriods}期`;
+}
+
+const confirmationMethodOptions = [
+  { label: '微信确认', value: 'WECHAT' },
+  { label: '电话确认', value: 'PHONE' },
+  { label: '纸质文件', value: 'PAPER' },
+  { label: '其他方式', value: 'OTHER' }
+];
+
+function pricingFormValues(order?: ExternalRentalOrder): Partial<PricingForm> {
+  return {
+    autoRenewEnabled: order?.autoRenewEnabled ?? true,
+    renewalUnit: order?.renewalUnit ?? 'MONTH',
+    renewalValue: order?.renewalValue ?? 1,
+    renewalAmount: order?.renewalAmount == null ? undefined : Number(order.renewalAmount),
+    renewalBillingMode: order?.renewalBillingMode ?? 'PERIOD',
+    renewalDailyAmount: order?.renewalDailyAmount == null ? undefined : Number(order.renewalDailyAmount),
+    renewalDailyCapEnabled: order?.renewalDailyCapEnabled ?? true,
+    renewalGraceHours: order?.renewalGraceHours ?? 0,
+    overdueDailyAmount: order?.overdueDailyAmount == null ? undefined : Number(order.overdueDailyAmount),
+    reason: '',
+    customerConfirmed: false,
+    confirmationMethod: 'WECHAT',
+    confirmationReference: '',
+    customerConfirmedAt: dayjs()
+  };
+}
+
+function pricingPayload(values: PricingForm) {
+  const enabled = Boolean(values.autoRenewEnabled);
+  const dailyMode = enabled && values.renewalBillingMode === 'DAILY_CAPPED';
+  const customerConfirmed = Boolean(values.customerConfirmed);
+  return {
+    autoRenewEnabled: enabled,
+    renewalUnit: enabled ? values.renewalUnit : null,
+    renewalValue: enabled ? values.renewalValue : null,
+    renewalAmount: enabled ? values.renewalAmount : null,
+    renewalBillingMode: enabled ? values.renewalBillingMode : 'PERIOD',
+    renewalDailyAmount: dailyMode ? values.renewalDailyAmount : null,
+    renewalDailyCapEnabled: dailyMode ? values.renewalDailyCapEnabled : true,
+    renewalGraceHours: dailyMode ? values.renewalGraceHours : 0,
+    overdueDailyAmount: dailyMode ? values.overdueDailyAmount : null,
+    reason: values.reason.trim(),
+    customerConfirmed,
+    confirmationMethod: customerConfirmed ? values.confirmationMethod : null,
+    confirmationReference: customerConfirmed ? values.confirmationReference?.trim() : null,
+    customerConfirmedAt: customerConfirmed ? values.customerConfirmedAt?.format('YYYY-MM-DDTHH:mm:ss') : null
+  };
+}
+
+function renewalPricingFields(
+  enabled?: boolean,
+  billingMode?: PricingForm['renewalBillingMode'],
+  customerConfirmed?: boolean
+) {
+  return (
+    <>
+      <Form.Item name="autoRenewEnabled" valuePropName="checked">
+        <Checkbox>开启自动续租</Checkbox>
+      </Form.Item>
+      <Space.Compact block>
+        <Form.Item
+          style={{ width: '34%' }}
+          name="renewalUnit"
+          label="整期单位"
+          rules={enabled ? [{ required: true, message: '请选择整期单位' }] : []}
+        >
+          <Select
+            disabled={!enabled}
+            options={[{ label: '天', value: 'DAY' }, { label: '月', value: 'MONTH' }]}
+          />
+        </Form.Item>
+        <Form.Item
+          style={{ width: '33%' }}
+          name="renewalValue"
+          label="整期周期"
+          rules={enabled ? [{ required: true, message: '请输入整期周期' }] : []}
+        >
+          <InputNumber disabled={!enabled} min={1} max={3650} precision={0} style={{ width: '100%' }} />
+        </Form.Item>
+        <Form.Item
+          style={{ width: '33%' }}
+          name="renewalAmount"
+          label="整期续租价"
+          rules={enabled ? [{ required: true, message: '请输入整期续租价' }] : []}
+        >
+          <InputNumber disabled={!enabled} min={0.01} precision={2} addonBefore="¥" style={{ width: '100%' }} />
+        </Form.Item>
+      </Space.Compact>
+      <Form.Item name="renewalBillingMode" label="续租计费方式" rules={[{ required: true, message: '请选择续租计费方式' }]}>
+        <Select
+          disabled={!enabled}
+          options={[
+            { label: '只按整期续租', value: 'PERIOD' },
+            { label: '按日计费（可选整期封顶）', value: 'DAILY_CAPPED' }
+          ]}
+        />
+      </Form.Item>
+      {enabled && billingMode === 'DAILY_CAPPED' ? (
+        <>
+          <Space.Compact block>
+            <Form.Item
+              style={{ width: '34%' }}
+              name="renewalDailyAmount"
+              label="正常日续租价"
+              rules={[{ required: true, message: '请输入正常日续租价' }]}
+            >
+              <InputNumber min={0.01} precision={2} addonBefore="¥" style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item style={{ width: '33%' }} name="overdueDailyAmount" label="逾期日占用费">
+              <InputNumber min={0.01} precision={2} addonBefore="¥" placeholder="默认同日续租价" style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item
+              style={{ width: '33%' }}
+              name="renewalGraceHours"
+              label="宽限小时"
+              rules={[{ required: true, message: '请输入宽限小时' }]}
+            >
+              <InputNumber min={0} max={72} precision={0} style={{ width: '100%' }} />
+            </Form.Item>
+          </Space.Compact>
+          <Form.Item name="renewalDailyCapEnabled" valuePropName="checked">
+            <Checkbox>按日累计达到整期续租价后封顶</Checkbox>
+          </Form.Item>
+        </>
+      ) : null}
+      <Form.Item name="reason" label="调整原因" rules={[{ required: true, message: '请输入调价原因' }]}>
+        <Input.TextArea rows={3} maxLength={255} showCount />
+      </Form.Item>
+      <Form.Item name="customerConfirmed" valuePropName="checked">
+        <Checkbox>已逐单人工取得客户确认，本次直接生效</Checkbox>
+      </Form.Item>
+      {customerConfirmed ? (
+        <>
+          <Alert
+            type="warning"
+            showIcon
+            message="请如实登记每位客户的确认凭证"
+            description="批量操作勾选后，系统会把同一确认信息写入每笔命中订单的调价历史。建议在凭证说明中填写批次记录位置或逐单确认清单。"
+            style={{ marginBottom: 16 }}
+          />
+          <Space.Compact block>
+            <Form.Item
+              style={{ width: '38%' }}
+              name="confirmationMethod"
+              label="确认方式"
+              rules={[{ required: true, message: '请选择确认方式' }]}
+            >
+              <Select options={[...confirmationMethodOptions]} />
+            </Form.Item>
+            <Form.Item style={{ width: '62%' }} name="customerConfirmedAt" label="确认时间">
+              <DatePicker showTime style={{ width: '100%' }} />
+            </Form.Item>
+          </Space.Compact>
+          <Form.Item
+            name="confirmationReference"
+            label="确认凭证/备注"
+            rules={[{ required: true, message: '请填写微信记录、电话记录、纸质文件编号或其他说明' }]}
+          >
+            <Input.TextArea rows={3} maxLength={500} showCount />
+          </Form.Item>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function externalRenewalText(order: ExternalRentalOrder) {
+  if (!order.autoRenewEnabled) {
+    return '不自动续租';
+  }
+  const unit = order.renewalUnit === 'DAY' ? '天' : '月';
+  const periodText = `每 ${order.renewalValue || 1}${unit} ${moneyText(order.renewalAmount)}`;
+  if (order.renewalBillingMode !== 'DAILY_CAPPED') {
+    return periodText;
+  }
+  const capText = order.renewalDailyCapEnabled ? `，整期封顶 ${moneyText(order.renewalAmount)}` : '，不设整期封顶';
+  const overdueText = order.overdueDailyAmount == null ? '' : `，逾期 ${moneyText(order.overdueDailyAmount)}/天`;
+  const graceText = order.renewalGraceHours ? `，宽限 ${order.renewalGraceHours} 小时` : '';
+  return `按日 ${moneyText(order.renewalDailyAmount)}/天${capText}${overdueText}${graceText}`;
+}
+
+function pricingRevisionTag(value?: string | null) {
+  if (value === 'APPLIED') return <Tag color="success">已生效</Tag>;
+  if (value === 'PENDING_CUSTOMER_CONFIRMATION') return <Tag color="warning">待客户确认</Tag>;
+  if (value === 'CANCELLED') return <Tag>已取消</Tag>;
+  return <Tag>{value || '-'}</Tag>;
+}
+
+function confirmationMethodText(value?: string | null) {
+  if (!value) return '-';
+  return confirmationMethodOptions.find((item) => item.value === value)?.label ?? value;
 }
 
 function parseImportRows(input: string) {

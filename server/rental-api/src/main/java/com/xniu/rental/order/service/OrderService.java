@@ -288,6 +288,11 @@ public class OrderService {
             packagePrice.renewalUnit() == null ? null : packagePrice.renewalUnit().name(),
             packagePrice.renewalValue(),
             packagePrice.renewalAmount(),
+            packagePrice.renewalBillingMode().name(),
+            packagePrice.renewalDailyAmount(),
+            packagePrice.renewalDailyCapEnabled(),
+            packagePrice.renewalGraceHours(),
+            packagePrice.overdueDailyAmount(),
             request.expectedPickupAt()
         ));
         orderRepository.addItem(
@@ -397,7 +402,12 @@ public class OrderService {
                 ? product.packagePrice().renewalUnit() == null ? null : product.packagePrice().renewalUnit().name()
                 : order.renewalUnit(),
             productSelectionChanged ? product.packagePrice().renewalValue() : order.renewalValue(),
-            productSelectionChanged ? product.packagePrice().renewalAmount() : order.renewalAmount()
+            productSelectionChanged ? product.packagePrice().renewalAmount() : order.renewalAmount(),
+            productSelectionChanged ? product.packagePrice().renewalBillingMode().name() : order.renewalBillingMode(),
+            productSelectionChanged ? product.packagePrice().renewalDailyAmount() : order.renewalDailyAmount(),
+            productSelectionChanged ? product.packagePrice().renewalDailyCapEnabled() : order.renewalDailyCapEnabled(),
+            productSelectionChanged ? product.packagePrice().renewalGraceHours() : order.renewalGraceHours(),
+            productSelectionChanged ? product.packagePrice().overdueDailyAmount() : order.overdueDailyAmount()
         ));
 
         replaceEditableOrderItems(updated, frameAsset);
@@ -736,6 +746,11 @@ public class OrderService {
             order.renewalUnit(),
             order.renewalValue(),
             order.renewalAmount(),
+            order.renewalBillingMode(),
+            order.renewalDailyAmount(),
+            order.renewalDailyCapEnabled(),
+            order.renewalGraceHours(),
+            order.overdueDailyAmount(),
             order.renewalCount(),
             leaseBonusSummary.reviewDays(),
             leaseBonusSummary.campaignDays(),

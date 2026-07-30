@@ -110,8 +110,10 @@ public class OrderRepository {
                  frame_asset_id, battery_asset_id, order_status, rental_amount, verification_amount,
                  sign_fee_amount, deposit_amount, payable_amount, paid_amount, settlement_snapshot_id,
                  lease_unit, lease_value, total_periods, lease_multiplier, bill_day_mode, bill_day, ordered_at,
-                 auto_renew_enabled, renewal_unit, renewal_value, renewal_amount, expected_pickup_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 auto_renew_enabled, renewal_unit, renewal_value, renewal_amount, renewal_billing_mode,
+                 renewal_daily_amount, renewal_daily_cap_enabled, renewal_grace_hours, overdue_daily_amount,
+                 expected_pickup_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.orderNo());
             setNullableLong(statement, 2, row.userAccountId());
@@ -151,7 +153,12 @@ public class OrderRepository {
                 statement.setInt(29, row.renewalValue());
             }
             statement.setBigDecimal(30, row.renewalAmount());
-            statement.setObject(31, row.expectedPickupAt());
+            statement.setString(31, row.renewalBillingMode());
+            statement.setBigDecimal(32, row.renewalDailyAmount());
+            statement.setBoolean(33, Boolean.TRUE.equals(row.renewalDailyCapEnabled()));
+            statement.setInt(34, row.renewalGraceHours() == null ? 0 : row.renewalGraceHours());
+            statement.setBigDecimal(35, row.overdueDailyAmount());
+            statement.setObject(36, row.expectedPickupAt());
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
@@ -297,7 +304,12 @@ public class OrderRepository {
                 auto_renew_enabled = ?,
                 renewal_unit = ?,
                 renewal_value = ?,
-                renewal_amount = ?
+                renewal_amount = ?,
+                renewal_billing_mode = ?,
+                renewal_daily_amount = ?,
+                renewal_daily_cap_enabled = ?,
+                renewal_grace_hours = ?,
+                overdue_daily_amount = ?
             WHERE id = ?
             """,
             row.userAccountId(),
@@ -326,6 +338,11 @@ public class OrderRepository {
             row.renewalUnit(),
             row.renewalValue(),
             row.renewalAmount(),
+            row.renewalBillingMode(),
+            row.renewalDailyAmount(),
+            row.renewalDailyCapEnabled(),
+            row.renewalGraceHours(),
+            row.overdueDailyAmount(),
             row.id()
         );
         return findById(row.id()).orElseThrow();
@@ -337,6 +354,21 @@ public class OrderRepository {
             SET expected_return_at = ?, order_status = ?
             WHERE id = ?
             """, expectedReturnAt, targetStatus.name(), id);
+        return findById(id).orElseThrow();
+    }
+
+    public RentalOrder updateRenewalPricing(Long id, com.xniu.rental.pricing.model.RenewalPricingRule rule) {
+        jdbcTemplate.update("""
+            UPDATE rental_order
+            SET auto_renew_enabled = ?, renewal_unit = ?, renewal_value = ?, renewal_amount = ?,
+                renewal_billing_mode = ?, renewal_daily_amount = ?, renewal_daily_cap_enabled = ?,
+                renewal_grace_hours = ?, overdue_daily_amount = ?
+            WHERE id = ?
+            """,
+            rule.autoRenewEnabled(), rule.renewalUnit(), rule.renewalValue(), rule.renewalAmount(),
+            rule.renewalBillingMode().name(), rule.renewalDailyAmount(), rule.renewalDailyCapEnabled(),
+            rule.renewalGraceHours(), rule.overdueDailyAmount(), id
+        );
         return findById(id).orElseThrow();
     }
 
@@ -472,6 +504,11 @@ public class OrderRepository {
         String renewalUnit,
         Integer renewalValue,
         BigDecimal renewalAmount,
+        String renewalBillingMode,
+        BigDecimal renewalDailyAmount,
+        Boolean renewalDailyCapEnabled,
+        Integer renewalGraceHours,
+        BigDecimal overdueDailyAmount,
         LocalDateTime expectedPickupAt
     ) {
     }
@@ -503,7 +540,12 @@ public class OrderRepository {
         Boolean autoRenewEnabled,
         String renewalUnit,
         Integer renewalValue,
-        BigDecimal renewalAmount
+        BigDecimal renewalAmount,
+        String renewalBillingMode,
+        BigDecimal renewalDailyAmount,
+        Boolean renewalDailyCapEnabled,
+        Integer renewalGraceHours,
+        BigDecimal overdueDailyAmount
     ) {
     }
 
@@ -571,6 +613,11 @@ public class OrderRepository {
                 rs.getString("renewal_unit"),
                 getNullableInt(rs, "renewal_value"),
                 rs.getBigDecimal("renewal_amount"),
+                rs.getString("renewal_billing_mode"),
+                rs.getBigDecimal("renewal_daily_amount"),
+                rs.getBoolean("renewal_daily_cap_enabled"),
+                rs.getInt("renewal_grace_hours"),
+                rs.getBigDecimal("overdue_daily_amount"),
                 rs.getInt("renewal_count"),
                 rs.getObject("expected_pickup_at", LocalDateTime.class),
                 rs.getObject("lease_started_at", LocalDateTime.class),
