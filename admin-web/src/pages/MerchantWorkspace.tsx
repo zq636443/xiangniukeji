@@ -59,6 +59,7 @@ import {
   percentageChange,
   sumNumbers,
   valueByBuckets,
+  type CockpitCustomRange,
   type CockpitPeriod
 } from '../utils/dashboard';
 import type {
@@ -330,7 +331,9 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
   const [overdues, setOverdues] = useState<OverdueCase[]>([]);
   const [incomeEntries, setIncomeEntries] = useState<SettlementIncomeEntry[]>([]);
   const [statements, setStatements] = useState<SettlementStatement[]>([]);
-  const [period, setPeriod] = useState<CockpitPeriod>('30D');
+  const [period, setPeriod] = useState<CockpitPeriod>('MONTH');
+  const [customRange, setCustomRange] = useState<CockpitCustomRange>(null);
+  const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const canReadSettlement = account.permissions.includes('settlement.read') || account.permissions.includes('system.admin');
@@ -378,7 +381,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
   }, [storeId, canReadSettlement]);
 
   const currentStore = stores.find((item) => item.id === storeId);
-  const window = useMemo(() => getDateWindow(period), [period]);
+  const window = useMemo(() => getDateWindow(period, new Date(), customRange, selectedMonth), [customRange, period, selectedMonth]);
   const dashboard = useMemo(() => {
     const periodOrders = orders.filter((item) => isInWindow(item.orderedAt, window.start, window.end));
     const previousOrders = orders.filter((item) => isInWindow(item.orderedAt, window.previousStart, window.previousEnd));
@@ -497,6 +500,10 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
         description={`${account.displayName} · ${window.label}订单、收益、履约任务与资产状态总览。`}
         period={period}
         onPeriodChange={setPeriod}
+        customRange={customRange}
+        onCustomRangeChange={setCustomRange}
+        selectedMonth={selectedMonth}
+        onSelectedMonthChange={setSelectedMonth}
         onRefresh={loadData}
         loading={loading}
         scope={<Tag color="green"><ShopOutlined /> {currentStore?.storeName || `门店 ${storeId}`}</Tag>}

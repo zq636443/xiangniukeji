@@ -28,6 +28,7 @@ import {
   percentageChange,
   sumNumbers,
   valueByBuckets,
+  type CockpitCustomRange,
   type CockpitPeriod
 } from '../utils/dashboard';
 
@@ -52,7 +53,9 @@ export function InvestorOperationsCockpit({ account }: InvestorOperationsCockpit
   const [assets, setAssets] = useState<Asset[]>([]);
   const [entries, setEntries] = useState<SettlementIncomeEntry[]>([]);
   const [statements, setStatements] = useState<SettlementStatement[]>([]);
-  const [period, setPeriod] = useState<CockpitPeriod>('90D');
+  const [period, setPeriod] = useState<CockpitPeriod>('MONTH');
+  const [customRange, setCustomRange] = useState<CockpitCustomRange>(null);
+  const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -79,7 +82,7 @@ export function InvestorOperationsCockpit({ account }: InvestorOperationsCockpit
     void loadData();
   }, []);
 
-  const window = useMemo(() => getDateWindow(period), [period]);
+  const window = useMemo(() => getDateWindow(period, new Date(), customRange, selectedMonth), [customRange, period, selectedMonth]);
   const actualEntries = useMemo(
     () => entries.filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN'),
     [entries]
@@ -177,12 +180,11 @@ export function InvestorOperationsCockpit({ account }: InvestorOperationsCockpit
         title="资产方经营驾驶舱"
         description={`${account.displayName} · 资产投入、当前投放效率、收益回报与低效资产总览。`}
         period={period}
-        periodOptions={[
-          { label: '近 30 天', value: '30D' },
-          { label: '近 90 天', value: '90D' },
-          { label: '本年度', value: 'YTD' }
-        ]}
         onPeriodChange={setPeriod}
+        customRange={customRange}
+        onCustomRangeChange={setCustomRange}
+        selectedMonth={selectedMonth}
+        onSelectedMonthChange={setSelectedMonth}
         onRefresh={loadData}
         loading={loading}
         scope={<Tag color="purple">名下全部资产</Tag>}

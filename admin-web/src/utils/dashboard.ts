@@ -1,4 +1,6 @@
-export type CockpitPeriod = 'TODAY' | '7D' | '30D' | '90D' | 'YTD';
+export type CockpitPeriod = 'MONTH' | 'TODAY' | '7D' | '30D' | '90D' | '180D' | '365D' | 'CUSTOM';
+
+export type CockpitCustomRange = [Date, Date] | null;
 
 export type DateWindow = {
   start: Date;
@@ -15,17 +17,49 @@ export type TimeBucket = {
   end: Date;
 };
 
-export function getDateWindow(period: CockpitPeriod, now = new Date()): DateWindow {
+export function getDateWindow(
+  period: CockpitPeriod,
+  now = new Date(),
+  customRange: CockpitCustomRange = null,
+  selectedMonth = now
+): DateWindow {
   const end = endOfDay(now);
   let start: Date;
   let label: string;
 
-  if (period === 'TODAY') {
+  if (period === 'MONTH') {
+    const month = normalizeSelectedMonth(selectedMonth, now);
+    const monthStart = startOfMonth(month);
+    const monthEnd = endOfMonth(month);
+    const currentMonth = isSameMonth(month, now);
+    const selectedEnd = currentMonth && monthEnd > end ? end : monthEnd;
+    const previousMonthStart = startOfMonth(addMonths(monthStart, -1));
+    const previousMonthEnd = endOfMonth(previousMonthStart);
+    const previousEnd = currentMonth
+      ? endOfDay(new Date(
+        previousMonthStart.getFullYear(),
+        previousMonthStart.getMonth(),
+        Math.min(selectedEnd.getDate(), previousMonthEnd.getDate())
+      ))
+      : previousMonthEnd;
+    return {
+      start: monthStart,
+      end: selectedEnd,
+      previousStart: previousMonthStart,
+      previousEnd,
+      label: `${monthStart.getFullYear()}年${monthStart.getMonth() + 1}月`
+    };
+  } else if (period === 'TODAY') {
     start = startOfDay(now);
     label = '今日';
-  } else if (period === 'YTD') {
-    start = new Date(now.getFullYear(), 0, 1);
-    label = '本年度';
+  } else if (period === 'CUSTOM') {
+    const [customStart, customEnd] = normalizeCustomRange(customRange, now);
+    start = customStart;
+    label = `${dateKey(customStart)} 至 ${dateKey(customEnd)}`;
+    const duration = customEnd.getTime() - customStart.getTime() + 1;
+    const previousEnd = new Date(customStart.getTime() - 1);
+    const previousStart = new Date(previousEnd.getTime() - duration + 1);
+    return { start: customStart, end: customEnd, previousStart, previousEnd, label };
   } else {
     const days = Number(period.replace('D', ''));
     start = startOfDay(addDays(now, -(days - 1)));
@@ -36,6 +70,14 @@ export function getDateWindow(period: CockpitPeriod, now = new Date()): DateWind
   const previousEnd = new Date(start.getTime() - 1);
   const previousStart = new Date(previousEnd.getTime() - duration + 1);
   return { start, end, previousStart, previousEnd, label };
+}
+
+export function defaultCockpitCustomRange(now = new Date()): [Date, Date] {
+  return [startOfDay(addDays(now, -29)), endOfDay(now)];
+}
+
+export function cockpitRangeDays(range: [Date, Date]) {
+  return Math.abs(differenceInCalendarDays(range[1], range[0])) + 1;
 }
 
 export function isInWindow(value: string | null | undefined, start: Date, end: Date) {
@@ -117,6 +159,22 @@ function addDays(value: Date, days: number) {
   return next;
 }
 
+function addMonths(value: Date, months: number) {
+  return new Date(value.getFullYear(), value.getMonth() + months, 1);
+}
+
+function startOfMonth(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), 1);
+}
+
+function endOfMonth(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+
+function isSameMonth(left: Date, right: Date) {
+  return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth();
+}
+
 function differenceInCalendarDays(left: Date, right: Date) {
   const leftDay = Date.UTC(left.getFullYear(), left.getMonth(), left.getDate());
   const rightDay = Date.UTC(right.getFullYear(), right.getMonth(), right.getDate());
@@ -127,4 +185,25 @@ function dateKey(value: Date) {
   const month = String(value.getMonth() + 1).padStart(2, '0');
   const day = String(value.getDate()).padStart(2, '0');
   return `${value.getFullYear()}-${month}-${day}`;
+}
+
+function normalizeCustomRange(customRange: CockpitCustomRange, now: Date): [Date, Date] {
+  const fallback = defaultCockpitCustomRange(now);
+  if (!customRange) return fallback;
+  const first = startOfDay(customRange[0]);
+  const second = endOfDay(customRange[1]);
+  if (!Number.isFinite(first.getTime()) || !Number.isFinite(second.getTime())) return fallback;
+  const todayEnd = endOfDay(now);
+  const rawStart = first <= second ? first : startOfDay(second);
+  const rawEnd = first <= second ? second : endOfDay(first);
+  const end = rawEnd > todayEnd ? todayEnd : rawEnd;
+  const start = rawStart > end ? startOfDay(end) : rawStart;
+  const boundedStart = cockpitRangeDays([start, end]) > 365 ? startOfDay(addDays(end, -364)) : start;
+  return [boundedStart, end];
+}
+
+function normalizeSelectedMonth(selectedMonth: Date, now: Date) {
+  if (!Number.isFinite(selectedMonth.getTime())) return startOfMonth(now);
+  const month = startOfMonth(selectedMonth);
+  return month > startOfMonth(now) ? startOfMonth(now) : month;
 }

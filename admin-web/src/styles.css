@@ -716,6 +716,11 @@ body {
   align-items: center;
 }
 
+.cockpit-period-select,
+.cockpit-month-picker {
+  width: 150px;
+}
+
 .cockpit-metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1843,8 +1848,10 @@ body {
     justify-content: flex-start;
   }
 
-  .cockpit-header-controls .ant-segmented {
-    flex: 1 1 auto;
+  .cockpit-period-select,
+  .cockpit-month-picker,
+  .cockpit-header-controls .ant-picker {
+    width: 100%;
   }
 
   .cockpit-metric-grid {

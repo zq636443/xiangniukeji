@@ -4,11 +4,19 @@ import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   ExclamationCircleOutlined,
+  EyeOutlined,
+  EditOutlined,
   RiseOutlined,
   WalletOutlined
 } from '@ant-design/icons';
-import { Alert, Button, Empty, Progress, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Empty, Progress, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
+import {
+  BusinessOrderDialogs,
+  canEditDashboardBusiness,
+  dashboardBusinessEditReason,
+  type DashboardBusinessRecord
+} from '../components/BusinessOrderDialogs';
 import {
   CockpitAttentionList,
   CockpitHeader,
@@ -27,7 +35,8 @@ import type {
   RentalBill,
   RentalOrder,
   SettlementIncomeEntry,
-  Store
+  Store,
+  StoreSku
 } from '../types/api';
 import {
   buildTimeBuckets,
@@ -38,6 +47,7 @@ import {
   percentageChange,
   sumNumbers,
   valueByBuckets,
+  type CockpitCustomRange,
   type CockpitPeriod
 } from '../utils/dashboard';
 
@@ -50,6 +60,7 @@ type DashboardData = {
   payments: PaymentOrder[];
   failedDeductions: DeductRecord[];
   stores: Store[];
+  storeSkus: StoreSku[];
   incomeEntries: SettlementIncomeEntry[];
 };
 
@@ -73,6 +84,7 @@ type StoreBusinessRow = {
   status: string;
   asset: string;
   occurredAt: string;
+  businessRecord: DashboardBusinessRecord;
 };
 
 const initialData: DashboardData = {
@@ -84,13 +96,18 @@ const initialData: DashboardData = {
   payments: [],
   failedDeductions: [],
   stores: [],
+  storeSkus: [],
   incomeEntries: []
 };
 
 export function Dashboard() {
   const [data, setData] = useState<DashboardData>(initialData);
   const [period, setPeriod] = useState<CockpitPeriod>('30D');
+  const [customRange, setCustomRange] = useState<CockpitCustomRange>(null);
+  const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [selectedStoreId, setSelectedStoreId] = useState<number>();
+  const [detailRecord, setDetailRecord] = useState<DashboardBusinessRecord | null>(null);
+  const [editingRecord, setEditingRecord] = useState<DashboardBusinessRecord | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -98,7 +115,7 @@ export function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      const [orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, incomeEntries] = await Promise.all([
+      const [orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, incomeEntries] = await Promise.all([
         http.get<unknown, RentalOrder[]>('/api/admin/orders'),
         http.get<unknown, ExternalRentalOrder[]>('/api/admin/external-orders'),
         http.get<unknown, RentalBill[]>('/api/admin/bills'),
@@ -107,9 +124,10 @@ export function Dashboard() {
         http.get<unknown, PaymentOrder[]>('/api/admin/payments'),
         http.get<unknown, DeductRecord[]>('/api/admin/deductions/records?status=FAILED'),
         optionalGet<Store[]>('/api/admin/stores', []),
+        optionalGet<StoreSku[]>('/api/admin/products/store-skus', []),
         optionalGet<SettlementIncomeEntry[]>('/api/admin/settlement/income/entries', [])
       ]);
-      setData({ orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, incomeEntries });
+      setData({ orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, incomeEntries });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '经营驾驶舱数据加载失败');
     } finally {
@@ -121,7 +139,7 @@ export function Dashboard() {
     void loadData();
   }, []);
 
-  const window = useMemo(() => getDateWindow(period), [period]);
+  const window = useMemo(() => getDateWindow(period, new Date(), customRange, selectedMonth), [customRange, period, selectedMonth]);
   const selectedStore = useMemo(
     () => data.stores.find((item) => item.id === selectedStoreId),
     [data.stores, selectedStoreId]
@@ -141,6 +159,7 @@ export function Dashboard() {
       payments: data.payments.filter((item) => item.storeId === selectedStoreId),
       failedDeductions: data.failedDeductions.filter((item) => orderIds.has(item.orderId)),
       stores: data.stores.filter((item) => item.id === selectedStoreId),
+      storeSkus: data.storeSkus.filter((item) => item.storeId === selectedStoreId),
       incomeEntries: data.incomeEntries.filter((item) => item.storeId === selectedStoreId)
     };
   }, [data, selectedStoreId]);
@@ -278,7 +297,8 @@ export function Dashboard() {
           collectedAmount: Number(item.paidAmount || 0),
           status: orderStatusText(item.orderStatus),
           asset: item.frameSerialNo || item.frameAssetCode || '待分配',
-          occurredAt: item.orderedAt
+          occurredAt: item.orderedAt,
+          businessRecord: { sourceType: 'FORMAL' as const, order: item }
         })),
       ...scopedData.externalOrders
         .filter((item) => isInWindow(item.createdAt || item.rentStartedAt, window.start, window.end))
@@ -291,7 +311,8 @@ export function Dashboard() {
           collectedAmount: Number(item.verificationAmount || 0),
           status: externalOrderStatusText(item.orderStatus),
           asset: item.frameAssetSerialNo || '未绑定资产',
-          occurredAt: item.createdAt || item.rentStartedAt
+          occurredAt: item.createdAt || item.rentStartedAt,
+          businessRecord: { sourceType: 'EXTERNAL' as const, order: item }
         }))
     ].sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
   }, [scopedData.externalOrders, scopedData.orders, selectedStoreId, window]);
@@ -304,6 +325,10 @@ export function Dashboard() {
         description={`${selectedStore?.storeName || '全平台'} · ${window.label}经营、回款、履约与资产风险总览；经营金额均来自现有业务流水。`}
         period={period}
         onPeriodChange={setPeriod}
+        customRange={customRange}
+        onCustomRangeChange={setCustomRange}
+        selectedMonth={selectedMonth}
+        onSelectedMonthChange={setSelectedMonth}
         onRefresh={loadData}
         loading={loading}
         scope={(
@@ -411,7 +436,25 @@ export function Dashboard() {
               { title: '实收/核销', dataIndex: 'collectedAmount', width: 140, render: (value) => <Typography.Text strong className="amount-positive">{fullMoney(value)}</Typography.Text> },
               { title: '当前状态', dataIndex: 'status', width: 120, render: (value) => <Tag>{value}</Tag> },
               { title: '车架/资产', dataIndex: 'asset', width: 180, ellipsis: true },
-              { title: '业务时间', dataIndex: 'occurredAt', width: 170, render: dateTimeText }
+              { title: '业务时间', dataIndex: 'occurredAt', width: 170, render: dateTimeText },
+              {
+                title: '操作',
+                width: 150,
+                fixed: 'right',
+                render: (_, record) => {
+                  const editable = canEditDashboardBusiness(record.businessRecord);
+                  return (
+                    <Space size={4}>
+                      <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setDetailRecord(record.businessRecord)}>详情</Button>
+                      <Tooltip title={editable ? '编辑订单' : dashboardBusinessEditReason(record.businessRecord)}>
+                        <span>
+                          <Button size="small" type="link" icon={<EditOutlined />} disabled={!editable} onClick={() => setEditingRecord(record.businessRecord)}>编辑</Button>
+                        </span>
+                      </Tooltip>
+                    </Space>
+                  );
+                }
+              }
             ]}
           />
         </CockpitPanel>
@@ -434,6 +477,16 @@ export function Dashboard() {
           ]}
         />
       </CockpitPanel>
+
+      <BusinessOrderDialogs
+        detailRecord={detailRecord}
+        editingRecord={editingRecord}
+        storeSkus={data.storeSkus}
+        assets={data.assets}
+        onCloseDetail={() => setDetailRecord(null)}
+        onCloseEdit={() => setEditingRecord(null)}
+        onUpdated={loadData}
+      />
     </Space>
   );
 }

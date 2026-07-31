@@ -1,7 +1,15 @@
 import { ArrowDownOutlined, ArrowUpOutlined, MinusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { Button, Empty, Progress, Segmented, Tag, Typography } from 'antd';
+import { Button, DatePicker, Empty, Progress, Select, Tag, Typography, message } from 'antd';
+import dayjs from 'dayjs';
 import type { ReactNode } from 'react';
-import type { CockpitPeriod } from '../utils/dashboard';
+import {
+  cockpitRangeDays,
+  defaultCockpitCustomRange,
+  type CockpitCustomRange,
+  type CockpitPeriod
+} from '../utils/dashboard';
+
+const { RangePicker } = DatePicker;
 
 export type CockpitTone = 'green' | 'blue' | 'orange' | 'red' | 'violet';
 
@@ -17,15 +25,49 @@ export function CockpitHeader(props: {
   period: CockpitPeriod;
   periodOptions?: PeriodOption[];
   onPeriodChange: (period: CockpitPeriod) => void;
+  customRange?: CockpitCustomRange;
+  onCustomRangeChange?: (range: CockpitCustomRange) => void;
+  selectedMonth?: Date;
+  onSelectedMonthChange?: (month: Date) => void;
   onRefresh: () => void;
   loading?: boolean;
   scope?: ReactNode;
 }) {
   const periodOptions = props.periodOptions || [
+    { label: '按月查看', value: 'MONTH' },
     { label: '今日', value: 'TODAY' },
     { label: '近 7 天', value: '7D' },
-    { label: '近 30 天', value: '30D' }
+    { label: '近 30 天', value: '30D' },
+    { label: '近 90 天', value: '90D' },
+    { label: '近 180 天', value: '180D' },
+    { label: '近 365 天', value: '365D' },
+    { label: '自定义', value: 'CUSTOM' }
   ];
+  const customRange = props.customRange || null;
+
+  function changePeriod(nextPeriod: CockpitPeriod) {
+    if (nextPeriod === 'MONTH' && !props.selectedMonth) {
+      props.onSelectedMonthChange?.(new Date());
+    }
+    if (nextPeriod === 'CUSTOM' && !customRange) {
+      props.onCustomRangeChange?.(defaultCockpitCustomRange());
+    }
+    props.onPeriodChange(nextPeriod);
+  }
+
+  function changeCustomRange(values: null | [dayjs.Dayjs | null, dayjs.Dayjs | null]) {
+    if (!values?.[0] || !values[1]) {
+      props.onCustomRangeChange?.(null);
+      return;
+    }
+    const nextRange: [Date, Date] = [values[0].startOf('day').toDate(), values[1].endOf('day').toDate()];
+    if (cockpitRangeDays(nextRange) > 365) {
+      message.error('自定义时间范围最长为 365 天');
+      return;
+    }
+    props.onCustomRangeChange?.(nextRange);
+  }
+
   return (
     <section className="cockpit-header">
       <div className="cockpit-header-copy">
@@ -35,11 +77,36 @@ export function CockpitHeader(props: {
       </div>
       <div className="cockpit-header-controls">
         {props.scope ? <div className="cockpit-scope">{props.scope}</div> : null}
-        <Segmented
+        <Select
+          className="cockpit-period-select"
           value={props.period}
           options={periodOptions}
-          onChange={(value) => props.onPeriodChange(value as CockpitPeriod)}
+          onChange={changePeriod}
         />
+        {props.period === 'MONTH' ? (
+          <DatePicker
+            className="cockpit-month-picker"
+            picker="month"
+            allowClear={false}
+            value={dayjs(props.selectedMonth || new Date())}
+            onChange={(value) => props.onSelectedMonthChange?.((value || dayjs()).startOf('month').toDate())}
+            disabledDate={(current) => current.isAfter(dayjs(), 'month')}
+            format="YYYY年MM月"
+          />
+        ) : null}
+        {props.period === 'CUSTOM' ? (
+          <RangePicker
+            allowClear={false}
+            value={customRange ? [dayjs(customRange[0]), dayjs(customRange[1])] : null}
+            onChange={changeCustomRange}
+            disabledDate={(current, info) => {
+              if (current.isAfter(dayjs(), 'day')) return true;
+              return info.from ? Math.abs(current.startOf('day').diff(info.from.startOf('day'), 'day')) > 364 : false;
+            }}
+            format="YYYY-MM-DD"
+            placeholder={['开始日期', '结束日期']}
+          />
+        ) : null}
         <Button type="primary" icon={<ReloadOutlined />} loading={props.loading} onClick={props.onRefresh}>刷新</Button>
       </div>
     </section>
