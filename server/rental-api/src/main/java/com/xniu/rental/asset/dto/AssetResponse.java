@@ -13,6 +13,7 @@ public record AssetResponse(
     String assetTypeName,
     String serialLabel,
     String serialNo,
+    String arrivalBatchNo,
     Long investorId,
     String investorName,
     Long currentMerchantId,

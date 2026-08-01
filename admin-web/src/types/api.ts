@@ -322,6 +322,7 @@ export type Asset = {
   assetTypeName: string;
   serialLabel: string;
   serialNo: string;
+  arrivalBatchNo?: string | null;
   investorId: number;
   investorName?: string | null;
   currentMerchantId?: number | null;

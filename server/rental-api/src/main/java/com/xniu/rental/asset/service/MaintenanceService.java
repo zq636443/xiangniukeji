@@ -600,6 +600,7 @@ public class MaintenanceService {
             asset.assetTypeName(),
             asset.serialLabel(),
             asset.serialNo(),
+            asset.arrivalBatchNo(),
             asset.investorId(),
             investorName,
             asset.currentMerchantId(),

@@ -76,8 +76,9 @@ public class AssetRepository {
             params.add(status.name());
         }
         if (keyword != null && !keyword.isBlank()) {
-            sql.append(" AND (a.asset_code LIKE ? OR a.serial_no LIKE ? OR t.type_name LIKE ?)");
+            sql.append(" AND (a.asset_code LIKE ? OR a.serial_no LIKE ? OR a.arrival_batch_no LIKE ? OR t.type_name LIKE ?)");
             var like = "%" + keyword.trim() + "%";
+            params.add(like);
             params.add(like);
             params.add(like);
             params.add(like);
@@ -123,28 +124,59 @@ public class AssetRepository {
         BigDecimal residualValue,
         LocalDate purchasedAt
     ) {
+        return create(
+            assetCode,
+            assetType,
+            assetTypeId,
+            serialNo,
+            null,
+            investorId,
+            merchantId,
+            storeId,
+            purchaseAmount,
+            maintenanceFeeAmount,
+            residualValue,
+            purchasedAt
+        );
+    }
+
+    public AssetItem create(
+        String assetCode,
+        AssetType assetType,
+        Long assetTypeId,
+        String serialNo,
+        String arrivalBatchNo,
+        Long investorId,
+        Long merchantId,
+        Long storeId,
+        BigDecimal purchaseAmount,
+        BigDecimal maintenanceFeeAmount,
+        BigDecimal residualValue,
+        LocalDate purchasedAt
+    ) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             var statement = connection.prepareStatement("""
                 INSERT INTO asset_item
-                (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id,
+                (asset_code, asset_type, asset_type_id, serial_no, arrival_batch_no, investor_id, current_merchant_id, current_store_id,
                  purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, assetCode);
             statement.setString(2, assetType.name());
             statement.setLong(3, assetTypeId);
             statement.setString(4, serialNo);
-            statement.setLong(5, investorId);
-            setNullableLong(statement, 6, merchantId);
-            setNullableLong(statement, 7, storeId);
-            statement.setBigDecimal(8, purchaseAmount);
-            statement.setBigDecimal(9, maintenanceFeeAmount);
-            setNullableBigDecimal(statement, 10, residualValue);
+            statement.setString(5, arrivalBatchNo);
+            statement.setLong(6, investorId);
+            setNullableLong(statement, 7, merchantId);
+            setNullableLong(statement, 8, storeId);
+            statement.setBigDecimal(9, purchaseAmount);
+            statement.setBigDecimal(10, maintenanceFeeAmount);
+            setNullableBigDecimal(statement, 11, residualValue);
             if (purchasedAt == null) {
-                statement.setObject(11, null);
+                statement.setObject(12, null);
             } else {
-                statement.setObject(11, purchasedAt);
+                statement.setObject(12, purchasedAt);
             }
             return statement;
         }, keyHolder);
@@ -156,6 +188,7 @@ public class AssetRepository {
         AssetType assetType,
         Long assetTypeId,
         String serialNo,
+        String arrivalBatchNo,
         Long investorId,
         BigDecimal purchaseAmount,
         BigDecimal residualValue,
@@ -163,10 +196,10 @@ public class AssetRepository {
     ) {
         jdbcTemplate.update("""
             UPDATE asset_item
-            SET asset_type = ?, asset_type_id = ?, serial_no = ?, investor_id = ?,
+            SET asset_type = ?, asset_type_id = ?, serial_no = ?, arrival_batch_no = ?, investor_id = ?,
                 purchase_amount = ?, residual_value = ?, purchased_at = ?
             WHERE id = ?
-            """, assetType.name(), assetTypeId, serialNo, investorId, purchaseAmount, residualValue, purchasedAt, id);
+            """, assetType.name(), assetTypeId, serialNo, arrivalBatchNo, investorId, purchaseAmount, residualValue, purchasedAt, id);
         return findById(id).orElseThrow();
     }
 
@@ -317,6 +350,7 @@ public class AssetRepository {
                 rs.getString("definition_type_name"),
                 rs.getString("definition_serial_label"),
                 rs.getString("serial_no"),
+                rs.getString("arrival_batch_no"),
                 rs.getLong("investor_id"),
                 getNullableLong(rs, "current_merchant_id"),
                 getNullableLong(rs, "current_store_id"),

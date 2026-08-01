@@ -15,7 +15,8 @@ public record AssetRequest(
     @NotNull(message = "请输入采购金额") BigDecimal purchaseAmount,
     BigDecimal maintenanceFeeAmount,
     BigDecimal residualValue,
-    LocalDate purchasedAt
+    LocalDate purchasedAt,
+    String arrivalBatchNo
 ) {
     public AssetRequest(
         String assetType,
@@ -28,6 +29,21 @@ public record AssetRequest(
         BigDecimal residualValue,
         LocalDate purchasedAt
     ) {
-        this(null, assetType, serialNo, investorId, currentMerchantId, currentStoreId, purchaseAmount, maintenanceFeeAmount, residualValue, purchasedAt);
+        this(null, assetType, serialNo, investorId, currentMerchantId, currentStoreId, purchaseAmount, maintenanceFeeAmount, residualValue, purchasedAt, null);
+    }
+
+    public AssetRequest(
+        Long assetTypeId,
+        String assetType,
+        String serialNo,
+        Long investorId,
+        Long currentMerchantId,
+        Long currentStoreId,
+        BigDecimal purchaseAmount,
+        BigDecimal maintenanceFeeAmount,
+        BigDecimal residualValue,
+        LocalDate purchasedAt
+    ) {
+        this(assetTypeId, assetType, serialNo, investorId, currentMerchantId, currentStoreId, purchaseAmount, maintenanceFeeAmount, residualValue, purchasedAt, null);
     }
 }

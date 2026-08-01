@@ -8,6 +8,7 @@ type AssetImportRow = {
   lineNo: number;
   assetType: string;
   serialNo: string;
+  arrivalBatchNo: string;
   investorCode: string;
   storeCode: string;
   purchaseAmount: string;
@@ -44,6 +45,7 @@ type TemplateOptions = {
 const templateHeaders = [
   '资产类型(填写类型名称或编码)',
   '资产编号',
+  '到车批次号',
   '出资方编码',
   '门店编码',
   '采购金额',
@@ -54,6 +56,7 @@ const templateHeaders = [
 const headerAliases: Record<keyof Omit<AssetImportRow, 'lineNo'>, string[]> = {
   assetType: ['资产类型(填写类型名称或编码)', '资产类型（填写类型名称或编码）', '资产类型(车架/电池/车电一体)', '资产类型（车架/电池/车电一体）', '资产类型(车架/电池)', '资产类型（车架/电池）', '资产类型', 'assetType'],
   serialNo: ['资产编号', '车架号/电池号(车电一体填车架号)', '车架号/电池号（车电一体填车架号）', '车架号/电池号', '车架号／电池号', '序列号', 'serialNo'],
+  arrivalBatchNo: ['到车批次号', '到车批次', '入库批次号', '入库批次', 'arrivalBatchNo'],
   investorCode: ['出资方编码', 'investorCode'],
   storeCode: ['门店编码', 'storeCode'],
   purchaseAmount: ['采购金额', 'purchaseAmount'],
@@ -68,7 +71,7 @@ const requiredImportFields: Array<keyof Omit<AssetImportRow, 'lineNo'>> = [
   'purchaseAmount'
 ];
 
-const templateColumnWidths = [28, 28, 18, 18, 14, 14, 22];
+const templateColumnWidths = [28, 28, 20, 18, 18, 14, 14, 22];
 
 export function AssetBatchImportModal({ open, endpoint, onClose, onImported }: AssetBatchImportModalProps) {
   const [rows, setRows] = useState<AssetImportRow[]>([]);
@@ -170,6 +173,7 @@ export function AssetBatchImportModal({ open, endpoint, onClose, onImported }: A
                 { title: '行号', dataIndex: 'lineNo', width: 70 },
                 { title: '类型', dataIndex: 'assetType', width: 100 },
                 { title: '资产编号', dataIndex: 'serialNo', width: 190 },
+                { title: '到车批次', dataIndex: 'arrivalBatchNo', width: 150, render: textOrDash },
                 { title: '出资方编码', dataIndex: 'investorCode', width: 140 },
                 { title: '门店编码', dataIndex: 'storeCode', width: 130, render: textOrDash },
                 { title: '采购金额', dataIndex: 'purchaseAmount', width: 110 },
@@ -217,16 +221,16 @@ export async function downloadAssetImportTemplate(options: TemplateOptions = {})
     const workbook = XLSX.utils.book_new();
     const importSheet = XLSX.utils.aoa_to_sheet([
       templateHeaders,
-      ['', '', '', options.storeCode || '', '', '', '']
+      ['', '', '', '', options.storeCode || '', '', '', '']
     ]);
-    configureSheet(importSheet, templateColumnWidths, 'A1:G1');
+    configureSheet(importSheet, templateColumnWidths, 'A1:H1');
     XLSX.utils.book_append_sheet(workbook, importSheet, '资产导入');
 
     const exampleSheet = XLSX.utils.aoa_to_sheet([
       templateHeaders,
       ...buildExampleRows(options)
     ]);
-    configureSheet(exampleSheet, templateColumnWidths, 'A1:G1');
+    configureSheet(exampleSheet, templateColumnWidths, 'A1:H1');
     XLSX.utils.book_append_sheet(workbook, exampleSheet, '填写示例');
 
     const instructionSheet = XLSX.utils.aoa_to_sheet(buildInstructionRows(options));
@@ -324,6 +328,7 @@ function parseAssetImportTable(matrix: unknown[][]): AssetImportRow[] {
     lineNo: header.index + rowOffset + 2,
     assetType: importCell(values, header.indexes.assetType, 'assetType'),
     serialNo: importCell(values, header.indexes.serialNo, 'serialNo'),
+    arrivalBatchNo: importCell(values, header.indexes.arrivalBatchNo, 'arrivalBatchNo'),
     investorCode: importCell(values, header.indexes.investorCode, 'investorCode'),
     storeCode: importCell(values, header.indexes.storeCode, 'storeCode'),
     purchaseAmount: importCell(values, header.indexes.purchaseAmount, 'purchaseAmount'),
@@ -430,11 +435,11 @@ function buildExampleRows(options: TemplateOptions) {
     ['INTEGRATED_VEHICLE', '车电一体示例-001', '4200', '']
   ].map(([assetClass, serialNo, purchaseAmount, residualValue]) => {
     const type = types.find((item) => item.assetClass === assetClass);
-    return [type?.typeName || assetClass, serialNo, investorCode, storeCode, purchaseAmount, residualValue, '2026-07-22'];
+    return [type?.typeName || assetClass, serialNo, '2026-07-LY-01', investorCode, storeCode, purchaseAmount, residualValue, '2026-07-22'];
   });
   const customType = types.find((item) => !['VEHICLE_FRAME', 'BATTERY', 'INTEGRATED_VEHICLE'].includes(item.assetClass));
   if (customType) {
-    examples.push([customType.typeName, '自定义资产示例-001', investorCode, storeCode, '399', '', '2026-07-22']);
+    examples.push([customType.typeName, '自定义资产示例-001', '2026-07-LY-01', investorCode, storeCode, '399', '', '2026-07-22']);
   }
   return examples;
 }
@@ -446,11 +451,12 @@ function buildInstructionRows(options: TemplateOptions) {
     ['字段', '是否必填', '填写示例', '填写说明'],
     [templateHeaders[0], '是', '车架', '填写“资产类型”工作表中的类型名称或类型编码'],
     [templateHeaders[1], '是', '车架示例-001', '车架填车架号，电池填电池号，车电一体只填车架号；长编号建议设为文本格式'],
-    [templateHeaders[2], '是', investorCode, '填写“出资方编码”工作表中的编码，不能填出资方名称'],
-    [templateHeaders[3], '否', storeCode, options.storeCode ? '门店端导入时已锁定当前门店，可留空' : '留空表示暂不分配门店；填写时必须使用门店编码'],
-    [templateHeaders[4], '是', '2600', '填写不小于0的数字，最多保留2位小数'],
-    [templateHeaders[5], '否', '300', '可留空；填写时不能小于0'],
-    [templateHeaders[6], '否', '2026-07-22', '留空默认当天，建议使用YYYY-MM-DD格式']
+    [templateHeaders[2], '否', '2026-07-LY-01', '同一批到车资产填写相同批次号；留空时系统按出资方和采购/到车日期自动生成'],
+    [templateHeaders[3], '是', investorCode, '填写“出资方编码”工作表中的编码，不能填出资方名称'],
+    [templateHeaders[4], '否', storeCode, options.storeCode ? '门店端导入时已锁定当前门店，可留空' : '留空表示暂不分配门店；填写时必须使用门店编码'],
+    [templateHeaders[5], '是', '2600', '填写不小于0的数字，最多保留2位小数'],
+    [templateHeaders[6], '否', '300', '可留空；填写时不能小于0'],
+    [templateHeaders[7], '否', '2026-07-22', '留空默认当天，建议使用YYYY-MM-DD格式']
   ];
 }
 

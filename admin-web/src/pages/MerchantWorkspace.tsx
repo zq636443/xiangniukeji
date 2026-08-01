@@ -147,6 +147,7 @@ type SparePartTransferForm = {
 type MerchantAssetForm = {
   assetTypeId: number;
   serialNo: string;
+  arrivalBatchNo?: string;
   investorId: number;
   purchaseAmount: number;
   residualValue?: number;
@@ -1519,6 +1520,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
       if (!keyword) return true;
       return asset.assetCode.toLowerCase().includes(keyword)
         || asset.serialNo.toLowerCase().includes(keyword)
+        || String(asset.arrivalBatchNo || '').toLowerCase().includes(keyword)
         || String(asset.investorName || '').toLowerCase().includes(keyword)
         || String(asset.assetTypeName || '').toLowerCase().includes(keyword);
     });
@@ -1577,9 +1579,11 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
 
   function openEditAsset(record: Asset) {
     setEditingAsset(record);
+    assetForm.resetFields();
     assetForm.setFieldsValue({
       assetTypeId: record.assetTypeId,
       serialNo: record.serialNo,
+      arrivalBatchNo: record.arrivalBatchNo ?? undefined,
       investorId: record.investorId,
       purchaseAmount: record.purchaseAmount,
       residualValue: record.residualValue ?? undefined,
@@ -1656,6 +1660,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
       '资产编码',
       '资产类型',
       '车架号/电池号',
+      '到车批次号',
       '出资方',
       '状态',
       '采购金额',
@@ -1666,6 +1671,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
       asset.assetCode,
       asset.assetTypeName || assetTypeText(asset.assetType),
       asset.serialNo,
+      asset.arrivalBatchNo,
       asset.investorName,
       assetStatusOptions.find((item) => item.value === asset.status)?.label || asset.status,
       asset.purchaseAmount,
@@ -1736,12 +1742,13 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           loading={loading}
           dataSource={filteredAssets}
           pagination={false}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 1220 }}
           columns={[
             { title: '序号', width: 70, render: (_value, _record, index) => index + 1 },
             { title: '资产编码', dataIndex: 'assetCode' },
             { title: '类型', render: (_, record) => record.assetTypeName || assetTypeText(record.assetType) },
             { title: '资产编号', dataIndex: 'serialNo' },
+            { title: '到车批次', dataIndex: 'arrivalBatchNo', width: 150, render: (value?: string | null) => value || '未设置批次' },
             { title: '出资方', dataIndex: 'investorName', render: (value?: string | null) => value || '-' },
             { title: '状态', dataIndex: 'status', render: assetStatusTag },
             { title: '采购金额', dataIndex: 'purchaseAmount', render: money },
@@ -1814,6 +1821,9 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           >
             <Input placeholder={selectedAssetType?.assetClass === 'INTEGRATED_VEHICLE' ? '车电一体仅录入车架号' : undefined} />
           </Form.Item>
+          <Form.Item name="arrivalBatchNo" label="到车批次号" extra="留空将按出资方和采购/到车日期自动生成；真实批次号可直接填写">
+            <Input maxLength={64} placeholder="例如：2026-08-LY-01" />
+          </Form.Item>
           <Form.Item name="investorId" label="出资方" rules={[{ required: true, message: '请选择出资方' }]}>
             <Select showSearch optionFilterProp="label" options={investorSelectOptions} />
           </Form.Item>
@@ -1863,6 +1873,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
               <Descriptions.Item label="资产编码">{selectedAsset.asset.assetCode}</Descriptions.Item>
               <Descriptions.Item label="资产类型">{selectedAsset.asset.assetTypeName || assetTypeText(selectedAsset.asset.assetType)}</Descriptions.Item>
               <Descriptions.Item label={selectedAsset.asset.serialLabel || '资产编号'}>{selectedAsset.asset.serialNo}</Descriptions.Item>
+              <Descriptions.Item label="到车批次">{selectedAsset.asset.arrivalBatchNo || '未设置批次'}</Descriptions.Item>
               <Descriptions.Item label="当前状态">{assetStatusTag(selectedAsset.asset.status)}</Descriptions.Item>
               <Descriptions.Item label="出资方">{selectedAsset.asset.investorName || '-'}</Descriptions.Item>
               <Descriptions.Item label="所属门店">{selectedAsset.asset.storeName || '-'}</Descriptions.Item>

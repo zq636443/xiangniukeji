@@ -30,11 +30,13 @@ import type {
   Asset,
   DeductRecord,
   ExternalRentalOrder,
+  Investor,
   OverdueCase,
   PaymentOrder,
   RentalBill,
   RentalOrder,
   SettlementIncomeEntry,
+  SettlementStatement,
   Store,
   StoreSku
 } from '../types/api';
@@ -61,6 +63,8 @@ type DashboardData = {
   failedDeductions: DeductRecord[];
   stores: Store[];
   storeSkus: StoreSku[];
+  investors: Investor[];
+  investorStatements: SettlementStatement[];
   incomeEntries: SettlementIncomeEntry[];
 };
 
@@ -87,6 +91,21 @@ type StoreBusinessRow = {
   businessRecord: DashboardBusinessRecord;
 };
 
+type InvestorPerformance = {
+  investorId: number;
+  investorCode: string;
+  investorName: string;
+  assetCount: number;
+  rentingAssets: number;
+  purchaseAmount: number;
+  periodIncome: number;
+  previousIncome: number;
+  pendingIncome: number;
+  payableAmount: number;
+  payableStatementCount: number;
+  deploymentRate: number;
+};
+
 const initialData: DashboardData = {
   orders: [],
   externalOrders: [],
@@ -97,6 +116,8 @@ const initialData: DashboardData = {
   failedDeductions: [],
   stores: [],
   storeSkus: [],
+  investors: [],
+  investorStatements: [],
   incomeEntries: []
 };
 
@@ -106,6 +127,7 @@ export function Dashboard() {
   const [customRange, setCustomRange] = useState<CockpitCustomRange>(null);
   const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [selectedStoreId, setSelectedStoreId] = useState<number>();
+  const [selectedInvestorId, setSelectedInvestorId] = useState<number>();
   const [detailRecord, setDetailRecord] = useState<DashboardBusinessRecord | null>(null);
   const [editingRecord, setEditingRecord] = useState<DashboardBusinessRecord | null>(null);
   const [loading, setLoading] = useState(false);
@@ -115,7 +137,7 @@ export function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      const [orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, incomeEntries] = await Promise.all([
+      const [orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, incomeEntries] = await Promise.all([
         http.get<unknown, RentalOrder[]>('/api/admin/orders'),
         http.get<unknown, ExternalRentalOrder[]>('/api/admin/external-orders'),
         http.get<unknown, RentalBill[]>('/api/admin/bills'),
@@ -125,9 +147,11 @@ export function Dashboard() {
         http.get<unknown, DeductRecord[]>('/api/admin/deductions/records?status=FAILED'),
         optionalGet<Store[]>('/api/admin/stores', []),
         optionalGet<StoreSku[]>('/api/admin/products/store-skus', []),
+        optionalGet<Investor[]>('/api/admin/investors', []),
+        optionalGet<SettlementStatement[]>('/api/admin/settlement/statements?beneficiaryType=INVESTOR', []),
         optionalGet<SettlementIncomeEntry[]>('/api/admin/settlement/income/entries', [])
       ]);
-      setData({ orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, incomeEntries });
+      setData({ orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, incomeEntries });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '经营驾驶舱数据加载失败');
     } finally {
@@ -160,6 +184,8 @@ export function Dashboard() {
       failedDeductions: data.failedDeductions.filter((item) => orderIds.has(item.orderId)),
       stores: data.stores.filter((item) => item.id === selectedStoreId),
       storeSkus: data.storeSkus.filter((item) => item.storeId === selectedStoreId),
+      investors: data.investors,
+      investorStatements: data.investorStatements,
       incomeEntries: data.incomeEntries.filter((item) => item.storeId === selectedStoreId)
     };
   }, [data, selectedStoreId]);
@@ -260,6 +286,103 @@ export function Dashboard() {
     return selectedStoreId ? rankings.filter((item) => item.storeId === selectedStoreId) : rankings.slice(0, 8);
   }, [data, selectedStoreId, window]);
 
+  const investorPerformance = useMemo<InvestorPerformance[]>(() => {
+    const map = new Map<number, Omit<InvestorPerformance, 'deploymentRate'>>();
+    const ensureInvestor = (investorId: number, investorName?: string | null) => {
+      const investor = data.investors.find((item) => item.id === investorId);
+      const current = map.get(investorId) || {
+        investorId,
+        investorCode: investor?.investorCode || `INV-${investorId}`,
+        investorName: investor?.investorName || investorName || `出资方 ${investorId}`,
+        assetCount: 0,
+        rentingAssets: 0,
+        purchaseAmount: 0,
+        periodIncome: 0,
+        previousIncome: 0,
+        pendingIncome: 0,
+        payableAmount: 0,
+        payableStatementCount: 0
+      };
+      map.set(investorId, current);
+      return current;
+    };
+
+    data.investors
+      .filter((investor) => investor.status === 'ENABLED')
+      .forEach((investor) => ensureInvestor(investor.id, investor.investorName));
+    scopedData.assets
+      .filter((item) => !['SCRAPPED', 'SOLD'].includes(item.status))
+      .forEach((asset) => {
+        const row = ensureInvestor(asset.investorId, asset.investorName);
+        row.assetCount += 1;
+        row.purchaseAmount += Number(asset.purchaseAmount || 0);
+        if (asset.status === 'RENTING') row.rentingAssets += 1;
+      });
+
+    scopedData.incomeEntries
+      .filter((item) => item.beneficiaryType === 'INVESTOR' && item.beneficiaryId != null && item.sourceType !== 'ORDER')
+      .forEach((entry) => {
+        const row = ensureInvestor(Number(entry.beneficiaryId));
+        if (entry.entryStatus !== 'FROZEN' && isInWindow(entry.occurredAt, window.start, window.end)) {
+          row.periodIncome += Number(entry.amount || 0);
+        }
+        if (entry.entryStatus !== 'FROZEN' && isInWindow(entry.occurredAt, window.previousStart, window.previousEnd)) {
+          row.previousIncome += Number(entry.amount || 0);
+        }
+        if (entry.entryStatus === 'PENDING') {
+          row.pendingIncome += Number(entry.amount || 0);
+        }
+      });
+
+    scopedData.investorStatements
+      .filter((item) => item.beneficiaryType === 'INVESTOR' && ['CONFIRMED', 'PAYABLE'].includes(item.status))
+      .forEach((statement) => {
+        const row = ensureInvestor(statement.beneficiaryId);
+        row.payableAmount += Number(statement.payableAmount || 0);
+        row.payableStatementCount += 1;
+      });
+
+    return [...map.values()]
+      .map((item) => ({
+        ...item,
+        deploymentRate: item.assetCount ? item.rentingAssets / item.assetCount * 100 : 0
+      }))
+      .filter((item) => !selectedStoreId
+        || item.assetCount
+        || item.periodIncome
+        || item.pendingIncome
+        || item.investorId === selectedInvestorId)
+      .sort((left, right) => right.periodIncome - left.periodIncome || right.purchaseAmount - left.purchaseAmount);
+  }, [data.investors, scopedData.assets, scopedData.incomeEntries, scopedData.investorStatements, selectedInvestorId, selectedStoreId, window]);
+
+  const visibleInvestorPerformance = useMemo(
+    () => selectedInvestorId
+      ? investorPerformance.filter((item) => item.investorId === selectedInvestorId)
+      : investorPerformance,
+    [investorPerformance, selectedInvestorId]
+  );
+  const investorSummary = useMemo(() => {
+    const assetCount = sumNumbers(visibleInvestorPerformance.map((item) => item.assetCount));
+    const rentingAssets = sumNumbers(visibleInvestorPerformance.map((item) => item.rentingAssets));
+    const periodIncome = sumNumbers(visibleInvestorPerformance.map((item) => item.periodIncome));
+    const previousIncome = sumNumbers(visibleInvestorPerformance.map((item) => item.previousIncome));
+    return {
+      assetCount,
+      rentingAssets,
+      purchaseAmount: sumNumbers(visibleInvestorPerformance.map((item) => item.purchaseAmount)),
+      deploymentRate: assetCount ? rentingAssets / assetCount * 100 : 0,
+      periodIncome,
+      incomeChange: percentageChange(periodIncome, previousIncome),
+      pendingIncome: sumNumbers(visibleInvestorPerformance.map((item) => item.pendingIncome)),
+      payableAmount: sumNumbers(visibleInvestorPerformance.map((item) => item.payableAmount)),
+      payableStatementCount: sumNumbers(visibleInvestorPerformance.map((item) => item.payableStatementCount))
+    };
+  }, [visibleInvestorPerformance]);
+  const selectedInvestor = useMemo(
+    () => investorPerformance.find((item) => item.investorId === selectedInvestorId),
+    [investorPerformance, selectedInvestorId]
+  );
+
   const riskRows = useMemo(() => scopedData.overdues
     .map((item) => ({
       key: `overdue-${item.id}`,
@@ -357,6 +480,73 @@ export function Dashboard() {
         <CockpitMetric icon={<CheckCircleOutlined />} tone="blue" label="到期账单回款率" value={percent(dashboard.collectionRate)} detail={`期间应收 ${fullMoney(dashboard.dueAmount)}`} change={dashboard.collectionRateChange} changeLabel="百分点" />
         <CockpitMetric icon={<CarOutlined />} tone="orange" label="当前资产投放率" value={percent(dashboard.deploymentRate)} detail={`${dashboard.rentingAssets.length} / ${dashboard.activeAssets.length} 台在租`} />
       </div>
+
+      <CockpitPanel
+        title="出资方经营概览"
+        subtitle={`${selectedStore?.storeName || '全平台'} · ${window.label}资产投入与收益；月结待打款按出资方全局归集`}
+        extra={(
+          <Space size={8} wrap>
+            <Tag color="purple">{selectedInvestor ? selectedInvestor.investorName : `${investorPerformance.length} 家出资方`}</Tag>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              value={selectedInvestorId || 0}
+              onChange={(value) => setSelectedInvestorId(value || undefined)}
+              options={[
+                { label: '全部出资方', value: 0 },
+                ...investorPerformance.map((item) => ({
+                  label: `${item.investorName} / ${item.investorCode}`,
+                  value: item.investorId
+                }))
+              ]}
+              style={{ minWidth: 230 }}
+            />
+          </Space>
+        )}
+      >
+        <div className="cockpit-metric-grid cockpit-investor-metrics">
+          <CockpitMetric icon={<WalletOutlined />} tone="blue" label="出资方资产投入" value={fullMoney(investorSummary.purchaseAmount)} detail={`${investorSummary.assetCount} 台有效资产`} />
+          <CockpitMetric icon={<CarOutlined />} tone="green" label="出资资产投放率" value={percent(investorSummary.deploymentRate)} detail={`${investorSummary.rentingAssets} / ${investorSummary.assetCount} 台在租`} />
+          <CockpitMetric icon={<RiseOutlined />} tone="violet" label="期间确认收益" value={fullMoney(investorSummary.periodIncome)} detail={`待归集 ${fullMoney(investorSummary.pendingIncome)}`} change={investorSummary.incomeChange} changeLabel="环比" />
+          <CockpitMetric icon={<CheckCircleOutlined />} tone="orange" label="全局待打款月结" value={fullMoney(investorSummary.payableAmount)} detail={`${investorSummary.payableStatementCount} 张已确认月结单`} />
+        </div>
+        <Table
+          rowKey="investorId"
+          size="small"
+          loading={loading}
+          dataSource={visibleInvestorPerformance}
+          pagination={false}
+          scroll={{ x: 1080 }}
+          locale={{ emptyText: <Empty description="当前范围暂无出资方经营数据" /> }}
+          columns={[
+            {
+              title: '出资方',
+              width: 190,
+              fixed: 'left',
+              render: (_, record) => <div className="cockpit-primary-cell"><strong>{record.investorName}</strong><span>{record.investorCode}</span></div>
+            },
+            { title: '有效资产', dataIndex: 'assetCount', width: 90, render: (value) => `${value} 台` },
+            { title: '资产投入', dataIndex: 'purchaseAmount', width: 140, render: (value) => <strong>{fullMoney(value)}</strong> },
+            { title: '期间收益', dataIndex: 'periodIncome', width: 130, render: (value) => <strong className="amount-positive">{fullMoney(value)}</strong> },
+            { title: '待归集', dataIndex: 'pendingIncome', width: 120, render: fullMoney },
+            { title: '待打款', dataIndex: 'payableAmount', width: 120, render: (value) => value ? <Typography.Text type="warning">{fullMoney(value)}</Typography.Text> : '-' },
+            {
+              title: '当前投放率',
+              dataIndex: 'deploymentRate',
+              width: 170,
+              render: (value) => <div className="cockpit-table-progress"><Progress percent={Math.round(value)} size="small" showInfo={false} /><span>{percent(value, 0)}</span></div>
+            },
+            {
+              title: '操作',
+              width: 88,
+              fixed: 'right',
+              render: (_, record) => record.investorId === selectedInvestorId
+                ? <Tag color="purple">当前</Tag>
+                : <Button size="small" type="link" onClick={() => setSelectedInvestorId(record.investorId)}>查看</Button>
+            }
+          ]}
+        />
+      </CockpitPanel>
 
       <div className="cockpit-layout cockpit-layout-main">
         <CockpitPanel title="回款经营趋势" subtitle="按到期日统计应收，按到账/补录日统计实收" extra={<Tag>{window.label}</Tag>}>

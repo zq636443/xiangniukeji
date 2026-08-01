@@ -13,6 +13,19 @@ public record InvestorAssetRequest(
     Long currentStoreId,
     @NotNull(message = "请输入采购金额") BigDecimal purchaseAmount,
     BigDecimal residualValue,
-    LocalDate purchasedAt
+    LocalDate purchasedAt,
+    String arrivalBatchNo
 ) {
+    public InvestorAssetRequest(
+        Long assetTypeId,
+        String assetType,
+        String serialNo,
+        Long currentMerchantId,
+        Long currentStoreId,
+        BigDecimal purchaseAmount,
+        BigDecimal residualValue,
+        LocalDate purchasedAt
+    ) {
+        this(assetTypeId, assetType, serialNo, currentMerchantId, currentStoreId, purchaseAmount, residualValue, purchasedAt, null);
+    }
 }

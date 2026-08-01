@@ -7,6 +7,8 @@ import {
   EditOutlined,
   ExclamationCircleOutlined,
   FileDoneOutlined,
+  FileExcelOutlined,
+  FilePdfOutlined,
   FileSearchOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -63,6 +65,7 @@ type InvestorPageProps = {
 type InvestorAssetForm = {
   assetTypeId: number;
   serialNo: string;
+  arrivalBatchNo?: string;
   currentMerchantId?: number;
   currentStoreId?: number;
   purchaseAmount: number;
@@ -95,6 +98,19 @@ type InvestorStoreOption = {
 };
 
 type InvestorMetricTone = 'green' | 'blue' | 'orange' | 'red' | 'violet';
+
+type ArrivalBatchSummary = {
+  key: string;
+  label: string;
+  assets: Asset[];
+  purchaseAmount: number;
+  residualValue: number;
+  firstPurchasedAt?: string;
+  lastPurchasedAt?: string;
+};
+
+const ALL_ARRIVAL_BATCHES = '__ALL_ARRIVAL_BATCHES__';
+const UNSET_ARRIVAL_BATCH = '__UNSET_ARRIVAL_BATCH__';
 
 export function InvestorDashboard({ account }: InvestorPageProps) {
   return <InvestorOperationsCockpit account={account} />;
@@ -523,6 +539,7 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
   const [statusFilter, setStatusFilter] = useState<Asset['status']>();
   const [storeFilter, setStoreFilter] = useState<number>();
   const [typeFilter, setTypeFilter] = useState<number>();
+  const [arrivalBatchFilter, setArrivalBatchFilter] = useState(ALL_ARRIVAL_BATCHES);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -560,6 +577,12 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
     void loadAssets();
   }, []);
 
+  useEffect(() => {
+    if (arrivalBatchFilter !== ALL_ARRIVAL_BATCHES && !assets.some((asset) => arrivalBatchKey(asset) === arrivalBatchFilter)) {
+      setArrivalBatchFilter(ALL_ARRIVAL_BATCHES);
+    }
+  }, [arrivalBatchFilter, assets]);
+
   const storeOptions = useMemo(() => {
     const options = new Map<number, string>();
     assets.forEach((asset) => {
@@ -573,6 +596,30 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
     assets.forEach((asset) => options.set(asset.assetTypeId, assetTypeLabel(asset)));
     return [...options.entries()].map(([value, label]) => ({ value, label }));
   }, [assets]);
+
+  const arrivalBatchSummaries = useMemo(() => buildArrivalBatchSummaries(assets), [assets]);
+
+  const arrivalBatchOptions = useMemo(() => [
+    { value: ALL_ARRIVAL_BATCHES, label: `全部批次（${arrivalBatchSummaries.length}）` },
+    ...arrivalBatchSummaries.map((batch) => ({ value: batch.key, label: `${batch.label}（${batch.assets.length} 台）` }))
+  ], [arrivalBatchSummaries]);
+
+  const arrivalBatchAssets = useMemo(() => {
+    if (arrivalBatchFilter === ALL_ARRIVAL_BATCHES) return assets;
+    return assets.filter((asset) => arrivalBatchKey(asset) === arrivalBatchFilter);
+  }, [arrivalBatchFilter, assets]);
+
+  const arrivalBatchMetrics = useMemo(() => ({
+    batchCount: arrivalBatchFilter === ALL_ARRIVAL_BATCHES ? arrivalBatchSummaries.length : Math.min(arrivalBatchAssets.length, 1),
+    assetCount: arrivalBatchAssets.length,
+    purchaseAmount: sum(arrivalBatchAssets.map((asset) => asset.purchaseAmount)),
+    residualValue: sum(arrivalBatchAssets.map((asset) => asset.residualValue)),
+    purchaseDateRange: purchaseDateRangeText(arrivalBatchAssets)
+  }), [arrivalBatchAssets, arrivalBatchFilter, arrivalBatchSummaries.length]);
+
+  const selectedArrivalBatchLabel = arrivalBatchFilter === ALL_ARRIVAL_BATCHES
+    ? '全部到车批次'
+    : arrivalBatchSummaries.find((batch) => batch.key === arrivalBatchFilter)?.label || '未设置批次';
 
   const assetTypeEntryOptions = useMemo(() => assetTypes.map((type) => ({
     value: type.id,
@@ -599,7 +646,7 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
       if (storeFilter && asset.currentStoreId !== storeFilter) return false;
       if (typeFilter && asset.assetTypeId !== typeFilter) return false;
       if (!normalized) return true;
-      return [asset.assetCode, asset.serialNo, asset.assetTypeName, asset.assetTypeCode, asset.merchantName, asset.storeName]
+      return [asset.assetCode, asset.serialNo, asset.arrivalBatchNo, asset.assetTypeName, asset.assetTypeCode, asset.merchantName, asset.storeName]
         .some((value) => String(value || '').toLowerCase().includes(normalized));
     });
   }, [assets, keyword, statusFilter, storeFilter, typeFilter]);
@@ -653,6 +700,7 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
     assetForm.setFieldsValue({
       assetTypeId: record.assetTypeId,
       serialNo: record.serialNo,
+      arrivalBatchNo: record.arrivalBatchNo ?? undefined,
       purchaseAmount: Number(record.purchaseAmount),
       residualValue: record.residualValue == null ? undefined : Number(record.residualValue),
       purchasedAt: record.purchasedAt ? dayjs(record.purchasedAt) : undefined
@@ -684,6 +732,7 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
       const payload = {
         assetTypeId: values.assetTypeId,
         serialNo: values.serialNo.trim(),
+        arrivalBatchNo: values.arrivalBatchNo?.trim() ?? '',
         purchaseAmount: values.purchaseAmount,
         residualValue: values.residualValue,
         purchasedAt: values.purchasedAt?.format('YYYY-MM-DD')
@@ -751,11 +800,12 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
 
   function exportAssets() {
     downloadCsv('出资方资产台账', [
-      '资产编码', '资产类型', '序列号', '商户', '门店', '状态', '采购金额', '参考残值', '采购日期'
+      '资产编码', '资产类型', '序列号', '到车批次号', '商户', '门店', '状态', '采购金额', '参考残值', '采购日期'
     ], filteredAssets.map((item) => [
       item.assetCode,
       assetTypeLabel(item),
       item.serialNo,
+      item.arrivalBatchNo || '',
       item.merchantName || '',
       item.storeName || '',
       assetStatusText(item.status),
@@ -763,6 +813,83 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
       item.residualValue == null ? '' : Number(item.residualValue).toFixed(2),
       dateText(item.purchasedAt)
     ]));
+  }
+
+  async function exportArrivalBatchExcel() {
+    if (!arrivalBatchAssets.length) return;
+    try {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.utils.book_new();
+      const exportedSummaries = arrivalBatchFilter === ALL_ARRIVAL_BATCHES
+        ? arrivalBatchSummaries
+        : arrivalBatchSummaries.filter((batch) => batch.key === arrivalBatchFilter);
+      const summarySheet = XLSX.utils.aoa_to_sheet([
+        ['途派熊 · 到车批次资产汇总'],
+        ['出资方', account.displayName],
+        ['导出范围', selectedArrivalBatchLabel],
+        ['生成时间', dayjs().format('YYYY-MM-DD HH:mm:ss')],
+        [],
+        ['到车批次号', '资产数量', '采购日期范围', '采购金额合计', '参考残值合计'],
+        ...exportedSummaries.map((batch) => [
+          batch.label,
+          batch.assets.length,
+          summaryPurchaseDateRange(batch),
+          batch.purchaseAmount,
+          batch.residualValue
+        ])
+      ]);
+      summarySheet['!cols'] = [{ wch: 24 }, { wch: 16 }, { wch: 24 }, { wch: 18 }, { wch: 18 }];
+      summarySheet['!autofilter'] = { ref: `A6:E${Math.max(6, exportedSummaries.length + 6)}` };
+      setSheetMoneyFormat(summarySheet, ['D', 'E'], 7, exportedSummaries.length + 6);
+      XLSX.utils.book_append_sheet(workbook, summarySheet, '批次汇总');
+
+      const detailSheet = XLSX.utils.aoa_to_sheet([
+        ['序号', '到车批次号', '资产编码', '资产类型', '资产编号', '采购金额', '采购日期', '参考残值'],
+        ...arrivalBatchAssets.map((asset, index) => [
+          index + 1,
+          arrivalBatchLabel(asset),
+          asset.assetCode,
+          assetTypeLabel(asset),
+          asset.serialNo,
+          Number(asset.purchaseAmount || 0),
+          dateOnlyText(asset.purchasedAt),
+          asset.residualValue == null ? '' : Number(asset.residualValue)
+        ])
+      ]);
+      detailSheet['!cols'] = [
+        { wch: 8 }, { wch: 22 }, { wch: 22 }, { wch: 18 }, { wch: 28 },
+        { wch: 16 }, { wch: 14 }, { wch: 16 }
+      ];
+      detailSheet['!autofilter'] = { ref: `A1:H${arrivalBatchAssets.length + 1}` };
+      setSheetMoneyFormat(detailSheet, ['F', 'H'], 2, arrivalBatchAssets.length + 1);
+      XLSX.utils.book_append_sheet(workbook, detailSheet, '资产明细');
+
+      XLSX.writeFile(workbook, `途派熊-到车批次资产明细-${safeFileNamePart(selectedArrivalBatchLabel)}.xlsx`, { compression: true });
+      message.success('到车批次资产明细 Excel 已导出');
+    } catch (exportError) {
+      message.error(exportError instanceof Error ? exportError.message : 'Excel 导出失败');
+    }
+  }
+
+  function exportArrivalBatchPdf() {
+    if (!arrivalBatchAssets.length) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      message.error('浏览器阻止了打印窗口，请允许弹出窗口后重试');
+      return;
+    }
+    printWindow.opener = null;
+    printWindow.document.open();
+    printWindow.document.write(buildArrivalBatchPrintHtml({
+      investorName: account.displayName,
+      scopeLabel: selectedArrivalBatchLabel,
+      assets: arrivalBatchAssets,
+      summaries: arrivalBatchFilter === ALL_ARRIVAL_BATCHES
+        ? arrivalBatchSummaries
+        : arrivalBatchSummaries.filter((batch) => batch.key === arrivalBatchFilter),
+      logoUrl: new URL('/tupaixiong-logo.png', window.location.origin).href
+    }));
+    printWindow.document.close();
   }
 
   return (
@@ -774,7 +901,7 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
           <Typography.Text type="secondary">{account.displayName} 名下资产、投放位置、租赁履历和维修记录。</Typography.Text>
         </div>
         <Space>
-          <Button icon={<DownloadOutlined />} disabled={filteredAssets.length === 0} onClick={exportAssets}>导出资产</Button>
+          <Button icon={<DownloadOutlined />} disabled={filteredAssets.length === 0} onClick={exportAssets}>导出资产 CSV</Button>
           {canManageAssets ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAsset}>录入资产</Button> : null}
           <Button icon={<ReloadOutlined />} loading={loading} onClick={loadAssets}>刷新数据</Button>
         </Space>
@@ -789,6 +916,75 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
         <Col span={5}><InvestorMetric icon={<ShopOutlined />} tone="blue" label="空闲资产" value={assetMetrics.idle} detail="可继续投放" /></Col>
         <Col span={5}><InvestorMetric icon={<ToolOutlined />} tone="orange" label="维修及异常" value={assetMetrics.attention} detail="需要关注状态" /></Col>
       </Row>
+
+      <section className="section arrival-batch-section">
+        <div className="section-head investor-list-head arrival-batch-head">
+          <div>
+            <Typography.Text className="page-eyebrow">Arrival Batch Assets</Typography.Text>
+            <Typography.Title level={4}>到车批次资产明细</Typography.Title>
+            <Typography.Text type="secondary">系统按出资方和采购/到车日期自动归批，真实批次号可手工覆盖；本清单不包含租赁订单与履约信息。</Typography.Text>
+          </div>
+          <Space wrap>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              value={arrivalBatchFilter}
+              onChange={setArrivalBatchFilter}
+              options={arrivalBatchOptions}
+              className="arrival-batch-select"
+            />
+            <Button icon={<FileExcelOutlined />} disabled={!arrivalBatchAssets.length} onClick={() => void exportArrivalBatchExcel()}>导出 Excel</Button>
+            <Button icon={<FilePdfOutlined />} disabled={!arrivalBatchAssets.length} onClick={exportArrivalBatchPdf}>导出 PDF</Button>
+          </Space>
+        </div>
+
+        <div className="arrival-batch-kpis">
+          <article>
+            <span>当前范围</span>
+            <strong>{selectedArrivalBatchLabel}</strong>
+            <small>{arrivalBatchMetrics.batchCount} 个批次</small>
+          </article>
+          <article>
+            <span>资产数量</span>
+            <strong>{arrivalBatchMetrics.assetCount} 台</strong>
+            <small>按资产编码逐台展示</small>
+          </article>
+          <article>
+            <span>采购金额</span>
+            <strong>{money(arrivalBatchMetrics.purchaseAmount)}</strong>
+            <small>当前范围采购合计</small>
+          </article>
+          <article>
+            <span>参考残值</span>
+            <strong>{money(arrivalBatchMetrics.residualValue)}</strong>
+            <small>未设置残值按 0 汇总</small>
+          </article>
+          <article>
+            <span>采购日期</span>
+            <strong>{arrivalBatchMetrics.purchaseDateRange}</strong>
+            <small>当前范围最早至最晚日期</small>
+          </article>
+        </div>
+
+        <Table
+          rowKey="id"
+          size="small"
+          dataSource={arrivalBatchAssets}
+          pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 台资产` }}
+          locale={{ emptyText: <Empty description="暂无到车批次资产" /> }}
+          scroll={{ x: 980 }}
+          columns={[
+            { title: '序号', width: 70, fixed: 'left', render: (_, __, index) => index + 1 },
+            { title: '到车批次', dataIndex: 'arrivalBatchNo', width: 170, fixed: 'left', render: (value?: string | null) => value ? <Tag color="green">{value}</Tag> : <Tag>未设置批次</Tag> },
+            { title: '资产编码', dataIndex: 'assetCode', width: 180 },
+            { title: '资产类型', width: 150, render: (_, record) => assetTypeLabel(record) },
+            { title: '资产编号', dataIndex: 'serialNo', width: 220 },
+            { title: '采购金额', dataIndex: 'purchaseAmount', width: 130, render: money },
+            { title: '采购日期', dataIndex: 'purchasedAt', width: 130, render: dateOnlyText },
+            { title: '参考残值', dataIndex: 'residualValue', width: 130, render: optionalMoney }
+          ]}
+        />
+      </section>
 
       <section className="section">
         <div className="section-head investor-list-head">
@@ -843,7 +1039,7 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
           dataSource={filteredAssets}
           pagination={{ pageSize: 12, showSizeChanger: true, showTotal: (total) => `共 ${total} 台` }}
           locale={{ emptyText: <Empty description="暂无资产" /> }}
-          scroll={{ x: 1180 }}
+          scroll={{ x: 1320 }}
           columns={[
             { title: '序号', width: 70, fixed: 'left', render: (_, __, index) => index + 1 },
             {
@@ -858,6 +1054,7 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
               )
             },
             { title: '资产类型', width: 150, render: (_, record) => assetTypeLabel(record) },
+            { title: '到车批次', dataIndex: 'arrivalBatchNo', width: 150, render: (value?: string | null) => value || '未设置批次' },
             {
               title: '当前投放',
               width: 210,
@@ -914,6 +1111,9 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
           </Form.Item>
           <Form.Item name="serialNo" label="资产编号" rules={[{ required: true, message: '请输入资产编号' }]}>
             <Input />
+          </Form.Item>
+          <Form.Item name="arrivalBatchNo" label="到车批次号" extra="留空将按出资方和采购/到车日期自动生成；真实批次号可直接填写">
+            <Input maxLength={64} placeholder="例如：2026-08-LY-01" />
           </Form.Item>
           {!editingAsset ? (
             <>
@@ -992,6 +1192,7 @@ function InvestorAssetManagement({ account }: InvestorPageProps) {
                 <Descriptions.Item label="资产编码">{assetDetail.asset.assetCode}</Descriptions.Item>
                 <Descriptions.Item label="资产类型">{assetTypeLabel(assetDetail.asset)}</Descriptions.Item>
                 <Descriptions.Item label={assetDetail.asset.serialLabel || '序列号'}>{assetDetail.asset.serialNo}</Descriptions.Item>
+                <Descriptions.Item label="到车批次">{assetDetail.asset.arrivalBatchNo || '未设置批次'}</Descriptions.Item>
                 <Descriptions.Item label="状态">{assetStatusTag(assetDetail.asset.status)}</Descriptions.Item>
                 <Descriptions.Item label="当前商户">{assetDetail.asset.merchantName || '-'}</Descriptions.Item>
                 <Descriptions.Item label="当前门店">{assetDetail.asset.storeName || '-'}</Descriptions.Item>
@@ -1115,6 +1316,192 @@ function dateText(value?: string | null) {
 
 function dateOnlyText(value?: string | null) {
   return value ? value.slice(0, 10) : '-';
+}
+
+function arrivalBatchKey(asset: Asset) {
+  return asset.arrivalBatchNo?.trim() || UNSET_ARRIVAL_BATCH;
+}
+
+function arrivalBatchLabel(asset: Asset) {
+  return asset.arrivalBatchNo?.trim() || '未设置批次';
+}
+
+function buildArrivalBatchSummaries(assets: Asset[]): ArrivalBatchSummary[] {
+  const groups = new Map<string, Asset[]>();
+  assets.forEach((asset) => {
+    const key = arrivalBatchKey(asset);
+    groups.set(key, [...(groups.get(key) || []), asset]);
+  });
+  return [...groups.entries()].map(([key, batchAssets]) => {
+    const purchaseDates = batchAssets
+      .map((asset) => asset.purchasedAt?.slice(0, 10))
+      .filter((value): value is string => Boolean(value))
+      .sort();
+    return {
+      key,
+      label: key === UNSET_ARRIVAL_BATCH ? '未设置批次' : key,
+      assets: batchAssets,
+      purchaseAmount: sum(batchAssets.map((asset) => asset.purchaseAmount)),
+      residualValue: sum(batchAssets.map((asset) => asset.residualValue)),
+      firstPurchasedAt: purchaseDates[0],
+      lastPurchasedAt: purchaseDates[purchaseDates.length - 1]
+    };
+  }).sort((left, right) => {
+    if (left.key === UNSET_ARRIVAL_BATCH) return 1;
+    if (right.key === UNSET_ARRIVAL_BATCH) return -1;
+    return String(right.lastPurchasedAt || '').localeCompare(String(left.lastPurchasedAt || ''))
+      || right.label.localeCompare(left.label, 'zh-CN');
+  });
+}
+
+function purchaseDateRangeText(assets: Asset[]) {
+  const dates = assets
+    .map((asset) => asset.purchasedAt?.slice(0, 10))
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  if (!dates.length) return '-';
+  const lastDate = dates[dates.length - 1];
+  return dates[0] === lastDate ? dates[0] : `${dates[0]} 至 ${lastDate}`;
+}
+
+function summaryPurchaseDateRange(summary: ArrivalBatchSummary) {
+  if (!summary.firstPurchasedAt) return '-';
+  return summary.firstPurchasedAt === summary.lastPurchasedAt
+    ? summary.firstPurchasedAt
+    : `${summary.firstPurchasedAt} 至 ${summary.lastPurchasedAt}`;
+}
+
+function setSheetMoneyFormat(sheet: import('xlsx').WorkSheet, columns: string[], startRow: number, endRow: number) {
+  columns.forEach((column) => {
+    for (let row = startRow; row <= endRow; row++) {
+      const cell = sheet[`${column}${row}`];
+      if (cell && cell.v !== '') cell.z = '¥#,##0.00';
+    }
+  });
+}
+
+function safeFileNamePart(value: string) {
+  return value.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, '-').slice(0, 48) || '全部批次';
+}
+
+function buildArrivalBatchPrintHtml(input: {
+  investorName: string;
+  scopeLabel: string;
+  assets: Asset[];
+  summaries: ArrivalBatchSummary[];
+  logoUrl: string;
+}) {
+  const purchaseAmount = sum(input.assets.map((asset) => asset.purchaseAmount));
+  const residualValue = sum(input.assets.map((asset) => asset.residualValue));
+  const generatedAt = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const summaryRows = input.summaries.map((batch) => `
+    <tr>
+      <td>${escapeHtml(batch.label)}</td>
+      <td class="number">${batch.assets.length}</td>
+      <td>${escapeHtml(summaryPurchaseDateRange(batch))}</td>
+      <td class="money">${escapeHtml(plainMoney(batch.purchaseAmount))}</td>
+      <td class="money">${escapeHtml(plainMoney(batch.residualValue))}</td>
+    </tr>
+  `).join('');
+  const detailRows = input.assets.map((asset, index) => `
+    <tr>
+      <td class="number">${index + 1}</td>
+      <td>${escapeHtml(arrivalBatchLabel(asset))}</td>
+      <td>${escapeHtml(asset.assetCode)}</td>
+      <td>${escapeHtml(assetTypeLabel(asset))}</td>
+      <td>${escapeHtml(asset.serialNo)}</td>
+      <td class="money">${escapeHtml(plainMoney(asset.purchaseAmount))}</td>
+      <td>${escapeHtml(dateOnlyText(asset.purchasedAt))}</td>
+      <td class="money">${asset.residualValue == null ? '-' : escapeHtml(plainMoney(asset.residualValue))}</td>
+    </tr>
+  `).join('');
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>途派熊-到车批次资产明细-${escapeHtml(input.scopeLabel)}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #182230; background: #eef4f1; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .toolbar { position: sticky; top: 0; z-index: 2; padding: 12px 20px; display: flex; justify-content: flex-end; background: rgba(255,255,255,.95); border-bottom: 1px solid #dfe8e4; }
+    .toolbar button { padding: 9px 18px; border: 0; border-radius: 8px; color: #fff; background: #0f9f7a; font-size: 14px; font-weight: 700; cursor: pointer; }
+    .page { width: min(1320px, calc(100% - 32px)); margin: 24px auto; padding: 28px; background: #fff; border: 1px solid #dfe8e4; border-radius: 14px; box-shadow: 0 12px 30px rgba(16,24,40,.08); }
+    .hero { padding: 24px 26px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-radius: 12px; color: #fff; background: radial-gradient(circle at 92% 0%, rgba(255,255,255,.22), transparent 32%), linear-gradient(135deg, #0a745a, #0f9f7a); }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .brand img { width: 58px; height: 58px; object-fit: contain; border-radius: 14px; background: rgba(255,255,255,.96); padding: 5px; }
+    .eyebrow { margin: 0 0 4px; font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; opacity: .78; }
+    h1 { margin: 0; font-size: 26px; }
+    .hero-meta { text-align: right; font-size: 13px; line-height: 1.7; }
+    .metrics { margin: 18px 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .metric { min-height: 96px; padding: 15px 16px; border: 1px solid #dfe8e4; border-radius: 10px; background: linear-gradient(180deg, #fff, #fbfefd); }
+    .metric span { display: block; color: #667085; font-size: 12px; }
+    .metric strong { display: block; margin-top: 8px; color: #0a745a; font-size: 21px; line-height: 1.25; }
+    .panel { margin-top: 18px; }
+    .panel-head { margin-bottom: 10px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+    h2 { margin: 0; font-size: 18px; }
+    .note { color: #667085; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11px; }
+    th { padding: 9px 8px; color: #344054; background: #edf8f4; border: 1px solid #d9e8e2; text-align: left; font-weight: 800; }
+    td { padding: 8px; border: 1px solid #e4ebe8; vertical-align: top; word-break: break-all; }
+    tbody tr:nth-child(even) { background: #fbfdfc; }
+    .number { text-align: center; }
+    .money { text-align: right; white-space: nowrap; }
+    .footer { margin-top: 18px; padding-top: 12px; display: flex; justify-content: space-between; gap: 16px; color: #667085; border-top: 1px solid #e4ebe8; font-size: 11px; }
+    @media print {
+      @page { size: A4 landscape; margin: 10mm; }
+      body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .toolbar { display: none; }
+      .page { width: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; }
+      .hero { break-inside: avoid; }
+      .metrics { break-inside: avoid; }
+      thead { display: table-header-group; }
+      tr { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar"><button type="button" onclick="window.print()">打印 / 保存为 PDF</button></div>
+  <main class="page">
+    <header class="hero">
+      <div class="brand">
+        <img src="${escapeHtml(input.logoUrl)}" alt="途派熊" />
+        <div><p class="eyebrow">TUPAIXIONG ASSET REPORT</p><h1>到车批次资产明细</h1></div>
+      </div>
+      <div class="hero-meta"><div>出资方：${escapeHtml(input.investorName)}</div><div>导出范围：${escapeHtml(input.scopeLabel)}</div><div>生成时间：${generatedAt}</div></div>
+    </header>
+    <section class="metrics">
+      <div class="metric"><span>批次数量</span><strong>${input.summaries.length} 个</strong></div>
+      <div class="metric"><span>资产数量</span><strong>${input.assets.length} 台</strong></div>
+      <div class="metric"><span>采购金额合计</span><strong>${escapeHtml(plainMoney(purchaseAmount))}</strong></div>
+      <div class="metric"><span>参考残值合计</span><strong>${escapeHtml(plainMoney(residualValue))}</strong></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>批次汇总</h2><span class="note">采购日期按批次内资产的最早至最晚日期展示</span></div>
+      <table><thead><tr><th>到车批次号</th><th>资产数量</th><th>采购日期范围</th><th>采购金额合计</th><th>参考残值合计</th></tr></thead><tbody>${summaryRows}</tbody></table>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>资产明细</h2><span class="note">本清单不包含租赁订单、客户及履约信息</span></div>
+      <table><thead><tr><th style="width:5%">序号</th><th style="width:15%">到车批次号</th><th style="width:15%">资产编码</th><th style="width:11%">资产类型</th><th style="width:21%">资产编号</th><th style="width:12%">采购金额</th><th style="width:10%">采购日期</th><th style="width:11%">参考残值</th></tr></thead><tbody>${detailRows}</tbody></table>
+    </section>
+    <footer class="footer"><span>途派熊租赁运营平台 · 出资方资产报告</span><span>数据生成时间：${generatedAt}</span></footer>
+  </main>
+  <script>window.addEventListener('load', function () { window.setTimeout(function () { window.print(); }, 350); });</script>
+</body>
+</html>`;
+}
+
+function plainMoney(value?: number | string | null) {
+  return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function escapeHtml(value?: string | number | null) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function monthValue(value?: string): Dayjs | null {

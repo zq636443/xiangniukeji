@@ -13,6 +13,7 @@ public record AssetItem(
     String assetTypeName,
     String serialLabel,
     String serialNo,
+    String arrivalBatchNo,
     Long investorId,
     Long currentMerchantId,
     Long currentStoreId,

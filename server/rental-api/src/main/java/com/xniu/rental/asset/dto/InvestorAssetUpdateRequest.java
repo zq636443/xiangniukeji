@@ -10,6 +10,16 @@ public record InvestorAssetUpdateRequest(
     @NotBlank(message = "请输入资产编号") String serialNo,
     @NotNull(message = "请输入采购金额") BigDecimal purchaseAmount,
     BigDecimal residualValue,
-    LocalDate purchasedAt
+    LocalDate purchasedAt,
+    String arrivalBatchNo
 ) {
+    public InvestorAssetUpdateRequest(
+        Long assetTypeId,
+        String serialNo,
+        BigDecimal purchaseAmount,
+        BigDecimal residualValue,
+        LocalDate purchasedAt
+    ) {
+        this(assetTypeId, serialNo, purchaseAmount, residualValue, purchasedAt, null);
+    }
 }

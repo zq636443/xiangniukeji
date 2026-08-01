@@ -46,6 +46,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class AssetService {
 
     private static final Pattern IMPORT_DATE_PATTERN = Pattern.compile("^(\\d{4})[-/](\\d{1,2})[-/](\\d{1,2})");
+    private static final Pattern AUTO_ARRIVAL_BATCH_PATTERN = Pattern.compile("^ARR-\\d{4}-\\d{2}-\\d{2}-I\\d+-B01$");
 
     private final AssetRepository assetRepository;
     private final AssetTypeService assetTypeService;
@@ -131,7 +132,8 @@ public class AssetService {
             request.currentStoreId(),
             request.purchaseAmount(),
             request.residualValue(),
-            request.purchasedAt() == null ? LocalDate.now() : request.purchasedAt()
+            request.purchasedAt() == null ? LocalDate.now() : request.purchasedAt(),
+            request.arrivalBatchNo()
         );
     }
 
@@ -150,7 +152,8 @@ public class AssetService {
             store.id(),
             request.purchaseAmount(),
             request.residualValue(),
-            request.purchasedAt() == null ? LocalDate.now() : request.purchasedAt()
+            request.purchasedAt() == null ? LocalDate.now() : request.purchasedAt(),
+            request.arrivalBatchNo()
         );
     }
 
@@ -323,7 +326,8 @@ public class AssetService {
             request.currentStoreId(),
             request.purchaseAmount(),
             request.residualValue(),
-            request.purchasedAt() == null ? LocalDate.now() : request.purchasedAt()
+            request.purchasedAt() == null ? LocalDate.now() : request.purchasedAt(),
+            request.arrivalBatchNo()
         );
     }
 
@@ -338,7 +342,8 @@ public class AssetService {
             investorId,
             request.purchaseAmount(),
             request.residualValue(),
-            request.purchasedAt()
+            request.purchasedAt(),
+            request.arrivalBatchNo()
         ));
     }
 
@@ -480,7 +485,8 @@ public class AssetService {
             store == null ? null : store.id(),
             requiredAmount(row.purchaseAmount(), "采购金额"),
             optionalAmount(row.residualValue(), "报废残值"),
-            importDate(row.purchasedAt())
+            importDate(row.purchasedAt()),
+            row.arrivalBatchNo()
         );
     }
 
@@ -511,7 +517,8 @@ public class AssetService {
         Long storeId,
         BigDecimal purchaseAmount,
         BigDecimal residualValue,
-        LocalDate purchasedAt
+        LocalDate purchasedAt,
+        String arrivalBatchNo
     ) {
         if (purchaseAmount == null || purchaseAmount.signum() < 0) {
             throw BusinessException.badRequest("采购金额不能小于0");
@@ -524,6 +531,7 @@ public class AssetService {
             typeDefinition.assetClass(),
             typeDefinition.id(),
             serialNo.trim(),
+            resolveArrivalBatchNo(arrivalBatchNo, investorId, purchasedAt),
             investorId,
             merchantId,
             storeId,
@@ -562,15 +570,25 @@ public class AssetService {
         if (investorChanged) {
             assetRepository.closeActiveOwnership(asset.id());
         }
+        var purchasedAt = request.purchasedAt() == null ? asset.purchasedAt() : request.purchasedAt();
+        var arrivalBatchNo = request.arrivalBatchNo() == null
+            ? asset.arrivalBatchNo()
+            : normalizeArrivalBatchNo(request.arrivalBatchNo());
+        var purchasedAtChanged = request.purchasedAt() != null && !request.purchasedAt().equals(asset.purchasedAt());
+        if (arrivalBatchNo == null || ((investorChanged || purchasedAtChanged) && isAutoArrivalBatchNo(arrivalBatchNo))) {
+            var batchDate = purchasedAt == null ? asset.createdAt().toLocalDate() : purchasedAt;
+            arrivalBatchNo = autoArrivalBatchNo(request.investorId(), batchDate);
+        }
         var updated = assetRepository.updateDetails(
             asset.id(),
             typeDefinition.assetClass(),
             typeDefinition.id(),
             serialNo,
+            arrivalBatchNo,
             request.investorId(),
             request.purchaseAmount(),
             request.residualValue(),
-            request.purchasedAt() == null ? asset.purchasedAt() : request.purchasedAt()
+            purchasedAt
         );
         if (investorChanged) {
             assetRepository.insertOwnership(asset.id(), request.investorId(), "编辑资产资料变更出资方");
@@ -679,6 +697,7 @@ public class AssetService {
             asset.assetTypeName(),
             asset.serialLabel(),
             asset.serialNo(),
+            asset.arrivalBatchNo(),
             asset.investorId(),
             investorName,
             asset.currentMerchantId(),
@@ -698,6 +717,28 @@ public class AssetService {
     private Long currentAccountId() {
         var current = AuthContext.get();
         return current == null ? null : current.account().id();
+    }
+
+    private String normalizeArrivalBatchNo(String value) {
+        var normalized = trimToNull(value);
+        if (normalized != null && normalized.length() > 64) {
+            throw BusinessException.badRequest("到车批次号不能超过64个字符");
+        }
+        return normalized;
+    }
+
+    private String resolveArrivalBatchNo(String value, Long investorId, LocalDate purchasedAt) {
+        var normalized = normalizeArrivalBatchNo(value);
+        return normalized == null ? autoArrivalBatchNo(investorId, purchasedAt) : normalized;
+    }
+
+    private String autoArrivalBatchNo(Long investorId, LocalDate purchasedAt) {
+        var batchDate = purchasedAt == null ? LocalDate.now() : purchasedAt;
+        return "ARR-" + batchDate + "-I" + investorId + "-B01";
+    }
+
+    private boolean isAutoArrivalBatchNo(String value) {
+        return value != null && AUTO_ARRIVAL_BATCH_PATTERN.matcher(value).matches();
     }
 
     private AssetType parseAssetType(String assetType) {

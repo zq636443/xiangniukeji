@@ -76,7 +76,7 @@ class AssetBatchImportIntegrationTests {
     void adminBatchImportShouldKeepSuccessfulRowsWhenOtherRowsFail() {
         var serialNo = "FRAME-BATCH-" + UUID.randomUUID().toString().substring(0, 8);
         var result = assetService.batchImportAssets(new AssetBatchImportRequest(List.of(
-            row(2, "车架", serialNo, "I-demo-001", "S-demo-001", "2600", "35.50", "", "2026/7/20"),
+            row(2, "车架", serialNo, "I-demo-001", "S-demo-001", "2600", "35.50", "", "2026/7/20", "2026-07-LY-01"),
             row(3, "车架", "FRAME-DEMO-001", "I-demo-001", "S-demo-001", "2600", "35", "300", "2026-07-20"),
             row(4, "电池", "BATTERY-NO-INVESTOR", "I-not-found", "S-demo-001", "1800", "25", "200", "2026-07-20")
         )));
@@ -90,7 +90,7 @@ class AssetBatchImportIntegrationTests {
         assertThat(result.results().get(2).message()).contains("出资方编码不存在");
 
         var asset = jdbcTemplate.queryForMap(
-            "SELECT id, investor_id, current_merchant_id, current_store_id, purchase_amount, maintenance_fee_amount, residual_value FROM asset_item WHERE serial_no = ?",
+            "SELECT id, investor_id, current_merchant_id, current_store_id, purchase_amount, maintenance_fee_amount, residual_value, arrival_batch_no FROM asset_item WHERE serial_no = ?",
             serialNo
         );
         var assetId = ((Number) asset.get("id")).longValue();
@@ -100,6 +100,7 @@ class AssetBatchImportIntegrationTests {
         assertThat(asset.get("purchase_amount")).isEqualTo(new BigDecimal("2600.00"));
         assertThat(asset.get("maintenance_fee_amount")).isEqualTo(new BigDecimal("0.00"));
         assertThat(asset.get("residual_value")).isNull();
+        assertThat(asset.get("arrival_batch_no")).isEqualTo("2026-07-LY-01");
         assertThat(jdbcTemplate.queryForObject(
             "SELECT purchased_at FROM asset_item WHERE id = ?",
             LocalDate.class,
@@ -128,12 +129,26 @@ class AssetBatchImportIntegrationTests {
 
         assertThat(asset.maintenanceFeeAmount()).isEqualByComparingTo("0.00");
         assertThat(asset.residualValue()).isNull();
+        assertThat(asset.arrivalBatchNo()).isEqualTo("ARR-2026-07-20-I1-B01");
         var stored = jdbcTemplate.queryForMap(
-            "SELECT maintenance_fee_amount, residual_value FROM asset_item WHERE serial_no = ?",
+            "SELECT maintenance_fee_amount, residual_value, arrival_batch_no FROM asset_item WHERE serial_no = ?",
             serialNo
         );
         assertThat(stored.get("maintenance_fee_amount")).isEqualTo(new BigDecimal("0.00"));
         assertThat(stored.get("residual_value")).isNull();
+        assertThat(stored.get("arrival_batch_no")).isEqualTo("ARR-2026-07-20-I1-B01");
+    }
+
+    @Test
+    void legacyAssetsShouldBeBackfilledByInvestorAndPurchaseDate() {
+        var legacyAsset = jdbcTemplate.queryForMap(
+            "SELECT investor_id, purchased_at, created_at, arrival_batch_no FROM asset_item WHERE id = 1"
+        );
+        var batchDate = legacyAsset.get("purchased_at") == null
+            ? ((java.sql.Timestamp) legacyAsset.get("created_at")).toLocalDateTime().toLocalDate()
+            : ((java.sql.Date) legacyAsset.get("purchased_at")).toLocalDate();
+        assertThat(legacyAsset.get("arrival_batch_no"))
+            .isEqualTo("ARR-" + batchDate + "-I" + legacyAsset.get("investor_id") + "-B01");
     }
 
     @Test
@@ -410,21 +425,25 @@ class AssetBatchImportIntegrationTests {
             1L,
             new BigDecimal("2600.00"),
             new BigDecimal("300.00"),
-            LocalDate.of(2026, 7, 29)
+            LocalDate.of(2026, 7, 29),
+            "2026-07-INV-01"
         ));
         assertThat(created.investorId()).isEqualTo(1L);
         assertThat(created.currentMerchantId()).isEqualTo(1L);
         assertThat(created.currentStoreId()).isEqualTo(1L);
+        assertThat(created.arrivalBatchNo()).isEqualTo("2026-07-INV-01");
 
         var updated = assetService.updateInvestorAsset(created.id(), new InvestorAssetUpdateRequest(
             typeId,
             serialNo + "-EDIT",
             new BigDecimal("2680.00"),
             new BigDecimal("280.00"),
-            LocalDate.of(2026, 7, 28)
+            LocalDate.of(2026, 7, 28),
+            "2026-07-INV-02"
         ));
         assertThat(updated.serialNo()).isEqualTo(serialNo + "-EDIT");
         assertThat(updated.purchaseAmount()).isEqualByComparingTo("2680.00");
+        assertThat(updated.arrivalBatchNo()).isEqualTo("2026-07-INV-02");
 
         var transferred = assetService.transferInvestorAsset(created.id(), new AssetTransferRequest(
             1L,
@@ -471,6 +490,21 @@ class AssetBatchImportIntegrationTests {
         String residualValue,
         String purchasedAt
     ) {
+        return row(lineNo, assetType, serialNo, investorCode, storeCode, purchaseAmount, maintenanceFeeAmount, residualValue, purchasedAt, null);
+    }
+
+    private AssetBatchImportRowRequest row(
+        int lineNo,
+        String assetType,
+        String serialNo,
+        String investorCode,
+        String storeCode,
+        String purchaseAmount,
+        String maintenanceFeeAmount,
+        String residualValue,
+        String purchasedAt,
+        String arrivalBatchNo
+    ) {
         return new AssetBatchImportRowRequest(
             lineNo,
             assetType,
@@ -480,7 +514,8 @@ class AssetBatchImportIntegrationTests {
             purchaseAmount,
             maintenanceFeeAmount,
             residualValue,
-            purchasedAt
+            purchasedAt,
+            arrivalBatchNo
         );
     }
 
