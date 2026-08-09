@@ -11,6 +11,7 @@ import com.xniu.rental.bill.model.RentalBill;
 import com.xniu.rental.bill.repository.BillRepository;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.externalorder.model.ExternalRentalOrder;
+import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.order.repository.OrderRepository;
 import com.xniu.rental.settlement.dto.SettlementEntryGenerateResponse;
@@ -153,6 +154,10 @@ public class SettlementIncomeService {
 
     @Transactional
     public int syncExternalOrder(ExternalRentalOrder order) {
+        if (order.orderStatus() == ExternalRentalOrderStatus.TERMINATED) {
+            incomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, order.id());
+            return 0;
+        }
         if (order.settlementSnapshotId() == null) {
             throw BusinessException.badRequest("补录订单暂无分润快照");
         }

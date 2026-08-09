@@ -254,6 +254,21 @@ class ExternalRentalOrderIntegrationTests {
         assertThat(assetStatus(batteryAssetId)).isEqualTo("PENDING_REPAIR");
         assertThat(assetStore(frameAssetId)).isEqualTo(returnStore.id());
         assertThat(assetStore(batteryAssetId)).isEqualTo(returnStore.id());
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, Integer.class, created.id())).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement_line
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, Integer.class, created.id())).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement
+            WHERE statement_month = '2099-01'
+            """, Integer.class)).isZero();
     }
 
     @Test
@@ -616,15 +631,10 @@ class ExternalRentalOrderIntegrationTests {
         assertThat(assetStatus(newFrameId)).isEqualTo("IDLE");
         assertThat(assetStatus(newBatteryId)).isEqualTo("IDLE");
         assertThat(jdbcTemplate.queryForObject("""
-            SELECT COUNT(DISTINCT snapshot_id)
+            SELECT COUNT(1)
             FROM settlement_income_entry
             WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
-            """, Integer.class, updated.id())).isEqualTo(1);
-        assertThat(jdbcTemplate.queryForObject("""
-            SELECT MAX(snapshot_id)
-            FROM settlement_income_entry
-            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
-            """, Long.class, updated.id())).isEqualTo(closedUpdated.settlementSnapshotId());
+            """, Integer.class, updated.id())).isZero();
     }
 
     @Test
@@ -868,6 +878,65 @@ class ExternalRentalOrderIntegrationTests {
             .isInstanceOf(BusinessException.class)
             .hasMessageContaining("已进入月结单");
         assertThat(assetStatus(statementAssetId)).isEqualTo("RENTING");
+    }
+
+    @Test
+    void deleteTerminatedExternalOrderShouldClearDraftStatementAndSettlementData() {
+        var suffix = String.valueOf(System.nanoTime());
+        var assetId = createIntegratedAsset("terminated-statement-" + suffix);
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "TERM-STATEMENT-" + suffix,
+            2L,
+            4L,
+            "已终止月结补录客户",
+            "13800139994",
+            LocalDateTime.of(2099, 3, 10, 10, 0),
+            null,
+            null,
+            assetId,
+            new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            null
+        ));
+        jdbcTemplate.update(
+            "UPDATE external_rental_order SET created_at = '2099-03-10 10:00:00' WHERE id = ?",
+            created.id()
+        );
+        settlementStatementService.generateMonth("2099-03");
+
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement_line
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, Integer.class, created.id())).isGreaterThan(0);
+
+        externalRentalOrderService.terminate(created.id(), new ExternalRentalOrderTerminateRequest(
+            1L,
+            "IDLE",
+            null,
+            "客户取消",
+            null
+        ));
+        externalRentalOrderService.deleteOrder(created.id());
+
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(1) FROM external_rental_order WHERE id = ?",
+            Integer.class,
+            created.id()
+        )).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, Integer.class, created.id())).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement
+            WHERE statement_month = '2099-03'
+            """, Integer.class)).isZero();
     }
 
     private Long createIntegratedAsset(String suffix) {

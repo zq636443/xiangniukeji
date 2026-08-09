@@ -279,8 +279,14 @@ public class ExternalRentalOrderService {
             .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
 
+        if (settlementStatementRepository.hasLockedLinesBySource(SnapshotSourceType.EXTERNAL_ORDER.name(), order.id())) {
+            throw BusinessException.badRequest("补录订单已进入已确认或已支付月结单，不能删除");
+        }
         if (settlementStatementRepository.hasLinesBySource(SnapshotSourceType.EXTERNAL_ORDER.name(), order.id())) {
-            throw BusinessException.badRequest("补录订单已进入月结单，不能删除");
+            if (order.orderStatus() != ExternalRentalOrderStatus.TERMINATED) {
+                throw BusinessException.badRequest("补录订单已进入月结单，不能删除");
+            }
+            deleteDraftStatementsByExternalOrder(order.id());
         }
         if (settlementIncomeRepository.hasNonPendingBySource(IncomeSourceType.EXTERNAL_ORDER, order.id())) {
             throw BusinessException.badRequest("补录订单收益已结算或冻结，不能删除");
@@ -460,6 +466,7 @@ public class ExternalRentalOrderService {
             blankToNull(request.remark()) == null ? order.remark() : request.remark().trim(),
             currentAccountId()
         );
+        removeTerminatedSettlementData(id);
         pricingRevisionRepository.cancelPendingByOrder(id);
         externalRentalOrderRepository.addLog(
             id,
@@ -569,6 +576,20 @@ public class ExternalRentalOrderService {
         var updated = externalRentalOrderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
         settlementIncomeService.syncExternalOrder(updated);
         return updated;
+    }
+
+    private void removeTerminatedSettlementData(Long orderId) {
+        if (settlementStatementRepository.hasLockedLinesBySource(SnapshotSourceType.EXTERNAL_ORDER.name(), orderId)) {
+            throw BusinessException.badRequest("补录订单已进入已确认或已支付月结单，不能终止");
+        }
+        deleteDraftStatementsByExternalOrder(orderId);
+        settlementIncomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, orderId);
+    }
+
+    private void deleteDraftStatementsByExternalOrder(Long orderId) {
+        for (var statementMonth : settlementStatementRepository.listDraftStatementMonthsBySource(SnapshotSourceType.EXTERNAL_ORDER.name(), orderId)) {
+            settlementStatementRepository.deleteDraftStatements(statementMonth);
+        }
     }
 
     public int backfillMissingSettlements() {

@@ -242,6 +242,30 @@ public class SettlementStatementRepository {
         return count != null && count > 0;
     }
 
+    public boolean hasLockedLinesBySource(String sourceType, Long sourceId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement_line l
+            JOIN settlement_statement s ON s.id = l.statement_id
+            WHERE l.source_type = ?
+              AND l.source_id = ?
+              AND s.status IN ('CONFIRMED', 'PAYABLE', 'PAID', 'CLOSED')
+            """, Integer.class, sourceType, sourceId);
+        return count != null && count > 0;
+    }
+
+    public List<String> listDraftStatementMonthsBySource(String sourceType, Long sourceId) {
+        return jdbcTemplate.queryForList("""
+            SELECT DISTINCT s.statement_month
+            FROM settlement_statement_line l
+            JOIN settlement_statement s ON s.id = l.statement_id
+            WHERE l.source_type = ?
+              AND l.source_id = ?
+              AND s.status IN ('DRAFT', 'RECONCILING')
+            ORDER BY s.statement_month
+            """, String.class, sourceType, sourceId);
+    }
+
     public List<SettlementStatementLine> listLines(Long statementId) {
         return jdbcTemplate.query("""
             SELECT *
@@ -356,6 +380,7 @@ public class SettlementStatementRepository {
               eo.created_at
             FROM external_rental_order eo
             WHERE eo.settlement_snapshot_id IS NOT NULL
+              AND eo.order_status IN ('ACTIVE', 'COMPLETED')
               AND eo.created_at >= ?
               AND eo.created_at < ?
             ORDER BY eo.created_at, eo.id
