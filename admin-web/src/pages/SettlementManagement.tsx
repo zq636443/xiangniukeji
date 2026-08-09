@@ -122,6 +122,8 @@ export function SettlementManagement() {
   const [storeProfits, setStoreProfits] = useState<StoreProfitOverview[]>([]);
   const [statementLines, setStatementLines] = useState<SettlementStatementLine[]>([]);
   const [statementMonth, setStatementMonth] = useState(currentMonth());
+  const [statementGenerateOpen, setStatementGenerateOpen] = useState(false);
+  const [statementGenerateMonth, setStatementGenerateMonth] = useState(currentMonth());
   const [statementDetailOpen, setStatementDetailOpen] = useState(false);
   const [selectedStatement, setSelectedStatement] = useState<SettlementStatement | null>(null);
   const [statementKeyword, setStatementKeyword] = useState('');
@@ -641,14 +643,26 @@ export function SettlementManagement() {
     }
   }
 
+  function openStatementGenerate() {
+    setStatementGenerateMonth(statementMonth);
+    setStatementGenerateOpen(true);
+  }
+
   async function generateStatements() {
+    if (!statementGenerateMonth) {
+      message.warning('请选择要生成月结单的月份');
+      return;
+    }
     setActionLoading('statement-generate');
     try {
+      const month = statementGenerateMonth;
       const result = await http.post<unknown, SettlementStatementGenerateResult>('/api/admin/settlement/statements/generate', null, {
-        params: { month: statementMonth }
+        params: { month }
       });
       message.success(`已生成 ${result.merchantStatementCount} 张门店月结单，${result.investorStatementCount} 张出资方月结单`);
-      await reloadStatements();
+      setStatementGenerateOpen(false);
+      setStatementMonth(month);
+      await reloadStatements(month);
     } finally {
       setActionLoading(undefined);
     }
@@ -1109,25 +1123,15 @@ export function SettlementManagement() {
                         value={dayjs(`${statementMonth}-01`)}
                         onChange={handleStatementMonthChange}
                       />
-                      <Button icon={<ReloadOutlined />} loading={statementLoading} onClick={() => void reloadStatements(statementMonth)}>刷新本月</Button>
-                      <Tooltip title={statementLocked ? '该月已有确认、待打款或已完成月结单，不能重新生成' : undefined}>
-                        <span>
-                          <Popconfirm
-                            disabled={statementLocked}
-                            title={statements.length > 0 ? '重新生成会覆盖当前草稿与对账中月结单，确认继续？' : `确认生成 ${statementMonth} 月结单？`}
-                            onConfirm={generateStatements}
-                          >
-                            <Button
-                              type="primary"
-                              icon={<FileDoneOutlined />}
-                              disabled={statementLocked}
-                              loading={actionLoading === 'statement-generate'}
-                            >
-                              {statementLocked ? '本月已锁定' : statements.length > 0 ? '重新生成草稿' : '生成月结单'}
-                            </Button>
-                          </Popconfirm>
-                        </span>
-                      </Tooltip>
+                      <Button icon={<ReloadOutlined />} loading={statementLoading} onClick={() => void reloadStatements(statementMonth)}>刷新所选月份</Button>
+                      <Button
+                        type="primary"
+                        icon={<FileDoneOutlined />}
+                        loading={actionLoading === 'statement-generate'}
+                        onClick={openStatementGenerate}
+                      >
+                        选择月份生成
+                      </Button>
                       <Button icon={<DownloadOutlined />} disabled={filteredStatements.length === 0} onClick={exportStatements}>导出月结</Button>
                     </Space>
                   </div>
@@ -1993,6 +1997,33 @@ export function SettlementManagement() {
             </div>
           </Space>
         )}
+      </Modal>
+
+      <Modal
+        title="生成月结单"
+        open={statementGenerateOpen}
+        onCancel={() => setStatementGenerateOpen(false)}
+        onOk={generateStatements}
+        confirmLoading={actionLoading === 'statement-generate'}
+        okText={statementGenerateMonth === statementMonth && statements.length > 0 ? '重新生成草稿' : '生成月结单'}
+        destroyOnHidden
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Typography.Text type="secondary">请选择要生成月结单的结算月份。系统会按所选月份的实际核销、实收和补录订单数据生成月结单。</Typography.Text>
+          <DatePicker
+            picker="month"
+            allowClear={false}
+            format="YYYY年MM月"
+            value={dayjs(`${statementGenerateMonth}-01`)}
+            onChange={(value) => setStatementGenerateMonth(value ? value.format('YYYY-MM') : statementMonth)}
+            style={{ width: '100%' }}
+          />
+          <Alert
+            type="warning"
+            showIcon
+            message="重新生成会覆盖所选月份的草稿和对账中月结单，已确认、待打款或已完成的月份不能重新生成。"
+          />
+        </Space>
       </Modal>
 
       <Modal

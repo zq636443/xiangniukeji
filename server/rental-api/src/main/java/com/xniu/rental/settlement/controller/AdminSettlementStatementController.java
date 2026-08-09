@@ -32,7 +32,7 @@ public class AdminSettlementStatementController {
     }
 
     @PostMapping("/generate")
-    public ApiResponse<SettlementStatementGenerateResponse> generate(@RequestParam(required = false) String month) {
+    public ApiResponse<SettlementStatementGenerateResponse> generate(@RequestParam String month) {
         return ApiResponse.ok(settlementStatementService.generateMonth(month));
     }
 

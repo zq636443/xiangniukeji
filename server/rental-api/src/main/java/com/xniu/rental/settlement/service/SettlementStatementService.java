@@ -73,7 +73,7 @@ public class SettlementStatementService {
     @Transactional
     public SettlementStatementGenerateResponse generateMonth(String statementMonth) {
         authorizationService.requirePermission("settlement.write");
-        var month = normalizeMonth(statementMonth);
+        var month = normalizeRequiredMonth(statementMonth);
         if (statementRepository.hasLockedStatements(month)) {
             throw BusinessException.badRequest("该月份已存在已确认或已支付月结单，不能重新生成");
         }
@@ -750,6 +750,13 @@ public class SettlementStatementService {
         } catch (DateTimeParseException exception) {
             throw BusinessException.badRequest("结算月份格式必须为 yyyy-MM");
         }
+    }
+
+    private String normalizeRequiredMonth(String statementMonth) {
+        if (statementMonth == null || statementMonth.isBlank()) {
+            throw BusinessException.badRequest("请选择要生成月结单的月份");
+        }
+        return normalizeMonth(statementMonth);
     }
 
     private String blankToNull(String value) {
