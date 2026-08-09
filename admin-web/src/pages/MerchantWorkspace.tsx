@@ -13,6 +13,7 @@ import {
   ReloadOutlined,
   SearchOutlined,
   ShopOutlined,
+  SwapOutlined,
   UploadOutlined,
   WalletOutlined
 } from '@ant-design/icons';
@@ -152,6 +153,11 @@ type MerchantAssetForm = {
   purchaseAmount: number;
   residualValue?: number;
   purchasedAt?: string;
+};
+
+type AssetTransferForm = {
+  storeId: number;
+  remark?: string;
 };
 
 type MerchantMaintenanceForm = {
@@ -1474,19 +1480,23 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
   const [selectedAsset, setSelectedAsset] = useState<AssetDetail | null>(null);
   const [maintenanceStocks, setMaintenanceStocks] = useState<StoreSparePartStock[]>([]);
   const [assetOpen, setAssetOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [transferSaving, setTransferSaving] = useState(false);
   const [maintenanceSaving, setMaintenanceSaving] = useState(false);
   const [assetForm] = Form.useForm<MerchantAssetForm>();
+  const [transferForm] = Form.useForm<AssetTransferForm>();
   const [maintenanceForm] = Form.useForm<MerchantMaintenanceForm>();
   const selectedAssetTypeId = Form.useWatch('assetTypeId', assetForm);
   const currentStore = stores.find((item) => item.id === storeId);
   const canImportAssets = account.permissions.includes('asset.import') || account.permissions.includes('system.admin');
   const canManageAssets = account.permissions.includes('asset.manage') || account.permissions.includes('system.admin');
+  const canOperateAssets = account.permissions.includes('asset.operate') || account.permissions.includes('system.admin');
   const canOperateMaintenance = account.permissions.includes('maintenance.operate') || account.permissions.includes('system.admin');
   const assetTypeFilterOptions = useMemo(() => assetTypes.map((type) => ({
     label: `${type.typeName}${type.status === 'DISABLED' ? '（已停用）' : ''}`,
@@ -1504,6 +1514,15 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     label: `${investor.investorName} / ${investor.investorCode}`,
     value: investor.id
   })), [investorOptions]);
+  const transferStoreOptions = useMemo(
+    () => stores
+      .filter((item) => item.merchantId === currentStore?.merchantId && item.status === 'ENABLED' && item.id !== storeId)
+      .map((item) => ({
+        label: `${item.storeName} / ${item.storeCode}`,
+        value: item.id
+      })),
+    [currentStore?.merchantId, storeId, stores]
+  );
   const maintenancePartOptions = useMemo(() => maintenanceStocks.map((stock) => ({
     label: `${stock.partName} / 库存 ${stock.stockQuantity}`,
     value: stock.partId
@@ -1592,6 +1611,16 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     setAssetOpen(true);
   }
 
+  function openTransfer(record: Asset) {
+    setEditingAsset(record);
+    transferForm.resetFields();
+    transferForm.setFieldsValue({
+      storeId: undefined,
+      remark: '门店调拨'
+    });
+    setTransferOpen(true);
+  }
+
   function openMaintenance(record: Asset) {
     setMaintenanceAsset(record);
     maintenanceForm.resetFields();
@@ -1624,6 +1653,29 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
       await loadAssets();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function submitTransfer(values: AssetTransferForm) {
+    if (!storeId || !editingAsset) return;
+    if (!currentStore?.merchantId) {
+      message.error('只能在同一商户下调拨资产');
+      return;
+    }
+    setTransferSaving(true);
+    try {
+      await http.put(`/api/merchant/assets/stores/${storeId}/${editingAsset.id}/transfer`, {
+        merchantId: currentStore.merchantId,
+        storeId: values.storeId,
+        remark: values.remark || undefined
+      });
+      message.success('资产已调拨到目标门店');
+      transferForm.resetFields();
+      setTransferOpen(false);
+      setEditingAsset(null);
+      await loadAssets();
+    } finally {
+      setTransferSaving(false);
     }
   }
 
@@ -1771,6 +1823,17 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
                     </Button>
                   ) : null}
                   <Button size="small" onClick={() => openDetail(record)}>详情</Button>
+                  {canOperateAssets ? (
+                    <Button
+                      size="small"
+                      icon={<SwapOutlined />}
+                      disabled={record.status === 'RENTING' || transferStoreOptions.length === 0}
+                      title={record.status === 'RENTING' ? '租赁中的资产暂不能调拨' : transferStoreOptions.length === 0 ? '当前商户暂无可调拨门店' : undefined}
+                      onClick={() => openTransfer(record)}
+                    >
+                      调拨
+                    </Button>
+                  ) : null}
                   {canOperateMaintenance ? <Button size="small" onClick={() => openMaintenance(record)}>维修</Button> : null}
                   {canManageAssets ? (
                     <Popconfirm
@@ -1835,6 +1898,33 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           </Form.Item>
           <Form.Item name="purchasedAt" label="采购日期">
             <Input placeholder="2026-07-22" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={editingAsset ? `资产调拨 / ${editingAsset.serialNo}` : '资产调拨'}
+        open={transferOpen}
+        onCancel={() => {
+          transferForm.resetFields();
+          setEditingAsset(null);
+          setTransferOpen(false);
+        }}
+        onOk={() => transferForm.submit()}
+        confirmLoading={transferSaving}
+        destroyOnHidden
+      >
+        <Form form={transferForm} layout="vertical" onFinish={submitTransfer}>
+          <Form.Item name="storeId" label="调拨门店" rules={[{ required: true, message: '请选择门店' }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="请选择同商户下的目标门店"
+              options={transferStoreOptions}
+            />
+          </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <Input placeholder="如：王城大道店调拨给龙翔小区店" />
           </Form.Item>
         </Form>
       </Modal>
@@ -2885,6 +2975,7 @@ function incomeLineText(value: SettlementIncomeEntry['lineType']) {
   const map: Record<SettlementIncomeEntry['lineType'], string> = {
     CHANNEL_VERIFICATION_FEE: '渠道核销扣点',
     PLATFORM_SERVICE_FEE: '租赁平台扣点',
+    PLATFORM_ORDER_FEE_SERVICE_FEE: '办单费手续费',
     STORE_OPERATION_SHARE: '门店运营分润',
     MAINTENANCE_FUND_SHARE: '门店维修分润',
     CHANNEL_REFERRAL_SHARE: '渠道引流分润',

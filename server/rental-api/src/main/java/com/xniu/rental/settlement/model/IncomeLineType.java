@@ -3,6 +3,7 @@ package com.xniu.rental.settlement.model;
 public enum IncomeLineType {
     CHANNEL_VERIFICATION_FEE,
     PLATFORM_SERVICE_FEE,
+    PLATFORM_ORDER_FEE_SERVICE_FEE,
     STORE_OPERATION_SHARE,
     MAINTENANCE_FUND_SHARE,
     CHANNEL_REFERRAL_SHARE,

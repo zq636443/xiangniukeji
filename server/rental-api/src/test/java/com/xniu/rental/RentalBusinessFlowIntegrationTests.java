@@ -234,12 +234,13 @@ class RentalBusinessFlowIntegrationTests {
 
         var income = settlementIncomeService.generateForOrder(order.id());
 
-        assertThat(income.createdCount()).isEqualTo(19);
+        assertThat(income.createdCount()).isEqualTo(20);
         assertThat(income.entries())
             .extracting("lineType")
             .contains(
                 "CHANNEL_VERIFICATION_FEE",
                 "PLATFORM_SERVICE_FEE",
+                "PLATFORM_ORDER_FEE_SERVICE_FEE",
                 "STORE_OPERATION_SHARE",
                 "MAINTENANCE_FUND_SHARE",
                 "CHANNEL_REFERRAL_SHARE",
@@ -254,11 +255,12 @@ class RentalBusinessFlowIntegrationTests {
         assertThat(incomeAmounts).containsAllEntriesOf(Map.of(
             "CHANNEL_VERIFICATION_FEE", new BigDecimal("49.95"),
             "PLATFORM_SERVICE_FEE", new BigDecimal("29.97"),
+            "PLATFORM_ORDER_FEE_SERVICE_FEE", new BigDecimal("0.90"),
             "STORE_OPERATION_SHARE", new BigDecimal("137.85"),
             "MAINTENANCE_FUND_SHARE", new BigDecimal("91.92"),
             "CHANNEL_REFERRAL_SHARE", new BigDecimal("183.81"),
             "INVESTOR_SHARE", new BigDecimal("505.50"),
-            "MERCHANT_ORDER_FEE", new BigDecimal("30.00")
+            "MERCHANT_ORDER_FEE", new BigDecimal("29.10")
         ));
         assertThat(incomeAmounts.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add))
             .isEqualByComparingTo(new BigDecimal("1029.00"));
@@ -1152,10 +1154,10 @@ class RentalBusinessFlowIntegrationTests {
               AND store_id = 1
             """);
         assertThat(merchantStatement.get("rent_base_amount")).isEqualTo(new BigDecimal("399.00"));
-        assertThat(merchantStatement.get("sign_fee_income_amount")).isEqualTo(new BigDecimal("30.00"));
+        assertThat(merchantStatement.get("sign_fee_income_amount")).isEqualTo(new BigDecimal("29.10"));
         assertThat(merchantStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("91.77"));
         assertThat(merchantStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("12.00"));
-        assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("109.77"));
+        assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("108.87"));
 
         assertThat(settlementStatementService.listStoreProfitOverview("2026-09", 1L, 1L))
             .singleElement()
@@ -1164,12 +1166,12 @@ class RentalBusinessFlowIntegrationTests {
                 assertThat(storeProfit.merchantId()).isEqualTo(1L);
                 assertThat(storeProfit.storeId()).isEqualTo(1L);
                 assertThat(storeProfit.settlementBaseAmount()).isEqualByComparingTo("399.00");
-                assertThat(storeProfit.signFeeAmount()).isEqualByComparingTo("30.00");
+                assertThat(storeProfit.signFeeAmount()).isEqualByComparingTo("29.10");
                 assertThat(storeProfit.storeOperationAmount()).isEqualByComparingTo("55.06");
                 assertThat(storeProfit.storeMaintenanceAmount()).isEqualByComparingTo("36.71");
                 assertThat(storeProfit.maintenanceReimburseAmount()).isEqualByComparingTo("0.00");
                 assertThat(storeProfit.maintenanceDeductAmount()).isEqualByComparingTo("12.00");
-                assertThat(storeProfit.payableAmount()).isEqualByComparingTo("109.77");
+                assertThat(storeProfit.payableAmount()).isEqualByComparingTo("108.87");
                 assertThat(storeProfit.orderCount()).isEqualTo(1);
                 assertThat(storeProfit.billCount()).isEqualTo(1);
                 assertThat(storeProfit.lineCount()).isEqualTo(4);

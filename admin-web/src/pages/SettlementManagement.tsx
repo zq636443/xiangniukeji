@@ -2413,6 +2413,7 @@ function lineTypeText(value: SettlementIncomeEntry['lineType']) {
   const map: Record<SettlementIncomeEntry['lineType'], string> = {
     CHANNEL_VERIFICATION_FEE: '渠道核销扣点',
     PLATFORM_SERVICE_FEE: '租赁平台扣点',
+    PLATFORM_ORDER_FEE_SERVICE_FEE: '办单费手续费',
     STORE_OPERATION_SHARE: '门店运营分润',
     MAINTENANCE_FUND_SHARE: '门店维修分润',
     CHANNEL_REFERRAL_SHARE: '渠道引流分润',

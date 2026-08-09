@@ -216,7 +216,7 @@ public class SettlementIncomeService {
             var orderFeeAllocation = ProfitSharingCalculator.calculateOrderFee(source.signFeeAmount());
             add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MERCHANT_ORDER_FEE, orderFeeAllocation.merchantNetAmount(), remark);
             if (orderFeeAllocation.serviceFeeAmount().signum() > 0) {
-                add(created, snapshot, source, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.PLATFORM_SERVICE_FEE, orderFeeAllocation.serviceFeeAmount(), remark + "计入平台收益");
+                add(created, snapshot, source, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.PLATFORM_ORDER_FEE_SERVICE_FEE, orderFeeAllocation.serviceFeeAmount(), remark + "手续费计入平台收益");
             }
         }
         return created;

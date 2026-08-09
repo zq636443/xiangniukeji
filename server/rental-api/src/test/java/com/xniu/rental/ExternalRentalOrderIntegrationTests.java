@@ -172,7 +172,15 @@ class ExternalRentalOrderIntegrationTests {
             WHERE source_type = 'EXTERNAL_ORDER'
               AND source_id = ?
               AND beneficiary_type = 'MERCHANT'
-            """, BigDecimal.class, created.id())).isEqualByComparingTo("114.75");
+            """, BigDecimal.class, created.id())).isEqualByComparingTo("113.85");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER'
+              AND source_id = ?
+              AND beneficiary_type = 'PLATFORM'
+              AND line_type = 'PLATFORM_ORDER_FEE_SERVICE_FEE'
+            """, BigDecimal.class, created.id())).isEqualByComparingTo("0.90");
         assertThat(jdbcTemplate.queryForObject("""
             SELECT beneficiary_id
             FROM settlement_income_entry
@@ -205,12 +213,26 @@ class ExternalRentalOrderIntegrationTests {
               AND line_type = 'MERCHANT_MAINTENANCE_SHARE'
             """, BigDecimal.class, created.id())).isEqualByComparingTo("33.90");
         assertThat(jdbcTemplate.queryForObject("""
+            SELECT amount
+            FROM settlement_statement_line
+            WHERE source_type = 'EXTERNAL_ORDER'
+              AND source_id = ?
+              AND line_type = 'MERCHANT_SIGN_FEE'
+            """, BigDecimal.class, created.id())).isEqualByComparingTo("29.10");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT sign_fee_income_amount
+            FROM settlement_statement
+            WHERE statement_month = '2099-01'
+              AND beneficiary_type = 'MERCHANT'
+              AND store_id = ?
+            """, BigDecimal.class, created.storeId())).isEqualByComparingTo("29.10");
+        assertThat(jdbcTemplate.queryForObject("""
             SELECT payable_amount
             FROM settlement_statement
             WHERE statement_month = '2099-01'
               AND beneficiary_type = 'MERCHANT'
               AND store_id = ?
-            """, BigDecimal.class, created.storeId())).isEqualByComparingTo("114.75");
+            """, BigDecimal.class, created.storeId())).isEqualByComparingTo("113.85");
         assertThat(assetStatus(frameAssetId)).isEqualTo("RENTING");
         assertThat(assetStatus(batteryAssetId)).isEqualTo("RENTING");
 

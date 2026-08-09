@@ -225,8 +225,8 @@ public class SettlementStatementService {
             if (!"EXTERNAL_ORDER".equals(snapshot.sourceType().name()) || !externalOrder.externalOrderId().equals(snapshot.sourceId())) {
                 throw BusinessException.badRequest("补录订单 " + externalOrder.recordNo() + " 的分润快照不匹配");
             }
-            var signFeeAmount = money(externalOrder.signFeeAmount());
-            if (signFeeAmount.signum() > 0) {
+            var signFeeAllocation = ProfitSharingCalculator.calculateOrderFee(externalOrder.signFeeAmount());
+            if (signFeeAllocation.merchantNetAmount().signum() > 0) {
                 merchantDraft(merchantDrafts, externalOrder.merchantId(), externalOrder.storeId()).register(
                     new LineDraft(
                         "EXTERNAL_ORDER",
@@ -238,9 +238,9 @@ public class SettlementStatementService {
                         externalOrder.storeId(),
                         0L,
                         SettlementStatementLineType.MERCHANT_SIGN_FEE,
-                        signFeeAmount,
+                        signFeeAllocation.merchantNetAmount(),
                         externalOrder.createdAt(),
-                        "补录订单 " + externalOrder.recordNo() + " 签单费"
+                        "补录订单 " + externalOrder.recordNo() + " 签单费（扣除 3% 手续费）"
                     ),
                     BigDecimal.ZERO
                 );
