@@ -34,4 +34,13 @@ class ProfitSharingCalculatorTests {
             .add(allocation.investorShareAmount()))
             .isEqualByComparingTo(allocation.settlementBaseAmount());
     }
+
+    @Test
+    void orderFeeShouldReserveThreePercentServiceFee() {
+        var allocation = ProfitSharingCalculator.calculateOrderFee(new BigDecimal("100.00"));
+
+        assertThat(allocation.orderFeeAmount()).isEqualByComparingTo("100.00");
+        assertThat(allocation.serviceFeeAmount()).isEqualByComparingTo("3.00");
+        assertThat(allocation.merchantNetAmount()).isEqualByComparingTo("97.00");
+    }
 }

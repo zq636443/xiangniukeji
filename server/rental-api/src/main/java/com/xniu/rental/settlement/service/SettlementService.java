@@ -32,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class SettlementService {
 
     private static final BigDecimal ONE = new BigDecimal("1.0000");
+    private static final BigDecimal ORDER_FEE_SERVICE_RATE = new BigDecimal("0.03");
 
     private final SettlementRepository settlementRepository;
     private final ProductRepository productRepository;
@@ -299,7 +300,7 @@ public class SettlementService {
             rental,
             allocation.settlementBaseAmount(),
             storeSku.signFeeAmount(),
-            BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+            netOrderFee(storeSku.signFeeAmount()),
             allocation.storeOperationRate(),
             allocation.storeOperationAmount(),
             allocation.platformFeeRate(),
@@ -568,6 +569,10 @@ public class SettlementService {
 
     private BigDecimal money(BigDecimal value) {
         return (value == null ? BigDecimal.ZERO : value).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal netOrderFee(BigDecimal amount) {
+        return money(amount).multiply(BigDecimal.ONE.subtract(ORDER_FEE_SERVICE_RATE)).setScale(2, RoundingMode.HALF_UP);
     }
 
     private BigDecimal rate(BigDecimal value) {

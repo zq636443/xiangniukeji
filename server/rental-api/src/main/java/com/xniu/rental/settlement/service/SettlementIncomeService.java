@@ -213,7 +213,11 @@ public class SettlementIncomeService {
         addV2InvestorEntries(created, snapshot, source, investorShareAmount);
         if (source.signFeeAmount().signum() > 0) {
             var remark = source.sourceType() == IncomeSourceType.EXTERNAL_ORDER ? "补录订单签单费" : "签单费实收";
-            add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MERCHANT_ORDER_FEE, source.signFeeAmount(), remark);
+            var orderFeeAllocation = ProfitSharingCalculator.calculateOrderFee(source.signFeeAmount());
+            add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MERCHANT_ORDER_FEE, orderFeeAllocation.merchantNetAmount(), remark);
+            if (orderFeeAllocation.serviceFeeAmount().signum() > 0) {
+                add(created, snapshot, source, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.PLATFORM_SERVICE_FEE, orderFeeAllocation.serviceFeeAmount(), remark + "计入平台收益");
+            }
         }
         return created;
     }

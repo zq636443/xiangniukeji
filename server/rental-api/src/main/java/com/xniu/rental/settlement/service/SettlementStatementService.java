@@ -42,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class SettlementStatementService {
 
     private static final DateTimeFormatter MONTH_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM");
+    private static final BigDecimal ORDER_FEE_SERVICE_RATE = new BigDecimal("0.03");
 
     private final SettlementStatementRepository statementRepository;
     private final SettlementIncomeRepository incomeRepository;
@@ -116,7 +117,8 @@ public class SettlementStatementService {
             var snapshotId = first.settlementSnapshotId();
             var rentAmount = money(sumItemAmount(group, "RENT").add(sumItemAmount(group, "RENEWAL_RENT")));
             var signFeeAmount = sumItemAmount(group, "SIGN_FEE");
-            if (signFeeAmount.signum() > 0) {
+            var signFeeNetAmount = netOrderFee(signFeeAmount);
+            if (signFeeNetAmount.signum() > 0) {
                 var merchantDraft = merchantDraft(merchantDrafts, first.merchantId(), first.storeId());
                 merchantDraft.register(
                     new LineDraft(
@@ -129,9 +131,9 @@ public class SettlementStatementService {
                         first.storeId(),
                         0L,
                         SettlementStatementLineType.MERCHANT_SIGN_FEE,
-                        signFeeAmount,
+                        signFeeNetAmount,
                         first.paidAt(),
-                        "签单费实收"
+                        "签单费实收（扣除 3% 手续费）"
                     ),
                     BigDecimal.ZERO
                 );
@@ -779,6 +781,10 @@ public class SettlementStatementService {
 
     private BigDecimal money(BigDecimal value) {
         return (value == null ? BigDecimal.ZERO : value).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal netOrderFee(BigDecimal amount) {
+        return money(amount).multiply(BigDecimal.ONE.subtract(ORDER_FEE_SERVICE_RATE)).setScale(2, RoundingMode.HALF_UP);
     }
 
     private record Range(LocalDateTime startAt, LocalDateTime endAt) {

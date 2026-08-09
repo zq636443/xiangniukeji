@@ -5,6 +5,8 @@ import java.math.RoundingMode;
 
 public final class ProfitSharingCalculator {
 
+    private static final BigDecimal ORDER_FEE_SERVICE_RATE = new BigDecimal("0.0300");
+
     private ProfitSharingCalculator() {
     }
 
@@ -47,6 +49,18 @@ public final class ProfitSharingCalculator {
         );
     }
 
+    public static OrderFeeAllocation calculateOrderFee(BigDecimal orderFeeAmount) {
+        var gross = money(orderFeeAmount);
+        var serviceFee = multiply(gross, ORDER_FEE_SERVICE_RATE);
+        var merchantNet = gross.subtract(serviceFee).setScale(2, RoundingMode.HALF_UP);
+        return new OrderFeeAllocation(
+            gross,
+            ORDER_FEE_SERVICE_RATE,
+            serviceFee,
+            merchantNet
+        );
+    }
+
     private static BigDecimal multiply(BigDecimal amount, BigDecimal rate) {
         return amount.multiply(rate(rate)).setScale(2, RoundingMode.HALF_UP);
     }
@@ -74,6 +88,14 @@ public final class ProfitSharingCalculator {
         BigDecimal channelReferralAmount,
         BigDecimal investorShareRate,
         BigDecimal investorShareAmount
+    ) {
+    }
+
+    public record OrderFeeAllocation(
+        BigDecimal orderFeeAmount,
+        BigDecimal serviceFeeRate,
+        BigDecimal serviceFeeAmount,
+        BigDecimal merchantNetAmount
     ) {
     }
 }
