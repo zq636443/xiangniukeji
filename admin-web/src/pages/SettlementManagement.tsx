@@ -659,7 +659,7 @@ export function SettlementManagement() {
       const result = await http.post<unknown, SettlementStatementGenerateResult>('/api/admin/settlement/statements/generate', null, {
         params: { month }
       });
-      message.success(`已生成 ${result.merchantStatementCount} 张门店月结单，${result.investorStatementCount} 张出资方月结单`);
+      message.success(`已按 ${month} 生成 ${result.merchantStatementCount} 张门店月结单，${result.investorStatementCount} 张出资方月结单`);
       setStatementGenerateOpen(false);
       setStatementMonth(month);
       await reloadStatements(month);
@@ -786,7 +786,7 @@ export function SettlementManagement() {
   function exportStatements() {
     downloadCsv(`月结中心-${statementMonth}`, [
       '月结单号', '月份', '对象类型', '结算对象', '对象编码', '商户', '门店', '实收租金基数', '签单费', '分润收益',
-      '运营手续费', '维保扣减', '调整金额', '应结算金额', '订单数', '账单数', '明细数', '状态', '生成时间', '确认时间', '打款时间'
+      '运营手续费', '维保扣减', '调整金额', '应结算金额', '订单数', '账单数', '明细数', '状态', '操作生成时间', '确认时间', '打款时间'
     ], filteredStatements.map((record) => [
       record.statementNo,
       record.statementMonth,
@@ -2051,7 +2051,7 @@ export function SettlementManagement() {
               <Descriptions.Item label="所属门店">{storeMap.get(selectedStatement.storeId)?.storeName || '-'}</Descriptions.Item>
               <Descriptions.Item label="业务量">{selectedStatement.orderCount} 笔订单 / {selectedStatement.billCount} 张账单</Descriptions.Item>
               <Descriptions.Item label="明细数量">{selectedStatement.lineCount} 条</Descriptions.Item>
-              <Descriptions.Item label="生成时间">{formatDateTime(selectedStatement.generatedAt)}</Descriptions.Item>
+              <Descriptions.Item label="操作生成时间">{formatDateTime(selectedStatement.generatedAt)}</Descriptions.Item>
               <Descriptions.Item label="确认时间">{selectedStatement.confirmedAt ? formatDateTime(selectedStatement.confirmedAt) : '-'}</Descriptions.Item>
               <Descriptions.Item label="打款时间">{selectedStatement.paidAt ? formatDateTime(selectedStatement.paidAt) : '-'}</Descriptions.Item>
               <Descriptions.Item label="备注">{selectedStatement.remark || '-'}</Descriptions.Item>
