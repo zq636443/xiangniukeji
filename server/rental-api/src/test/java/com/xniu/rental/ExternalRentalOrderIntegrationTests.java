@@ -638,6 +638,115 @@ class ExternalRentalOrderIntegrationTests {
     }
 
     @Test
+    void editingActiveExternalOrderStoreShouldTransferRetainedAssets() {
+        var suffix = String.valueOf(System.nanoTime());
+        var targetStore = merchantService.createStore(new StoreRequest(
+            1L,
+            "补录订单调拨目标门店-" + suffix,
+            "深圳市南山区调拨路 8 号",
+            "09:00-22:00",
+            null,
+            null
+        ));
+        var targetStoreSkuCode = "SSKU-ext-transfer-" + suffix;
+        jdbcTemplate.update("""
+            INSERT INTO store_sku
+            (merchant_id, store_id, sku_id, store_sku_code, sale_mode, display_name,
+             sign_fee_amount, sign_fee_payer, status)
+            VALUES (1, ?, 1, ?, 'RENTAL', '补录订单调拨商品', 30.00, 'USER', 'ON_SHELF')
+            """, targetStore.id(), targetStoreSkuCode);
+        var targetStoreSkuId = jdbcTemplate.queryForObject(
+            "SELECT id FROM store_sku WHERE store_sku_code = ?",
+            Long.class,
+            targetStoreSkuCode
+        );
+        jdbcTemplate.update("""
+            INSERT INTO store_sku_package
+            (store_sku_id, package_id, rental_amount, period_amount, deposit_amount, status)
+            VALUES (?, 2, 399.00, 399.00, 0.00, 'ENABLED')
+            """, targetStoreSkuId);
+
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES
+            (?, 'VEHICLE_FRAME', (SELECT id FROM asset_type_definition WHERE type_code = 'VEHICLE_FRAME'), ?, 1, 1, 1, 'IDLE', 2600.00, 0.00, NULL, CURRENT_DATE),
+            (?, 'BATTERY', (SELECT id FROM asset_type_definition WHERE type_code = 'BATTERY'), ?, 1, 1, 1, 'IDLE', 1800.00, 0.00, NULL, CURRENT_DATE)
+            """,
+            "A-ext-transfer-frame-" + suffix, "EXT-TRANSFER-FRAME-" + suffix,
+            "A-ext-transfer-battery-" + suffix, "EXT-TRANSFER-BATTERY-" + suffix
+        );
+        var frameAssetId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_item WHERE asset_code = ?",
+            Long.class,
+            "A-ext-transfer-frame-" + suffix
+        );
+        var batteryAssetId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_item WHERE asset_code = ?",
+            Long.class,
+            "A-ext-transfer-battery-" + suffix
+        );
+
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "EXT-TRANSFER-BEFORE-" + suffix,
+            1L,
+            2L,
+            "补录调拨客户",
+            "13800132224",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            frameAssetId,
+            batteryAssetId,
+            new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            null
+        ));
+
+        var updated = externalRentalOrderService.updateOrder(created.id(), new ExternalRentalOrderUpdateRequest(
+            "OFFLINE",
+            "EXT-TRANSFER-AFTER-" + suffix,
+            targetStoreSkuId,
+            2L,
+            "补录调拨客户",
+            "13800132224",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            frameAssetId,
+            batteryAssetId,
+            new BigDecimal("399.00"),
+            new BigDecimal("388.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            "跨店编辑自动调拨"
+        ));
+
+        assertThat(updated.storeId()).isEqualTo(targetStore.id());
+        assertThat(updated.frameAssetId()).isEqualTo(frameAssetId);
+        assertThat(updated.batteryAssetId()).isEqualTo(batteryAssetId);
+        assertThat(assetStore(frameAssetId)).isEqualTo(targetStore.id());
+        assertThat(assetStore(batteryAssetId)).isEqualTo(targetStore.id());
+        assertThat(assetStatus(frameAssetId)).isEqualTo("RENTING");
+        assertThat(assetStatus(batteryAssetId)).isEqualTo("RENTING");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM asset_location_history
+            WHERE asset_id IN (?, ?)
+              AND from_store_id = 1
+              AND to_store_id = ?
+              AND remark IN ('补录订单编辑自动调拨主资产', '补录订单编辑自动调拨第二资产')
+            """, Integer.class, frameAssetId, batteryAssetId, targetStore.id())).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT store_id FROM settlement_rule_snapshot WHERE id = ?",
+            Long.class,
+            updated.settlementSnapshotId()
+        )).isEqualTo(targetStore.id());
+    }
+
+    @Test
     void createExternalOrderShouldRejectAssetOutsideSelectedStore() {
         var otherStore = merchantService.createStore(new StoreRequest(
             1L,

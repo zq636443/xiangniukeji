@@ -216,6 +216,18 @@ public class ExternalRentalOrderService {
             releaseEditedAsset(order.batteryAssetId(), request.batteryAssetId(), "补录订单编辑释放原第二资产");
             occupyEditedAsset(request.frameAssetId(), order.frameAssetId(), "补录订单编辑绑定主资产");
             occupyEditedAsset(request.batteryAssetId(), order.batteryAssetId(), "补录订单编辑绑定第二资产");
+            transferRetainedEditedAsset(
+                request.frameAssetId(),
+                order.frameAssetId(),
+                storeSku,
+                "补录订单编辑自动调拨主资产"
+            );
+            transferRetainedEditedAsset(
+                request.batteryAssetId(),
+                order.batteryAssetId(),
+                storeSku,
+                "补录订单编辑自动调拨第二资产"
+            );
         } else {
             validateHistoricalEditableAsset(request.frameAssetId(), order.frameAssetId(), storeSku);
             validateHistoricalEditableAsset(request.batteryAssetId(), order.batteryAssetId(), storeSku);
@@ -515,15 +527,18 @@ public class ExternalRentalOrderService {
             return;
         }
         var asset = ensureAsset(assetId);
-        if (!storeSku.merchantId().equals(asset.currentMerchantId()) || !storeSku.storeId().equals(asset.currentStoreId())) {
-            throw BusinessException.badRequest("所选资产不属于当前下单门店");
-        }
         if (assetId.equals(currentAssetId)) {
             var activeOrder = externalRentalOrderRepository.findActiveByAsset(assetId).orElse(null);
             if (asset.status() != AssetStatus.RENTING || activeOrder == null || !activeOrder.id().equals(order.id())) {
                 throw BusinessException.badRequest("订单当前绑定资产状态异常，暂不能编辑");
             }
+            if (!storeSku.merchantId().equals(asset.currentMerchantId())) {
+                throw BusinessException.badRequest("暂不支持跨商户自动调拨订单资产");
+            }
             return;
+        }
+        if (!storeSku.merchantId().equals(asset.currentMerchantId()) || !storeSku.storeId().equals(asset.currentStoreId())) {
+            throw BusinessException.badRequest("所选资产不属于当前下单门店");
         }
         if (asset.status() != AssetStatus.IDLE) {
             throw BusinessException.badRequest("所选资产不是空闲状态");
@@ -667,6 +682,30 @@ public class ExternalRentalOrderService {
         var asset = ensureAsset(nextAssetId);
         assetRepository.updateStatus(asset.id(), AssetStatus.RENTING, LocalDateTime.now());
         assetRepository.insertStatusLog(asset.id(), asset.status(), AssetStatus.RENTING, currentAccountId(), remark);
+    }
+
+    private void transferRetainedEditedAsset(
+        Long nextAssetId,
+        Long currentAssetId,
+        StoreSku storeSku,
+        String remark
+    ) {
+        if (nextAssetId == null || !nextAssetId.equals(currentAssetId)) {
+            return;
+        }
+        var asset = ensureAsset(nextAssetId);
+        if (storeSku.storeId().equals(asset.currentStoreId())) {
+            return;
+        }
+        assetRepository.transferStore(asset.id(), storeSku.merchantId(), storeSku.storeId());
+        assetRepository.insertLocationHistory(
+            asset.id(),
+            asset.currentMerchantId(),
+            asset.currentStoreId(),
+            storeSku.merchantId(),
+            storeSku.storeId(),
+            remark
+        );
     }
 
     private AssetItem occupyAsset(Long assetId, StoreSku storeSku, String remark) {

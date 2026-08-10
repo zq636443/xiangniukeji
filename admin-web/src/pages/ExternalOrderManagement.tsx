@@ -334,11 +334,14 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   function handleStoreSkuChange(value: number) {
     const nextStoreSku = storeSkus.find((item) => item.id === value);
     const nextPackage = nextStoreSku?.packages.find((item) => item.status === 'ENABLED') ?? nextStoreSku?.packages[0];
+    const retainCurrentAssets = editingOrder?.orderStatus === 'ACTIVE'
+      && editingOrder.skuId === nextStoreSku?.skuId
+      && editingOrder.merchantId === nextStoreSku?.merchantId;
     createForm.setFieldsValue({
       packageId: nextPackage?.packageId,
       leaseMultiplier: 1,
-      frameAssetId: undefined,
-      batteryAssetId: undefined,
+      frameAssetId: retainCurrentAssets ? editingOrder.frameAssetId ?? undefined : undefined,
+      batteryAssetId: retainCurrentAssets ? editingOrder.batteryAssetId ?? undefined : undefined,
       signFeeAmount: Number(nextStoreSku?.signFeeAmount || 0),
       externalRentalAmount: Number(nextPackage?.rentalAmount || 0),
       verificationAmount: Number(nextPackage?.rentalAmount || 0),
