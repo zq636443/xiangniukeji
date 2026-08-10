@@ -380,7 +380,7 @@ public class SettlementStatementRepository {
               eo.created_at
             FROM external_rental_order eo
             WHERE eo.settlement_snapshot_id IS NOT NULL
-              AND eo.order_status IN ('ACTIVE', 'COMPLETED')
+              AND eo.order_status <> 'TERMINATED'
               AND eo.created_at >= ?
               AND eo.created_at < ?
             ORDER BY eo.created_at, eo.id
