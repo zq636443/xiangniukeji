@@ -256,7 +256,8 @@ public class OrderService {
         var leaseMultiplier = normalizeLeaseMultiplier(request.leaseMultiplier());
         var defaultRentalAmount = packagePrice.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier));
         var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), defaultRentalAmount);
-        var payableAmount = verificationAmount.add(storeSku.signFeeAmount()).add(packagePrice.depositAmount());
+        var signFeeAmount = effectiveSignFeeAmount(packageTemplate, storeSku);
+        var payableAmount = verificationAmount.add(signFeeAmount).add(packagePrice.depositAmount());
         var order = orderRepository.create(new OrderRepository.OrderCreateRow(
             nextOrderNo(),
             userAccountId,
@@ -272,7 +273,7 @@ public class OrderService {
             OrderStatus.PENDING_PAYMENT,
             verificationAmount,
             verificationAmount,
-            storeSku.signFeeAmount(),
+            signFeeAmount,
             packagePrice.depositAmount(),
             payableAmount,
             BigDecimal.ZERO,
@@ -304,7 +305,7 @@ public class OrderService {
             verificationAmount.divide(BigDecimal.valueOf(leaseMultiplier), 2, RoundingMode.HALF_UP),
             verificationAmount
         );
-        orderRepository.addItem(order.id(), OrderItemType.SIGN_FEE, null, "签单费", 1, storeSku.signFeeAmount(), storeSku.signFeeAmount());
+        orderRepository.addItem(order.id(), OrderItemType.SIGN_FEE, null, "办单费", 1, signFeeAmount, signFeeAmount);
         if (packagePrice.depositAmount().signum() > 0) {
             orderRepository.addItem(order.id(), OrderItemType.DEPOSIT, null, "押金", 1, packagePrice.depositAmount(), packagePrice.depositAmount());
         }
@@ -322,7 +323,8 @@ public class OrderService {
             request.frameAssetId(),
             request.batteryAssetId(),
             verificationAmount,
-            "DIRECT"
+            "DIRECT",
+            signFeeAmount
         ));
         order = orderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
         return toResponse(order);
@@ -362,7 +364,9 @@ public class OrderService {
         var orderedAt = resolveOrderedAt(request.orderedAt() == null ? order.orderedAt() : request.orderedAt(), true);
         var leaseMultiplier = request.leaseMultiplier() == null ? order.leaseMultiplier() : normalizeLeaseMultiplier(request.leaseMultiplier());
         var leaseSelectionChanged = productSelectionChanged || !leaseMultiplier.equals(order.leaseMultiplier());
-        var signFeeAmount = productSelectionChanged ? product.storeSku().signFeeAmount() : order.signFeeAmount();
+        var signFeeAmount = productSelectionChanged
+            ? effectiveSignFeeAmount(product.packageTemplate(), product.storeSku())
+            : order.signFeeAmount();
         var depositAmount = productSelectionChanged ? product.packagePrice().depositAmount() : order.depositAmount();
         var verificationAmount = normalizeVerificationAmount(
             request.verificationAmount(),
@@ -419,7 +423,8 @@ public class OrderService {
             updated.frameAssetId(),
             updated.batteryAssetId(),
             updated.verificationAmount(),
-            "DIRECT"
+            "DIRECT",
+            updated.signFeeAmount()
         ));
         updated = orderRepository.updateSettlementSnapshot(updated.id(), snapshot.id());
         orderRepository.addLog(
@@ -893,6 +898,10 @@ public class OrderService {
         StoreSkuPackage packagePrice,
         ProductPackage packageTemplate
     ) {
+    }
+
+    private BigDecimal effectiveSignFeeAmount(ProductPackage packageTemplate, StoreSku storeSku) {
+        return packageTemplate.signFeeAmount() == null ? storeSku.signFeeAmount() : packageTemplate.signFeeAmount();
     }
 
     private OrderItemResponse toItemResponse(RentalOrderItem item) {

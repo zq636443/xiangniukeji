@@ -555,6 +555,7 @@ export type ProductPackage = {
   skuName?: string | null;
   packageName: string;
   priceAmount: number;
+  signFeeAmount?: number | null;
   leaseUnit: 'DAY' | 'MONTH';
   leaseValue: number;
   totalPeriods: number;

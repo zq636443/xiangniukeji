@@ -80,6 +80,7 @@ class ProductLinkSkuIntegrationTests {
             link.id(),
             "月租 SKU-" + suffix,
             new BigDecimal("399.00"),
+            new BigDecimal("12.00"),
             "MONTH",
             1,
             1,
@@ -115,6 +116,7 @@ class ProductLinkSkuIntegrationTests {
         assertThat(monthlySku.packageCode()).startsWith("SKU-");
         assertThat(quarterlySku.packageCode()).startsWith("SKU-");
         assertThat(monthlySku.priceAmount()).isEqualByComparingTo("399.00");
+        assertThat(monthlySku.signFeeAmount()).isEqualByComparingTo("12.00");
         assertThat(quarterlySku.priceAmount()).isEqualByComparingTo("999.00");
         assertThat(published.packages())
             .extracting(item -> item.packageName())
@@ -123,16 +125,18 @@ class ProductLinkSkuIntegrationTests {
             .extracting(item -> item.rentalAmount())
             .containsExactlyInAnyOrder(new BigDecimal("399.00"), new BigDecimal("999.00"));
 
-        productService.updatePackage(monthlySku.id(), new PackageRequest(
+        var updatedMonthlySku = productService.updatePackage(monthlySku.id(), new PackageRequest(
             link.id(),
             monthlySku.packageName(),
             new BigDecimal("459.00"),
+            new BigDecimal("15.00"),
             monthlySku.leaseUnit(),
             monthlySku.leaseValue(),
             monthlySku.totalPeriods(),
             monthlySku.billDayMode(),
             monthlySku.billDay()
         ));
+        assertThat(updatedMonthlySku.signFeeAmount()).isEqualByComparingTo("15.00");
         var refreshed = productService.listStoreSkus(1L, link.id(), null).getFirst();
         assertThat(refreshed.packages().stream()
             .filter(item -> item.packageId().equals(monthlySku.id()))

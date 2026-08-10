@@ -225,6 +225,7 @@ public class ExternalRentalOrderService {
             packagePricing.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier))
         );
         var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), externalRentalAmount);
+        var defaultSignFeeAmount = effectiveSignFeeAmount(packageTemplate, storeSku);
         var updated = externalRentalOrderRepository.update(new ExternalRentalOrderRepository.UpdateRow(
             order.id(),
             parseSource(request.sourcePlatform()),
@@ -240,7 +241,7 @@ public class ExternalRentalOrderService {
             request.batteryAssetId(),
             externalRentalAmount,
             verificationAmount,
-            normalizeMoney(request.signFeeAmount(), storeSku.signFeeAmount()),
+            normalizeMoney(request.signFeeAmount(), defaultSignFeeAmount),
             normalizeMoney(request.depositAmount(), packagePricing.depositAmount()),
             packageTemplate.leaseUnit().name(),
             packageTemplate.leaseValue() * leaseMultiplier,
@@ -360,6 +361,7 @@ public class ExternalRentalOrderService {
             packagePricing.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier))
         );
         var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), externalRentalAmount);
+        var defaultSignFeeAmount = effectiveSignFeeAmount(packageTemplate, storeSku);
         var order = externalRentalOrderRepository.create(new ExternalRentalOrderRepository.CreateRow(
             nextRecordNo(),
             parseSource(request.sourcePlatform()),
@@ -376,7 +378,7 @@ public class ExternalRentalOrderService {
             ExternalRentalOrderStatus.ACTIVE,
             externalRentalAmount,
             verificationAmount,
-            normalizeMoney(request.signFeeAmount(), storeSku.signFeeAmount()),
+            normalizeMoney(request.signFeeAmount(), defaultSignFeeAmount),
             normalizeMoney(request.depositAmount(), packagePricing.depositAmount()),
             packageTemplate.leaseUnit().name(),
             packageTemplate.leaseValue() * leaseMultiplier,
@@ -571,7 +573,8 @@ public class ExternalRentalOrderService {
             order.frameAssetId(),
             order.batteryAssetId(),
             order.verificationAmount(),
-            order.sourcePlatform().name()
+            order.sourcePlatform().name(),
+            order.signFeeAmount()
         ));
         var updated = externalRentalOrderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
         settlementIncomeService.syncExternalOrder(updated);
@@ -911,6 +914,10 @@ public class ExternalRentalOrderService {
             .filter(item -> item.packageId().equals(packageId) && item.status() == ProductStatus.ENABLED)
             .findFirst()
             .orElseThrow(() -> BusinessException.badRequest("当前门店商品未配置该 SKU 价格"));
+    }
+
+    private BigDecimal effectiveSignFeeAmount(ProductPackage packageTemplate, StoreSku storeSku) {
+        return packageTemplate.signFeeAmount() == null ? storeSku.signFeeAmount() : packageTemplate.signFeeAmount();
     }
 
     private ExternalRentalOrderCreateRequest toCreateRequest(ExternalRentalOrderImportRowRequest row) {

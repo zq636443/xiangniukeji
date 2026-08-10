@@ -9,6 +9,7 @@ public record PackageResponse(
     String skuName,
     String packageName,
     BigDecimal priceAmount,
+    BigDecimal signFeeAmount,
     String leaseUnit,
     Integer leaseValue,
     Integer totalPeriods,

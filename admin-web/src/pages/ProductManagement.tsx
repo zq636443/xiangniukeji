@@ -19,6 +19,7 @@ type PackageForm = {
   skuId: number;
   packageName: string;
   priceAmount: number;
+  signFeeAmount?: number;
   leaseUnit: 'DAY' | 'MONTH';
   leaseValue: number;
   totalPeriods: number;
@@ -230,7 +231,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
   function openCreatePackage() {
     setEditingPackage(null);
     packageForm.resetFields();
-    packageForm.setFieldsValue({ priceAmount: 0, leaseUnit: 'MONTH', leaseValue: 1, totalPeriods: 1, billDayMode: 'PAYMENT_DAY' });
+    packageForm.setFieldsValue({ priceAmount: 0, signFeeAmount: 0, leaseUnit: 'MONTH', leaseValue: 1, totalPeriods: 1, billDayMode: 'PAYMENT_DAY' });
     setPackageOpen(true);
   }
 
@@ -240,6 +241,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       skuId: record.skuId,
       packageName: record.packageName,
       priceAmount: record.priceAmount,
+      signFeeAmount: record.signFeeAmount ?? 0,
       leaseUnit: record.leaseUnit,
       leaseValue: record.leaseValue,
       totalPeriods: record.totalPeriods,
@@ -475,6 +477,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
             { title: 'SKU 名称', dataIndex: 'packageName' },
             { title: '所属链接', dataIndex: 'skuName' },
             { title: 'SKU 价格', dataIndex: 'priceAmount', render: (value: number) => `¥${Number(value || 0).toFixed(2)}` },
+            { title: '办单费', dataIndex: 'signFeeAmount', render: (value: number | null) => `¥${Number(value || 0).toFixed(2)}` },
             { title: '租期', render: (_, record) => `${record.leaseValue}${record.leaseUnit === 'DAY' ? '天' : '个月'}` },
             { title: '总期数', dataIndex: 'totalPeriods' },
             { title: '账单日', render: (_, record) => record.billDayMode === 'PAYMENT_DAY' ? '付款日' : `每月 ${record.billDay} 日` },
@@ -605,6 +608,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
           <Form.Item name="skuId" label="所属链接" rules={[{ required: true, message: '请选择商品链接' }]}><Select options={skuOptions} disabled={Boolean(editingPackage)} /></Form.Item>
           <Form.Item name="packageName" label="SKU 名称" rules={[{ required: true, message: '请输入 SKU 名称' }]}><Input /></Form.Item>
           <Form.Item name="priceAmount" label="SKU 价格" rules={[{ required: true, message: '请输入 SKU 价格' }]}><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="signFeeAmount" label="办单费" rules={[{ required: true, message: '请输入办单费' }]}><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="leaseUnit" label="租期单位" rules={[{ required: true, message: '请选择租期单位' }]}><Select options={[{ label: '天', value: 'DAY' }, { label: '月', value: 'MONTH' }]} /></Form.Item>
           <Form.Item name="leaseValue" label="租期值" rules={[{ required: true, message: '请输入租期值' }]}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="totalPeriods" label="总期数" rules={[{ required: true, message: '请输入总期数' }]}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>

@@ -8,6 +8,7 @@ public record ProductPackage(
     Long skuId,
     String packageName,
     BigDecimal priceAmount,
+    BigDecimal signFeeAmount,
     LeaseUnit leaseUnit,
     Integer leaseValue,
     Integer totalPeriods,

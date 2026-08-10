@@ -160,6 +160,7 @@ public class ProductService {
             request.skuId(),
             request.packageName(),
             normalizeMoney(request.priceAmount()),
+            normalizeNullableMoney(request.signFeeAmount()),
             parseLeaseUnit(request.leaseUnit()),
             request.leaseValue(),
             request.totalPeriods(),
@@ -180,6 +181,7 @@ public class ProductService {
             id,
             request.packageName(),
             normalizeMoney(request.priceAmount()),
+            normalizeNullableMoney(request.signFeeAmount()),
             parseLeaseUnit(request.leaseUnit()),
             request.leaseValue(),
             request.totalPeriods(),
@@ -426,6 +428,9 @@ public class ProductService {
         if (request.priceAmount().signum() < 0) {
             throw BusinessException.badRequest("SKU 价格不能小于 0");
         }
+        if (request.signFeeAmount() != null && request.signFeeAmount().signum() < 0) {
+            throw BusinessException.badRequest("办单费不能小于 0");
+        }
         if ("FIXED_DAY".equals(request.billDayMode()) && (request.billDay() == null || request.billDay() < 1 || request.billDay() > 28)) {
             throw BusinessException.badRequest("固定账单日必须在 1 到 28 之间");
         }
@@ -556,6 +561,7 @@ public class ProductService {
             skuName,
             item.packageName(),
             item.priceAmount(),
+            item.signFeeAmount(),
             item.leaseUnit().name(),
             item.leaseValue(),
             item.totalPeriods(),

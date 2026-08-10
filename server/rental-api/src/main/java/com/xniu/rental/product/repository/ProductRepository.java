@@ -150,38 +150,39 @@ public class ProductRepository {
         return list.stream().findFirst();
     }
 
-    public ProductPackage createPackage(String code, Long skuId, String name, BigDecimal priceAmount, LeaseUnit unit, Integer leaseValue, Integer totalPeriods, BillDayMode billDayMode, Integer billDay) {
+    public ProductPackage createPackage(String code, Long skuId, String name, BigDecimal priceAmount, BigDecimal signFeeAmount, LeaseUnit unit, Integer leaseValue, Integer totalPeriods, BillDayMode billDayMode, Integer billDay) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             var statement = connection.prepareStatement("""
                 INSERT INTO product_package
-                (package_code, sku_id, package_name, price_amount, lease_unit, lease_value, total_periods, bill_day_mode, bill_day)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (package_code, sku_id, package_name, price_amount, sign_fee_amount, lease_unit, lease_value, total_periods, bill_day_mode, bill_day)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, code);
             statement.setLong(2, skuId);
             statement.setString(3, name);
             statement.setBigDecimal(4, priceAmount);
-            statement.setString(5, unit.name());
-            statement.setInt(6, leaseValue);
-            statement.setInt(7, totalPeriods);
-            statement.setString(8, billDayMode.name());
+            statement.setBigDecimal(5, signFeeAmount);
+            statement.setString(6, unit.name());
+            statement.setInt(7, leaseValue);
+            statement.setInt(8, totalPeriods);
+            statement.setString(9, billDayMode.name());
             if (billDay == null) {
-                statement.setObject(9, null);
+                statement.setObject(10, null);
             } else {
-                statement.setInt(9, billDay);
+                statement.setInt(10, billDay);
             }
             return statement;
         }, keyHolder);
         return findPackage(keyHolder.getKey().longValue()).orElseThrow();
     }
 
-    public ProductPackage updatePackage(Long id, String name, BigDecimal priceAmount, LeaseUnit unit, Integer leaseValue, Integer totalPeriods, BillDayMode billDayMode, Integer billDay) {
+    public ProductPackage updatePackage(Long id, String name, BigDecimal priceAmount, BigDecimal signFeeAmount, LeaseUnit unit, Integer leaseValue, Integer totalPeriods, BillDayMode billDayMode, Integer billDay) {
         jdbcTemplate.update("""
             UPDATE product_package
-            SET package_name = ?, price_amount = ?, lease_unit = ?, lease_value = ?, total_periods = ?, bill_day_mode = ?, bill_day = ?
+            SET package_name = ?, price_amount = ?, sign_fee_amount = ?, lease_unit = ?, lease_value = ?, total_periods = ?, bill_day_mode = ?, bill_day = ?
             WHERE id = ?
-            """, name, priceAmount, unit.name(), leaseValue, totalPeriods, billDayMode.name(), billDay, id);
+            """, name, priceAmount, signFeeAmount, unit.name(), leaseValue, totalPeriods, billDayMode.name(), billDay, id);
         jdbcTemplate.update("UPDATE store_sku_package SET rental_amount = ? WHERE package_id = ?", priceAmount, id);
         return findPackage(id).orElseThrow();
     }
@@ -415,6 +416,7 @@ public class ProductRepository {
                 rs.getLong("sku_id"),
                 rs.getString("package_name"),
                 rs.getBigDecimal("price_amount"),
+                rs.getBigDecimal("sign_fee_amount"),
                 LeaseUnit.valueOf(rs.getString("lease_unit")),
                 rs.getInt("lease_value"),
                 rs.getInt("total_periods"),

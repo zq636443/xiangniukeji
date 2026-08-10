@@ -11,6 +11,18 @@ public record SnapshotCreateRequest(
     Long frameAssetId,
     Long batteryAssetId,
     @NotNull(message = "请输入结算基数") BigDecimal rentalAmount,
-    String sourceChannel
+    String sourceChannel,
+    BigDecimal signFeeAmount
 ) {
+    public SnapshotCreateRequest(
+        String sourceType,
+        Long sourceId,
+        Long storeSkuId,
+        Long frameAssetId,
+        Long batteryAssetId,
+        BigDecimal rentalAmount,
+        String sourceChannel
+    ) {
+        this(sourceType, sourceId, storeSkuId, frameAssetId, batteryAssetId, rentalAmount, sourceChannel, null);
+    }
 }

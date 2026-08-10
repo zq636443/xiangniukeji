@@ -312,7 +312,8 @@ public class VoucherService {
             null,
             null,
             verificationAmount,
-            record.sourcePlatform().name()
+            record.sourcePlatform().name(),
+            record.signFeeAmount()
         ));
         return orderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
     }

@@ -198,6 +198,7 @@ public class SettlementService {
             request.batteryAssetId(),
             request.rentalAmount(),
             request.sourceChannel(),
+            null,
             false
         ));
     }
@@ -222,6 +223,7 @@ public class SettlementService {
             request.batteryAssetId(),
             request.rentalAmount(),
             request.sourceChannel(),
+            request.signFeeAmount(),
             true
         );
         return toResponse(snapshot);
@@ -256,6 +258,7 @@ public class SettlementService {
         Long batteryAssetId,
         BigDecimal rentalAmount,
         String sourceChannel,
+        BigDecimal requestedSignFeeAmount,
         boolean persist
     ) {
         var storeSku = productRepository.findStoreSku(storeSkuId)
@@ -272,6 +275,10 @@ public class SettlementService {
         var rental = money(rentalAmount);
         if (rental.signum() < 0) {
             throw BusinessException.badRequest("结算基数不能小于 0");
+        }
+        var signFeeAmount = money(requestedSignFeeAmount == null ? storeSku.signFeeAmount() : requestedSignFeeAmount);
+        if (signFeeAmount.signum() < 0) {
+            throw BusinessException.badRequest("办单费不能小于 0");
         }
         var allocation = ProfitSharingCalculator.calculate(
             rental,
@@ -299,8 +306,8 @@ public class SettlementService {
             matchedRule.ruleScope(),
             rental,
             allocation.settlementBaseAmount(),
-            storeSku.signFeeAmount(),
-            netOrderFee(storeSku.signFeeAmount()),
+            signFeeAmount,
+            netOrderFee(signFeeAmount),
             allocation.storeOperationRate(),
             allocation.storeOperationAmount(),
             allocation.platformFeeRate(),
