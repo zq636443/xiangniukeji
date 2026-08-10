@@ -1431,7 +1431,7 @@ export function SettlementManagement() {
                     loading={loading}
                     dataSource={filteredSnapshots}
                     pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条快照` }}
-                    scroll={{ x: 1570 }}
+                    scroll={{ x: 1690 }}
                     columns={[
                       {
                         title: '快照',
@@ -1487,6 +1487,7 @@ export function SettlementManagement() {
                         )
                       },
                       { title: '平台', dataIndex: 'platformFeeAmount', width: 110, render: money },
+                      { title: '电池成本', dataIndex: 'batteryCostAmount', width: 115, render: money },
                       {
                         title: '门店',
                         width: 155,
@@ -1979,6 +1980,8 @@ export function SettlementManagement() {
                 <div><span>渠道核销扣点</span><strong>{money(selectedSnapshot.channelFeeAmount)}</strong></div>
                 <span className="snapshot-equation-symbol">-</span>
                 <div><span>租赁平台扣点</span><strong>{money(selectedSnapshot.platformFeeAmount)}</strong></div>
+                <span className="snapshot-equation-symbol">-</span>
+                <div><span>外卖车电池成本</span><strong>{money(selectedSnapshot.batteryCostAmount)}</strong></div>
                 <span className="snapshot-equation-symbol">=</span>
                 <div className="snapshot-equation-result"><span>剩余可分配</span><strong>{money(selectedSnapshot.distributableAmount)}</strong></div>
               </div>
@@ -2273,6 +2276,7 @@ function SnapshotAllocation({ snapshot }: { snapshot: SettlementSnapshot }) {
 function snapshotAllocationTotal(snapshot: SettlementSnapshot) {
   return Number(snapshot.channelFeeAmount || 0)
     + Number(snapshot.platformFeeAmount || 0)
+    + Number(snapshot.batteryCostAmount || 0)
     + Number(snapshot.storeOperationAmount || 0)
     + Number(snapshot.maintenanceFundAmount || 0)
     + Number(snapshot.channelReferralAmount || 0)

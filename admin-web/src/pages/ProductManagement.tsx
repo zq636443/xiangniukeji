@@ -11,6 +11,8 @@ type SkuForm = {
   skuName: string;
   skuType: 'RENTAL' | 'SALE';
   description?: string;
+  batteryCostDailyAmount?: number;
+  batteryCostMonthlyAmount?: number;
   needFrameAsset?: boolean;
   needBatteryAsset?: boolean;
   supportCrossStoreReturn?: boolean;
@@ -221,6 +223,8 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       skuName: record.skuName,
       skuType: record.skuType,
       description: record.description ?? undefined,
+      batteryCostDailyAmount: record.batteryCostDailyAmount ?? undefined,
+      batteryCostMonthlyAmount: record.batteryCostMonthlyAmount ?? undefined,
       needFrameAsset: record.needFrameAsset,
       needBatteryAsset: record.needBatteryAsset,
       supportCrossStoreReturn: record.supportCrossStoreReturn
@@ -439,6 +443,13 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
               }
             },
             { title: '资产要求', render: (_, record) => `${record.needFrameAsset ? '车架' : ''}${record.needBatteryAsset ? ' 电池' : ''}`.trim() || '无' },
+            {
+              title: '分润电池成本',
+              width: 170,
+              render: (_, record) => record.batteryCostDailyAmount == null
+                ? '-'
+                : `¥${Number(record.batteryCostDailyAmount).toFixed(2)}/天 · ¥${Number(record.batteryCostMonthlyAmount || 0).toFixed(2)}/月`
+            },
             { title: '跨店归还', dataIndex: 'supportCrossStoreReturn', render: (value: boolean) => value ? '支持' : '不支持' },
             {
               title: '操作',
@@ -591,6 +602,10 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
           <Form.Item name="skuName" label="链接名称" rules={[{ required: true, message: '请输入链接名称' }]}><Input /></Form.Item>
           <Form.Item name="skuType" label="链接类型" rules={[{ required: true, message: '请选择链接类型' }]}><Select options={[{ label: '租赁', value: 'RENTAL' }, { label: '售卖', value: 'SALE' }]} /></Form.Item>
           <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
+          <Space size={12} style={{ width: '100%' }} align="start">
+            <Form.Item name="batteryCostDailyAmount" label="分润电池成本（元/天）" style={{ flex: 1 }}><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item>
+            <Form.Item name="batteryCostMonthlyAmount" label="分润电池成本（元/月）" style={{ flex: 1 }}><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item>
+          </Space>
           <Form.Item name="needFrameAsset" valuePropName="checked"><Checkbox>需要绑定车架</Checkbox></Form.Item>
           <Form.Item name="needBatteryAsset" valuePropName="checked"><Checkbox>需要绑定电池</Checkbox></Form.Item>
           <Form.Item name="supportCrossStoreReturn" valuePropName="checked"><Checkbox>支持跨店归还</Checkbox></Form.Item>

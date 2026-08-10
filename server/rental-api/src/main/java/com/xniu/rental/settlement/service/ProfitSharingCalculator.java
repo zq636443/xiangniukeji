@@ -14,6 +14,7 @@ public final class ProfitSharingCalculator {
         BigDecimal settlementBaseAmount,
         BigDecimal channelFeeRate,
         BigDecimal platformFeeRate,
+        BigDecimal batteryCostAmount,
         BigDecimal storeOperationRate,
         BigDecimal maintenanceFundRate,
         BigDecimal channelReferralRate,
@@ -22,7 +23,11 @@ public final class ProfitSharingCalculator {
         var base = money(settlementBaseAmount);
         var channelFee = multiply(base, channelFeeRate);
         var platformFee = multiply(base, platformFeeRate);
-        var distributable = base.subtract(channelFee).subtract(platformFee).setScale(2, RoundingMode.HALF_UP);
+        var batteryCost = money(batteryCostAmount);
+        var distributable = base.subtract(channelFee).subtract(platformFee).subtract(batteryCost).setScale(2, RoundingMode.HALF_UP);
+        if (distributable.signum() < 0) {
+            distributable = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        }
         var storeOperation = multiply(distributable, storeOperationRate);
         var maintenanceFund = multiply(distributable, maintenanceFundRate);
         var channelReferral = multiply(distributable, channelReferralRate);
@@ -37,6 +42,7 @@ public final class ProfitSharingCalculator {
             channelFee,
             rate(platformFeeRate),
             platformFee,
+            batteryCost,
             distributable,
             rate(storeOperationRate),
             storeOperation,
@@ -46,6 +52,27 @@ public final class ProfitSharingCalculator {
             channelReferral,
             rate(investorShareRate),
             investorShare
+        );
+    }
+
+    public static Allocation calculate(
+        BigDecimal settlementBaseAmount,
+        BigDecimal channelFeeRate,
+        BigDecimal platformFeeRate,
+        BigDecimal storeOperationRate,
+        BigDecimal maintenanceFundRate,
+        BigDecimal channelReferralRate,
+        BigDecimal investorShareRate
+    ) {
+        return calculate(
+            settlementBaseAmount,
+            channelFeeRate,
+            platformFeeRate,
+            BigDecimal.ZERO,
+            storeOperationRate,
+            maintenanceFundRate,
+            channelReferralRate,
+            investorShareRate
         );
     }
 
@@ -79,6 +106,7 @@ public final class ProfitSharingCalculator {
         BigDecimal channelFeeAmount,
         BigDecimal platformFeeRate,
         BigDecimal platformFeeAmount,
+        BigDecimal batteryCostAmount,
         BigDecimal distributableAmount,
         BigDecimal storeOperationRate,
         BigDecimal storeOperationAmount,

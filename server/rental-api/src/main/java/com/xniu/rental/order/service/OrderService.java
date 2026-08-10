@@ -45,6 +45,7 @@ import com.xniu.rental.product.model.StoreSkuPackage;
 import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
+import com.xniu.rental.settlement.service.BatteryCostCalculator;
 import com.xniu.rental.settlement.service.SettlementService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -257,6 +258,13 @@ public class OrderService {
         var defaultRentalAmount = packagePrice.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier));
         var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), defaultRentalAmount);
         var signFeeAmount = effectiveSignFeeAmount(packageTemplate, storeSku);
+        var batteryCostAmount = BatteryCostCalculator.calculate(
+            sku.batteryCostDailyAmount(),
+            sku.batteryCostMonthlyAmount(),
+            packageTemplate.leaseUnit(),
+            packageTemplate.leaseValue(),
+            leaseMultiplier
+        );
         var payableAmount = verificationAmount.add(signFeeAmount).add(packagePrice.depositAmount());
         var order = orderRepository.create(new OrderRepository.OrderCreateRow(
             nextOrderNo(),
@@ -324,7 +332,8 @@ public class OrderService {
             request.batteryAssetId(),
             verificationAmount,
             "DIRECT",
-            signFeeAmount
+            signFeeAmount,
+            batteryCostAmount
         ));
         order = orderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
         return toResponse(order);
@@ -416,6 +425,15 @@ public class OrderService {
 
         replaceEditableOrderItems(updated, frameAsset);
         rebuildEditableOrderBills(updated);
+        var targetSku = productRepository.findSku(updated.skuId())
+            .orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
+        var batteryCostAmount = BatteryCostCalculator.calculate(
+            targetSku.batteryCostDailyAmount(),
+            targetSku.batteryCostMonthlyAmount(),
+            product.packageTemplate().leaseUnit(),
+            product.packageTemplate().leaseValue(),
+            leaseMultiplier
+        );
         var snapshot = settlementService.createOrderSnapshot(new SnapshotCreateRequest(
             "ORDER",
             updated.id(),
@@ -424,7 +442,8 @@ public class OrderService {
             updated.batteryAssetId(),
             updated.verificationAmount(),
             "DIRECT",
-            updated.signFeeAmount()
+            updated.signFeeAmount(),
+            batteryCostAmount
         ));
         updated = orderRepository.updateSettlementSnapshot(updated.id(), snapshot.id());
         orderRepository.addLog(

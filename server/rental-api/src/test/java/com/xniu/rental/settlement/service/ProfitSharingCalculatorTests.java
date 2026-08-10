@@ -43,4 +43,27 @@ class ProfitSharingCalculatorTests {
         assertThat(allocation.serviceFeeAmount()).isEqualByComparingTo("3.00");
         assertThat(allocation.merchantNetAmount()).isEqualByComparingTo("97.00");
     }
+
+    @Test
+    void takeawayRentalShouldDeductBatteryCostBeforeSharingRemainder() {
+        var allocation = ProfitSharingCalculator.calculate(
+            new BigDecimal("399.00"),
+            new BigDecimal("0.05"),
+            new BigDecimal("0.03"),
+            new BigDecimal("200.00"),
+            new BigDecimal("0.15"),
+            new BigDecimal("0.10"),
+            new BigDecimal("0.20"),
+            new BigDecimal("0.55")
+        );
+
+        assertThat(allocation.channelFeeAmount()).isEqualByComparingTo("19.95");
+        assertThat(allocation.platformFeeAmount()).isEqualByComparingTo("11.97");
+        assertThat(allocation.batteryCostAmount()).isEqualByComparingTo("200.00");
+        assertThat(allocation.distributableAmount()).isEqualByComparingTo("167.08");
+        assertThat(allocation.storeOperationAmount()).isEqualByComparingTo("25.06");
+        assertThat(allocation.maintenanceFundAmount()).isEqualByComparingTo("16.71");
+        assertThat(allocation.channelReferralAmount()).isEqualByComparingTo("33.42");
+        assertThat(allocation.investorShareAmount()).isEqualByComparingTo("91.89");
+    }
 }

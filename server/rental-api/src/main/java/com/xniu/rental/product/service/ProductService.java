@@ -97,12 +97,15 @@ public class ProductService {
     public SkuResponse createSku(SkuRequest request) {
         authorizationService.requirePermission("product.write");
         ensureCategory(request.categoryId());
+        validateBatteryCost(request);
         var sku = productRepository.createSku(
             nextCode("LINK"),
             request.categoryId(),
             request.skuName(),
             parseSkuType(request.skuType()),
             request.description(),
+            normalizeNullableMoney(request.batteryCostDailyAmount()),
+            normalizeNullableMoney(request.batteryCostMonthlyAmount()),
             request.needFrameAsset(),
             request.needBatteryAsset(),
             request.supportCrossStoreReturn()
@@ -115,6 +118,7 @@ public class ProductService {
         authorizationService.requirePermission("product.write");
         var existing = ensureSku(id);
         ensureCategory(request.categoryId());
+        validateBatteryCost(request);
         var nextType = parseSkuType(request.skuType());
         if (existing.skuType() != nextType && productRepository.countStoreSkusBySku(id) > 0) {
             throw BusinessException.badRequest("商品链接已配置门店上架，不能变更链接类型");
@@ -125,6 +129,8 @@ public class ProductService {
             request.skuName(),
             nextType,
             request.description(),
+            normalizeNullableMoney(request.batteryCostDailyAmount()),
+            normalizeNullableMoney(request.batteryCostMonthlyAmount()),
             request.needFrameAsset(),
             request.needBatteryAsset(),
             request.supportCrossStoreReturn()
@@ -436,6 +442,17 @@ public class ProductService {
         }
     }
 
+    private void validateBatteryCost(SkuRequest request) {
+        var dailyAmount = request.batteryCostDailyAmount();
+        var monthlyAmount = request.batteryCostMonthlyAmount();
+        if ((dailyAmount == null) != (monthlyAmount == null)) {
+            throw BusinessException.badRequest("电池日成本和月成本必须同时填写");
+        }
+        if (dailyAmount != null && (dailyAmount.signum() < 0 || monthlyAmount.signum() < 0)) {
+            throw BusinessException.badRequest("电池成本不能小于 0");
+        }
+    }
+
     private List<ProductRepository.PackagePriceRow> toRows(List<StoreSkuPackageRequest> packages) {
         return packages.stream()
             .map(item -> {
@@ -545,6 +562,8 @@ public class ProductService {
             sku.skuName(),
             sku.skuType().name(),
             sku.description(),
+            sku.batteryCostDailyAmount(),
+            sku.batteryCostMonthlyAmount(),
             sku.needFrameAsset(),
             sku.needBatteryAsset(),
             sku.supportCrossStoreReturn(),

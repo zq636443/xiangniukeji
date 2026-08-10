@@ -44,6 +44,7 @@ import com.xniu.rental.settlement.repository.SettlementRepository;
 import com.xniu.rental.settlement.repository.SettlementStatementRepository;
 import com.xniu.rental.settlement.service.SettlementIncomeService;
 import com.xniu.rental.settlement.service.SettlementService;
+import com.xniu.rental.settlement.service.BatteryCostCalculator;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -566,6 +567,17 @@ public class ExternalRentalOrderService {
     }
 
     private ExternalRentalOrder createAndSyncSettlement(ExternalRentalOrder order) {
+        var sku = productRepository.findSku(order.skuId())
+            .orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
+        var packageTemplate = productRepository.findPackage(order.packageId())
+            .orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
+        var batteryCostAmount = BatteryCostCalculator.calculate(
+            sku.batteryCostDailyAmount(),
+            sku.batteryCostMonthlyAmount(),
+            packageTemplate.leaseUnit(),
+            packageTemplate.leaseValue(),
+            order.leaseMultiplier()
+        );
         var snapshot = settlementService.createOrderSnapshot(new SnapshotCreateRequest(
             "EXTERNAL_ORDER",
             order.id(),
@@ -574,7 +586,8 @@ public class ExternalRentalOrderService {
             order.batteryAssetId(),
             order.verificationAmount(),
             order.sourcePlatform().name(),
-            order.signFeeAmount()
+            order.signFeeAmount(),
+            batteryCostAmount
         ));
         var updated = externalRentalOrderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
         settlementIncomeService.syncExternalOrder(updated);

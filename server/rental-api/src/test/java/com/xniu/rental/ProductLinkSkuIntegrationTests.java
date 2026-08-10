@@ -72,6 +72,8 @@ class ProductLinkSkuIntegrationTests {
             "租赁链接-" + suffix,
             "RENTAL",
             "integration product link",
+            new BigDecimal("6.60"),
+            new BigDecimal("200.00"),
             true,
             true,
             false
@@ -113,6 +115,8 @@ class ProductLinkSkuIntegrationTests {
         ));
 
         assertThat(link.skuCode()).startsWith("LINK-");
+        assertThat(link.batteryCostDailyAmount()).isEqualByComparingTo("6.60");
+        assertThat(link.batteryCostMonthlyAmount()).isEqualByComparingTo("200.00");
         assertThat(monthlySku.packageCode()).startsWith("SKU-");
         assertThat(quarterlySku.packageCode()).startsWith("SKU-");
         assertThat(monthlySku.priceAmount()).isEqualByComparingTo("399.00");

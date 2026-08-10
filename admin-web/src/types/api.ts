@@ -542,6 +542,8 @@ export type ProductSku = {
   skuName: string;
   skuType: 'RENTAL' | 'SALE';
   description?: string | null;
+  batteryCostDailyAmount?: number | null;
+  batteryCostMonthlyAmount?: number | null;
   needFrameAsset: boolean;
   needBatteryAsset: boolean;
   supportCrossStoreReturn: boolean;
@@ -663,6 +665,7 @@ export type SettlementSnapshot = {
   channelFeeAmount: number;
   platformFeeRate: number;
   platformFeeAmount: number;
+  batteryCostAmount: number;
   distributableAmount: number;
   storeOperationRate: number;
   storeOperationAmount: number;

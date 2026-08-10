@@ -392,13 +392,13 @@ public class SettlementRepository {
                  investor_rent_share_rate, investor_gross_share_amount,
                  investor_operation_fee_amount, maintenance_fee_amount, investor_net_share_amount,
                  channel_fee_rate, channel_fee_amount, platform_fee_rate, platform_fee_amount,
-                 distributable_amount, store_operation_rate, store_operation_amount,
+                 battery_cost_amount, distributable_amount, store_operation_rate, store_operation_amount,
                  maintenance_fund_rate, maintenance_fund_amount,
                  channel_referral_rate, channel_referral_amount,
                  investor_share_rate, investor_share_amount,
                  rule_summary)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, snapshot.snapshotNo());
             statement.setString(2, snapshot.sourceType().name());
@@ -430,16 +430,17 @@ public class SettlementRepository {
             statement.setBigDecimal(28, snapshot.channelFeeAmount());
             statement.setBigDecimal(29, snapshot.platformFeeRate());
             statement.setBigDecimal(30, snapshot.platformFeeAmount());
-            statement.setBigDecimal(31, snapshot.distributableAmount());
-            statement.setBigDecimal(32, snapshot.storeOperationRate());
-            statement.setBigDecimal(33, snapshot.storeOperationAmount());
-            statement.setBigDecimal(34, snapshot.maintenanceFundRate());
-            statement.setBigDecimal(35, snapshot.maintenanceFundAmount());
-            statement.setBigDecimal(36, snapshot.channelReferralRate());
-            statement.setBigDecimal(37, snapshot.channelReferralAmount());
-            statement.setBigDecimal(38, snapshot.investorShareRate());
-            statement.setBigDecimal(39, snapshot.investorShareAmount());
-            statement.setString(40, snapshot.ruleSummary());
+            statement.setBigDecimal(31, snapshot.batteryCostAmount());
+            statement.setBigDecimal(32, snapshot.distributableAmount());
+            statement.setBigDecimal(33, snapshot.storeOperationRate());
+            statement.setBigDecimal(34, snapshot.storeOperationAmount());
+            statement.setBigDecimal(35, snapshot.maintenanceFundRate());
+            statement.setBigDecimal(36, snapshot.maintenanceFundAmount());
+            statement.setBigDecimal(37, snapshot.channelReferralRate());
+            statement.setBigDecimal(38, snapshot.channelReferralAmount());
+            statement.setBigDecimal(39, snapshot.investorShareRate());
+            statement.setBigDecimal(40, snapshot.investorShareAmount());
+            statement.setString(41, snapshot.ruleSummary());
             return statement;
         }, keyHolder);
         return findSnapshot(keyHolder.getKey().longValue()).orElseThrow();
@@ -560,6 +561,7 @@ public class SettlementRepository {
                 rs.getBigDecimal("channel_fee_amount"),
                 rs.getBigDecimal("platform_fee_rate"),
                 rs.getBigDecimal("platform_fee_amount"),
+                rs.getBigDecimal("battery_cost_amount"),
                 rs.getBigDecimal("distributable_amount"),
                 rs.getBigDecimal("store_operation_rate"),
                 rs.getBigDecimal("store_operation_amount"),

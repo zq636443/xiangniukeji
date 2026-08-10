@@ -198,6 +198,7 @@ public class SettlementIncomeService {
                 source.rentAmount(),
                 snapshot.channelFeeRate(),
                 snapshot.platformFeeRate(),
+                BatteryCostCalculator.prorate(snapshot.batteryCostAmount(), source.rentAmount(), snapshot.settlementBaseAmount()),
                 snapshot.storeOperationRate(),
                 snapshot.maintenanceFundRate(),
                 snapshot.channelReferralRate(),

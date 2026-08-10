@@ -1,0 +1,60 @@
+package com.xniu.rental.settlement.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.xniu.rental.product.model.LeaseUnit;
+import java.math.BigDecimal;
+import org.junit.jupiter.api.Test;
+
+class BatteryCostCalculatorTests {
+
+    @Test
+    void monthlyRentalShouldUseFixedMonthlyCost() {
+        var cost = BatteryCostCalculator.calculate(
+            new BigDecimal("6.60"),
+            new BigDecimal("200.00"),
+            LeaseUnit.MONTH,
+            1,
+            1
+        );
+
+        assertThat(cost).isEqualByComparingTo("200.00");
+    }
+
+    @Test
+    void partialMonthShouldUseDailyCost() {
+        var cost = BatteryCostCalculator.calculate(
+            new BigDecimal("6.60"),
+            new BigDecimal("200.00"),
+            LeaseUnit.DAY,
+            7,
+            1
+        );
+
+        assertThat(cost).isEqualByComparingTo("46.20");
+    }
+
+    @Test
+    void fullMonthsAndRemainingDaysShouldUseBothRates() {
+        var cost = BatteryCostCalculator.calculate(
+            new BigDecimal("6.60"),
+            new BigDecimal("200.00"),
+            LeaseUnit.DAY,
+            31,
+            1
+        );
+
+        assertThat(cost).isEqualByComparingTo("206.60");
+    }
+
+    @Test
+    void multiPeriodCostShouldBeProratedPerPaidBill() {
+        var cost = BatteryCostCalculator.prorate(
+            new BigDecimal("600.00"),
+            new BigDecimal("333.00"),
+            new BigDecimal("999.00")
+        );
+
+        assertThat(cost).isEqualByComparingTo("200.00");
+    }
+}

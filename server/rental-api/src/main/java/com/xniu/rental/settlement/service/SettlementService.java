@@ -199,6 +199,7 @@ public class SettlementService {
             request.rentalAmount(),
             request.sourceChannel(),
             null,
+            null,
             false
         ));
     }
@@ -224,6 +225,7 @@ public class SettlementService {
             request.rentalAmount(),
             request.sourceChannel(),
             request.signFeeAmount(),
+            request.batteryCostAmount(),
             true
         );
         return toResponse(snapshot);
@@ -259,6 +261,7 @@ public class SettlementService {
         BigDecimal rentalAmount,
         String sourceChannel,
         BigDecimal requestedSignFeeAmount,
+        BigDecimal requestedBatteryCostAmount,
         boolean persist
     ) {
         var storeSku = productRepository.findStoreSku(storeSkuId)
@@ -280,10 +283,15 @@ public class SettlementService {
         if (signFeeAmount.signum() < 0) {
             throw BusinessException.badRequest("办单费不能小于 0");
         }
+        var batteryCostAmount = money(requestedBatteryCostAmount);
+        if (batteryCostAmount.signum() < 0) {
+            throw BusinessException.badRequest("电池成本不能小于 0");
+        }
         var allocation = ProfitSharingCalculator.calculate(
             rental,
             matchedRule.channelFeeRate(),
             matchedRule.platformFeeRate(),
+            batteryCostAmount,
             matchedRule.storeOperationRate(),
             matchedRule.maintenanceFundRate(),
             matchedRule.channelReferralRate(),
@@ -321,6 +329,7 @@ public class SettlementService {
             allocation.channelFeeAmount(),
             allocation.platformFeeRate(),
             allocation.platformFeeAmount(),
+            allocation.batteryCostAmount(),
             allocation.distributableAmount(),
             allocation.storeOperationRate(),
             allocation.storeOperationAmount(),
@@ -330,7 +339,7 @@ public class SettlementService {
             allocation.channelReferralAmount(),
             allocation.investorShareRate(),
             allocation.investorShareAmount(),
-            summary(matchedRule, storeSku, normalizedChannel),
+            summary(matchedRule, storeSku, normalizedChannel, allocation.batteryCostAmount()),
             null
         );
         return persist ? settlementRepository.createSnapshot(snapshot) : snapshot;
@@ -547,6 +556,7 @@ public class SettlementService {
             snapshot.channelFeeAmount(),
             snapshot.platformFeeRate(),
             snapshot.platformFeeAmount(),
+            snapshot.batteryCostAmount(),
             snapshot.distributableAmount(),
             snapshot.storeOperationRate(),
             snapshot.storeOperationAmount(),
@@ -561,7 +571,7 @@ public class SettlementService {
         );
     }
 
-    private String summary(SettlementProfitRule rule, StoreSku storeSku, String sourceChannel) {
+    private String summary(SettlementProfitRule rule, StoreSku storeSku, String sourceChannel, BigDecimal batteryCostAmount) {
         return "rule=" + rule.ruleCode()
             + ";scope=" + rule.ruleScope()
             + ";channel=" + sourceChannel
@@ -571,7 +581,8 @@ public class SettlementService {
             + ";storeOperationRate=" + rule.storeOperationRate()
             + ";maintenanceFundRate=" + rule.maintenanceFundRate()
             + ";channelReferralRate=" + rule.channelReferralRate()
-            + ";investorShareRate=" + rule.investorShareRate();
+            + ";investorShareRate=" + rule.investorShareRate()
+            + ";batteryCostAmount=" + money(batteryCostAmount);
     }
 
     private BigDecimal money(BigDecimal value) {

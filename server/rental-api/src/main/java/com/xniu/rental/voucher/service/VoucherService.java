@@ -16,6 +16,7 @@ import com.xniu.rental.order.repository.OrderRepository;
 import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
+import com.xniu.rental.settlement.service.BatteryCostCalculator;
 import com.xniu.rental.settlement.service.SettlementIncomeService;
 import com.xniu.rental.settlement.service.SettlementService;
 import com.xniu.rental.voucher.dto.VoucherPrepareRequest;
@@ -259,6 +260,7 @@ public class VoucherService {
             .filter(item -> item.packageId().equals(record.packageId()))
             .findFirst()
             .orElseThrow(() -> BusinessException.badRequest("门店商品未配置该 SKU 价格"));
+        var sku = productRepository.findSku(storeSku.skuId()).orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
         var verificationAmount = requireVerificationAmount(record);
         var payableAmount = record.signFeeAmount().setScale(2, RoundingMode.HALF_UP);
         var current = AuthContext.get();
@@ -313,7 +315,14 @@ public class VoucherService {
             null,
             verificationAmount,
             record.sourcePlatform().name(),
-            record.signFeeAmount()
+            record.signFeeAmount(),
+            BatteryCostCalculator.calculate(
+                sku.batteryCostDailyAmount(),
+                sku.batteryCostMonthlyAmount(),
+                packageTemplate.leaseUnit(),
+                packageTemplate.leaseValue(),
+                1
+            )
         ));
         return orderRepository.updateSettlementSnapshot(order.id(), snapshot.id());
     }

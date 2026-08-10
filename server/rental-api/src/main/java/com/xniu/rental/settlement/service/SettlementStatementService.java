@@ -642,6 +642,7 @@ public class SettlementStatementService {
             settlementBaseAmount,
             snapshot.channelFeeRate(),
             snapshot.platformFeeRate(),
+            BatteryCostCalculator.prorate(snapshot.batteryCostAmount(), settlementBaseAmount, snapshot.settlementBaseAmount()),
             snapshot.storeOperationRate(),
             snapshot.maintenanceFundRate(),
             snapshot.channelReferralRate(),

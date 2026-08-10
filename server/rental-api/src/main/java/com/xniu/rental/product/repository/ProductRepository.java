@@ -86,34 +86,39 @@ public class ProductRepository {
         return list.stream().findFirst();
     }
 
-    public ProductSku createSku(String code, Long categoryId, String name, SkuType type, String description, Boolean needFrame, Boolean needBattery, Boolean crossReturn) {
+    public ProductSku createSku(String code, Long categoryId, String name, SkuType type, String description, BigDecimal batteryCostDailyAmount, BigDecimal batteryCostMonthlyAmount, Boolean needFrame, Boolean needBattery, Boolean crossReturn) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             var statement = connection.prepareStatement("""
                 INSERT INTO product_sku
-                (sku_code, category_id, sku_name, sku_type, description, need_frame_asset, need_battery_asset, support_cross_store_return)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (sku_code, category_id, sku_name, sku_type, description, battery_cost_daily_amount, battery_cost_monthly_amount,
+                 need_frame_asset, need_battery_asset, support_cross_store_return)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, new String[] {"id"});
             statement.setString(1, code);
             statement.setLong(2, categoryId);
             statement.setString(3, name);
             statement.setString(4, type.name());
             statement.setString(5, description);
-            statement.setBoolean(6, Boolean.TRUE.equals(needFrame));
-            statement.setBoolean(7, Boolean.TRUE.equals(needBattery));
-            statement.setBoolean(8, Boolean.TRUE.equals(crossReturn));
+            statement.setBigDecimal(6, batteryCostDailyAmount);
+            statement.setBigDecimal(7, batteryCostMonthlyAmount);
+            statement.setBoolean(8, Boolean.TRUE.equals(needFrame));
+            statement.setBoolean(9, Boolean.TRUE.equals(needBattery));
+            statement.setBoolean(10, Boolean.TRUE.equals(crossReturn));
             return statement;
         }, keyHolder);
         return findSku(keyHolder.getKey().longValue()).orElseThrow();
     }
 
-    public ProductSku updateSku(Long id, Long categoryId, String name, SkuType type, String description, Boolean needFrame, Boolean needBattery, Boolean crossReturn) {
+    public ProductSku updateSku(Long id, Long categoryId, String name, SkuType type, String description, BigDecimal batteryCostDailyAmount, BigDecimal batteryCostMonthlyAmount, Boolean needFrame, Boolean needBattery, Boolean crossReturn) {
         jdbcTemplate.update("""
             UPDATE product_sku
             SET category_id = ?, sku_name = ?, sku_type = ?, description = ?,
+                battery_cost_daily_amount = ?, battery_cost_monthly_amount = ?,
                 need_frame_asset = ?, need_battery_asset = ?, support_cross_store_return = ?
             WHERE id = ?
-            """, categoryId, name, type.name(), description, Boolean.TRUE.equals(needFrame), Boolean.TRUE.equals(needBattery), Boolean.TRUE.equals(crossReturn), id);
+            """, categoryId, name, type.name(), description, batteryCostDailyAmount, batteryCostMonthlyAmount,
+            Boolean.TRUE.equals(needFrame), Boolean.TRUE.equals(needBattery), Boolean.TRUE.equals(crossReturn), id);
         return findSku(id).orElseThrow();
     }
 
@@ -399,6 +404,8 @@ public class ProductRepository {
                 rs.getString("sku_name"),
                 SkuType.valueOf(rs.getString("sku_type")),
                 rs.getString("description"),
+                rs.getBigDecimal("battery_cost_daily_amount"),
+                rs.getBigDecimal("battery_cost_monthly_amount"),
                 rs.getBoolean("need_frame_asset"),
                 rs.getBoolean("need_battery_asset"),
                 rs.getBoolean("support_cross_store_return"),

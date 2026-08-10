@@ -35,6 +35,7 @@ public record SettlementSnapshotResponse(
     BigDecimal channelFeeAmount,
     BigDecimal platformFeeRate,
     BigDecimal platformFeeAmount,
+    BigDecimal batteryCostAmount,
     BigDecimal distributableAmount,
     BigDecimal storeOperationRate,
     BigDecimal storeOperationAmount,
