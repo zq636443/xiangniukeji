@@ -1596,6 +1596,7 @@ function statementLineText(value: SettlementStatementLine['lineType']) {
     MERCHANT_SIGN_FEE: '商户签单费',
     MERCHANT_RENT_SHARE: '商户租金分润',
     MERCHANT_MAINTENANCE_SHARE: '门店维修分润',
+    MERCHANT_BATTERY_COST_PAYABLE: '门店应付电池公司',
     MERCHANT_MAINTENANCE_REIMBURSE: '门店配件补回',
     MERCHANT_MAINTENANCE_DEDUCT: '商户维保扣减',
     MERCHANT_ADJUSTMENT: '商户调整',

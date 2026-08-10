@@ -7,6 +7,7 @@ import {
   EyeOutlined,
   EditOutlined,
   RiseOutlined,
+  ThunderboltOutlined,
   WalletOutlined
 } from '@ant-design/icons';
 import { Alert, Button, Empty, Progress, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
@@ -65,6 +66,7 @@ type DashboardData = {
   storeSkus: StoreSku[];
   investors: Investor[];
   investorStatements: SettlementStatement[];
+  merchantStatements: SettlementStatement[];
   incomeEntries: SettlementIncomeEntry[];
 };
 
@@ -118,6 +120,7 @@ const initialData: DashboardData = {
   storeSkus: [],
   investors: [],
   investorStatements: [],
+  merchantStatements: [],
   incomeEntries: []
 };
 
@@ -137,7 +140,7 @@ export function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      const [orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, incomeEntries] = await Promise.all([
+      const [orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeEntries] = await Promise.all([
         http.get<unknown, RentalOrder[]>('/api/admin/orders'),
         http.get<unknown, ExternalRentalOrder[]>('/api/admin/external-orders'),
         http.get<unknown, RentalBill[]>('/api/admin/bills'),
@@ -149,9 +152,10 @@ export function Dashboard() {
         optionalGet<StoreSku[]>('/api/admin/products/store-skus', []),
         optionalGet<Investor[]>('/api/admin/investors', []),
         optionalGet<SettlementStatement[]>('/api/admin/settlement/statements?beneficiaryType=INVESTOR', []),
+        optionalGet<SettlementStatement[]>('/api/admin/settlement/statements?beneficiaryType=MERCHANT', []),
         optionalGet<SettlementIncomeEntry[]>('/api/admin/settlement/income/entries', [])
       ]);
-      setData({ orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, incomeEntries });
+      setData({ orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeEntries });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '经营驾驶舱数据加载失败');
     } finally {
@@ -186,6 +190,7 @@ export function Dashboard() {
       storeSkus: data.storeSkus.filter((item) => item.storeId === selectedStoreId),
       investors: data.investors,
       investorStatements: data.investorStatements,
+      merchantStatements: data.merchantStatements.filter((item) => item.storeId === selectedStoreId),
       incomeEntries: data.incomeEntries.filter((item) => item.storeId === selectedStoreId)
     };
   }, [data, selectedStoreId]);
@@ -217,6 +222,7 @@ export function Dashboard() {
     const startedOrders = periodOrders.filter((item) => Boolean(item.leaseStartedAt)).length + periodExternal.filter((item) => Boolean(item.rentStartedAt)).length;
     const fulfilledOrders = periodOrders.filter((item) => ['RENTING', 'PENDING_RETURN', 'OVERDUE', 'PENDING_SUPPLEMENT', 'COMPLETED'].includes(item.orderStatus)).length
       + periodExternal.filter((item) => ['ACTIVE', 'COMPLETED'].includes(item.orderStatus)).length;
+    const batteryCostMonth = monthKey(selectedMonth);
     return {
       periodCollected,
       collectedChange: percentageChange(periodCollected, previousCollected),
@@ -232,12 +238,16 @@ export function Dashboard() {
       verifiedOrders,
       startedOrders,
       fulfilledOrders,
+      batteryCostMonth,
+      batteryCostAmount: sumNumbers(scopedData.merchantStatements
+        .filter((item) => item.statementMonth === batteryCostMonth)
+        .map((item) => item.batteryCostAmount)),
       overdueAmount: sumNumbers(scopedData.overdues.map((item) => item.unpaidAmount)),
       repairAssets: activeAssets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length,
       pendingPickup: scopedData.orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').length,
       pendingReturn: scopedData.orders.filter((item) => item.orderStatus === 'PENDING_RETURN').length
     };
-  }, [scopedData, window]);
+  }, [scopedData, selectedMonth, window]);
 
   const trend = useMemo(() => {
     const buckets = buildTimeBuckets(window);
@@ -479,6 +489,7 @@ export function Dashboard() {
         <CockpitMetric icon={<RiseOutlined />} tone="violet" label="平台期间收入" value={fullMoney(dashboard.platformIncome)} detail="平台服务费及运营费流水" change={dashboard.platformIncomeChange} changeLabel="环比" />
         <CockpitMetric icon={<CheckCircleOutlined />} tone="blue" label="到期账单回款率" value={percent(dashboard.collectionRate)} detail={`期间应收 ${fullMoney(dashboard.dueAmount)}`} change={dashboard.collectionRateChange} changeLabel="百分点" />
         <CockpitMetric icon={<CarOutlined />} tone="orange" label="当前资产投放率" value={percent(dashboard.deploymentRate)} detail={`${dashboard.rentingAssets.length} / ${dashboard.activeAssets.length} 台在租`} />
+        <CockpitMetric icon={<ThunderboltOutlined />} tone="orange" label="月度应付电池公司" value={fullMoney(dashboard.batteryCostAmount)} detail={`${dashboard.batteryCostMonth} · ${selectedStore?.storeName || '全部门店'}`} />
       </div>
 
       <CockpitPanel
@@ -690,6 +701,10 @@ function fullMoney(value?: number | string | null) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
+}
+
+function monthKey(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
 }
 
 async function optionalGet<T>(url: string, fallback: T) {

@@ -14,6 +14,7 @@ import {
   SearchOutlined,
   ShopOutlined,
   SwapOutlined,
+  ThunderboltOutlined,
   UploadOutlined,
   WalletOutlined
 } from '@ant-design/icons';
@@ -408,6 +409,8 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     const startedCount = periodOrders.filter((item) => Boolean(item.leaseStartedAt)).length + periodExternal.filter((item) => Boolean(item.rentStartedAt)).length;
     const fulfilledCount = periodOrders.filter((item) => ['RENTING', 'PENDING_RETURN', 'OVERDUE', 'PENDING_SUPPLEMENT', 'COMPLETED'].includes(item.orderStatus)).length
       + periodExternal.filter((item) => ['ACTIVE', 'COMPLETED'].includes(item.orderStatus)).length;
+    const batteryCostMonth = monthKey(selectedMonth);
+    const monthStatement = statements.find((item) => item.statementMonth === batteryCostMonth);
     return {
       periodOrders,
       periodExternal,
@@ -423,6 +426,8 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       verifiedCount,
       startedCount,
       fulfilledCount,
+      batteryCostMonth,
+      batteryCostAmount: Number(monthStatement?.batteryCostAmount || 0),
       pendingPickup: orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').length,
       pendingReturn: orders.filter((item) => item.orderStatus === 'PENDING_RETURN').length,
       repairingAssets: activeAssets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length,
@@ -527,6 +532,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
         )}
         <CockpitMetric icon={<CarOutlined />} tone="blue" label="当前资产投放率" value={percent(dashboard.deploymentRate)} detail={`${dashboard.rentingAssets.length} / ${dashboard.activeAssets.length} 台在租`} />
         <CockpitMetric icon={<ExclamationCircleOutlined />} tone="red" label="逾期未收" value={compactMoney(dashboard.openOverdueAmount)} detail={`${overdues.length} 个待跟进案件`} inverseChange />
+        {canReadSettlement ? <CockpitMetric icon={<ThunderboltOutlined />} tone="orange" label="月度应付电池公司" value={compactMoney(dashboard.batteryCostAmount)} detail={`${dashboard.batteryCostMonth} · 独立支付`} /> : null}
       </div>
 
       <div className="cockpit-layout cockpit-layout-main">
@@ -592,6 +598,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
               <div><span>最近应结算金额</span><strong>{compactMoney(dashboard.latestStatement?.payableAmount)}</strong></div>
               <div><span>签单费收益</span><strong>{compactMoney(dashboard.latestStatement?.signFeeIncomeAmount)}</strong></div>
               <div><span>运营及维修分润</span><strong>{compactMoney(dashboard.latestStatement?.rentShareIncomeAmount)}</strong></div>
+              <div><span>应付电池公司</span><strong>{compactMoney(dashboard.latestStatement?.batteryCostAmount)}</strong></div>
             </div>
           ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请联系管理员开通收益查看权限" />}
         </CockpitPanel>
@@ -2626,6 +2633,7 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
             { title: '月份', dataIndex: 'statementMonth' },
             { title: '签单费', dataIndex: 'signFeeIncomeAmount', render: money },
             { title: '运营及维修分润', dataIndex: 'rentShareIncomeAmount', render: money },
+            { title: '应付电池公司', dataIndex: 'batteryCostAmount', render: money },
             { title: '维保扣减', dataIndex: 'maintenanceDeductAmount', render: money },
             { title: '应结算', dataIndex: 'payableAmount', render: money },
             { title: '状态', dataIndex: 'status', render: statementStatusTag },
@@ -2669,6 +2677,10 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
 
 function money(value?: number | string | null) {
   return `¥${Number(value || 0).toFixed(2)}`;
+}
+
+function monthKey(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function externalSourceName(value: ExternalRentalOrder['sourcePlatform']) {
@@ -2995,6 +3007,7 @@ function statementLineText(value: SettlementStatementLine['lineType']) {
     MERCHANT_SIGN_FEE: '商户签单费',
     MERCHANT_RENT_SHARE: '商户租金分润',
     MERCHANT_MAINTENANCE_SHARE: '门店维修分润',
+    MERCHANT_BATTERY_COST_PAYABLE: '门店应付电池公司',
     MERCHANT_MAINTENANCE_REIMBURSE: '门店配件补回',
     MERCHANT_MAINTENANCE_DEDUCT: '商户维保扣减',
     MERCHANT_ADJUSTMENT: '商户调整',

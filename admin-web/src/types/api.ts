@@ -725,6 +725,7 @@ export type SettlementStatement = {
   signFeeIncomeAmount: number;
   rentShareIncomeAmount: number;
   operationFeeAmount: number;
+  batteryCostAmount: number;
   maintenanceDeductAmount: number;
   adjustmentAmount: number;
   payableAmount: number;
@@ -754,6 +755,7 @@ export type SettlementStatementLine = {
     | 'MERCHANT_SIGN_FEE'
     | 'MERCHANT_RENT_SHARE'
     | 'MERCHANT_MAINTENANCE_SHARE'
+    | 'MERCHANT_BATTERY_COST_PAYABLE'
     | 'MERCHANT_MAINTENANCE_REIMBURSE'
     | 'MERCHANT_MAINTENANCE_DEDUCT'
     | 'MERCHANT_ADJUSTMENT'
@@ -774,6 +776,7 @@ export type SettlementOverview = {
   totalMerchantPayableAmount: number;
   totalInvestorPayableAmount: number;
   totalOperationFeeAmount: number;
+  totalBatteryCostAmount: number;
   totalMaintenanceDeductAmount: number;
   totalOpenOverdueAmount: number;
   merchantStatementCount: number;
@@ -790,6 +793,7 @@ export type StoreProfitOverview = {
   signFeeAmount: number;
   storeOperationAmount: number;
   storeMaintenanceAmount: number;
+  batteryCostAmount: number;
   maintenanceReimburseAmount: number;
   maintenanceDeductAmount: number;
   adjustmentAmount: number;

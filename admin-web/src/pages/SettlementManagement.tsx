@@ -213,6 +213,7 @@ export function SettlementManagement() {
         signFeeAmount: 0,
         storeOperationAmount: 0,
         storeMaintenanceAmount: 0,
+        batteryCostAmount: 0,
         maintenanceReimburseAmount: 0,
         maintenanceDeductAmount: 0,
         adjustmentAmount: 0,
@@ -253,6 +254,7 @@ export function SettlementManagement() {
     result.signFee += Number(row.signFeeAmount || 0);
     result.operation += Number(row.storeOperationAmount || 0);
     result.maintenance += Number(row.storeMaintenanceAmount || 0);
+    result.batteryCost += Number(row.batteryCostAmount || 0);
     result.payable += Number(row.payableAmount || 0);
     if (row.status === 'PAID' || row.status === 'CLOSED') {
       result.paid += Number(row.payableAmount || 0);
@@ -260,7 +262,7 @@ export function SettlementManagement() {
       result.pending += Number(row.payableAmount || 0);
     }
     return result;
-  }, { base: 0, signFee: 0, operation: 0, maintenance: 0, payable: 0, paid: 0, pending: 0 }), [filteredStoreProfitRows]);
+  }, { base: 0, signFee: 0, operation: 0, maintenance: 0, batteryCost: 0, payable: 0, paid: 0, pending: 0 }), [filteredStoreProfitRows]);
   const filteredRules = useMemo(() => rules.filter((rule) => {
     if (ruleStoreFilter && rule.storeId !== ruleStoreFilter) {
       return false;
@@ -760,7 +762,7 @@ export function SettlementManagement() {
   function exportStoreProfits() {
     downloadCsv(`门店实际分润-${statementMonth}`, [
       '月份', '商户', '门店', '门店编码', '实际核销/实收基数', '签单费', '门店运营分润', '门店维修分润',
-      '维修补回', '维保扣减', '人工调整', '实际应结算', '已打款', '待结算', '订单数', '账单数', '状态', '月结单号'
+      '门店应付电池公司', '维修补回', '维保扣减', '人工调整', '实际应结算', '已打款', '待结算', '订单数', '账单数', '状态', '月结单号'
     ], filteredStoreProfitRows.map((record) => [
       record.statementMonth,
       merchantMap.get(record.merchantId)?.merchantName,
@@ -770,6 +772,7 @@ export function SettlementManagement() {
       record.signFeeAmount,
       record.storeOperationAmount,
       record.storeMaintenanceAmount,
+      record.batteryCostAmount,
       record.maintenanceReimburseAmount,
       record.maintenanceDeductAmount,
       record.adjustmentAmount,
@@ -786,7 +789,7 @@ export function SettlementManagement() {
   function exportStatements() {
     downloadCsv(`月结中心-${statementMonth}`, [
       '月结单号', '月份', '对象类型', '结算对象', '对象编码', '商户', '门店', '实收租金基数', '签单费', '分润收益',
-      '运营手续费', '维保扣减', '调整金额', '应结算金额', '订单数', '账单数', '明细数', '状态', '操作生成时间', '确认时间', '打款时间'
+      '运营手续费', '门店应付电池公司', '维保扣减', '调整金额', '应结算金额', '订单数', '账单数', '明细数', '状态', '操作生成时间', '确认时间', '打款时间'
     ], filteredStatements.map((record) => [
       record.statementNo,
       record.statementMonth,
@@ -799,6 +802,7 @@ export function SettlementManagement() {
       record.signFeeIncomeAmount,
       record.rentShareIncomeAmount,
       record.operationFeeAmount,
+      record.batteryCostAmount,
       record.maintenanceDeductAmount,
       record.adjustmentAmount,
       record.payableAmount,
@@ -933,7 +937,7 @@ export function SettlementManagement() {
                   <Col span={4}><SettlementMetric icon={<SafetyCertificateOutlined />} tone="violet" label="门店维修分润" value={money(storeProfitTotals.maintenance)} detail="用于门店日常维修" /></Col>
                   <Col span={4}><SettlementMetric icon={<DollarOutlined />} tone="orange" label="实收签单费" value={money(storeProfitTotals.signFee)} detail="签单费全额归门店" /></Col>
                   <Col span={4}><SettlementMetric icon={<FileDoneOutlined />} tone="green" label="门店实际应结算" value={money(storeProfitTotals.payable)} detail="已包含调整与扣减" /></Col>
-                  <Col span={4}><SettlementMetric icon={<CheckCircleOutlined />} tone="blue" label="已打款" value={money(storeProfitTotals.paid)} detail={`待结算 ${money(storeProfitTotals.pending)}`} /></Col>
+                  <Col span={4}><SettlementMetric icon={<WarningOutlined />} tone="orange" label="应付电池公司" value={money(storeProfitTotals.batteryCost)} detail="不计入门店收益和平台收益" /></Col>
                 </Row>
 
                 <div className="section">
@@ -1039,6 +1043,7 @@ export function SettlementManagement() {
                       { title: '签单费', dataIndex: 'signFeeAmount', width: 120, render: money },
                       { title: '门店运营', dataIndex: 'storeOperationAmount', width: 125, render: (value) => <Typography.Text className="amount-positive">{money(value)}</Typography.Text> },
                       { title: '门店维修', dataIndex: 'storeMaintenanceAmount', width: 125, render: (value) => <Typography.Text className="amount-positive">{money(value)}</Typography.Text> },
+                      { title: '应付电池公司', dataIndex: 'batteryCostAmount', width: 145, render: (value) => <Typography.Text type="warning" strong>{money(value)}</Typography.Text> },
                       {
                         title: '调整与扣减',
                         width: 170,
@@ -1150,7 +1155,7 @@ export function SettlementManagement() {
                   <Col span={4}><SettlementMetric icon={<WalletOutlined />} tone="green" label="实际核销/实收基数" value={money(overview?.totalPaidRentAmount || 0)} detail={`签单费 ${money(overview?.totalSignFeeAmount || 0)}`} /></Col>
                   <Col span={4}><SettlementMetric icon={<ShopOutlined />} tone="blue" label="门店待结算" value={money(overview?.totalMerchantPayableAmount || 0)} detail={`${overview?.merchantStatementCount || 0} 张月结单`} /></Col>
                   <Col span={4}><SettlementMetric icon={<TeamOutlined />} tone="violet" label="出资方待结算" value={money(overview?.totalInvestorPayableAmount || 0)} detail={`${overview?.investorStatementCount || 0} 张月结单`} /></Col>
-                  <Col span={4}><SettlementMetric icon={<DollarOutlined />} tone="orange" label="历史运营手续费" value={money(overview?.totalOperationFeeAmount || 0)} detail="当前新版分润应为 0" /></Col>
+                  <Col span={4}><SettlementMetric icon={<WarningOutlined />} tone="orange" label="应付电池公司" value={money(overview?.totalBatteryCostAmount || 0)} detail="门店独立支付，不计入收益" /></Col>
                   <Col span={4}><SettlementMetric icon={<WarningOutlined />} tone="red" label="逾期未收" value={money(overview?.totalOpenOverdueAmount || 0)} detail={`维保调整 ${money(overview?.totalMaintenanceDeductAmount || 0)}`} /></Col>
                   <Col span={4}><SettlementMetric icon={<CheckCircleOutlined />} tone="green" label="结算完成度" value={`${statementFinishedCount}/${statements.length}`} detail={`已完成 ${statementProgress}%`} /></Col>
                 </Row>
@@ -1295,11 +1300,12 @@ export function SettlementManagement() {
                       {
                         title: '扣减/费用',
                         width: 170,
-                        render: (_, record) => Number(record.operationFeeAmount || 0) === 0 && Number(record.maintenanceDeductAmount || 0) === 0
+                        render: (_, record) => Number(record.operationFeeAmount || 0) === 0 && Number(record.batteryCostAmount || 0) === 0 && Number(record.maintenanceDeductAmount || 0) === 0
                           ? <Typography.Text type="secondary">无</Typography.Text>
                           : (
                             <Space direction="vertical" size={0}>
                               {record.operationFeeAmount !== 0 && <span>运营费 {money(record.operationFeeAmount)}</span>}
+                              {record.batteryCostAmount !== 0 && <Typography.Text type="warning">电池费 {money(record.batteryCostAmount)}</Typography.Text>}
                               {record.maintenanceDeductAmount !== 0 && <Typography.Text type="danger">维保 {signedMoney(record.maintenanceDeductAmount)}</Typography.Text>}
                             </Space>
                           )
@@ -2064,6 +2070,7 @@ export function SettlementManagement() {
               <div><span>实际核销/实收基数</span><strong>{money(selectedStatement.rentBaseAmount)}</strong></div>
               <div><span>签单费</span><strong>{money(selectedStatement.signFeeIncomeAmount)}</strong></div>
               <div><span>分润收益</span><strong>{money(selectedStatement.rentShareIncomeAmount)}</strong></div>
+              <div><span>门店应付电池公司</span><strong>{money(selectedStatement.batteryCostAmount)}</strong></div>
               <div><span>调整与扣减</span><strong>{signedMoney(Number(selectedStatement.adjustmentAmount || 0) + Number(selectedStatement.maintenanceDeductAmount || 0) - Number(selectedStatement.operationFeeAmount || 0))}</strong></div>
               <div className="statement-detail-payable"><span>应结算金额</span><strong>{money(selectedStatement.payableAmount)}</strong></div>
             </div>
@@ -2481,6 +2488,7 @@ function statementLineText(value: SettlementStatementLine['lineType']) {
     MERCHANT_SIGN_FEE: '商户签单费',
     MERCHANT_RENT_SHARE: '商户租金分润',
     MERCHANT_MAINTENANCE_SHARE: '门店维修分润',
+    MERCHANT_BATTERY_COST_PAYABLE: '门店应付电池公司',
     MERCHANT_MAINTENANCE_REIMBURSE: '门店配件补回',
     MERCHANT_MAINTENANCE_DEDUCT: '商户维保扣减',
     MERCHANT_ADJUSTMENT: '商户调整',

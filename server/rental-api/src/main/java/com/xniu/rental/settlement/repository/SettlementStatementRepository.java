@@ -61,9 +61,9 @@ public class SettlementStatementRepository {
                 INSERT INTO settlement_statement
                 (statement_no, statement_month, beneficiary_type, beneficiary_id, merchant_id, store_id,
                  rent_base_amount, sign_fee_income_amount, rent_share_income_amount, operation_fee_amount,
-                 maintenance_deduct_amount, adjustment_amount, payable_amount, order_count, bill_count,
+                 battery_cost_amount, maintenance_deduct_amount, adjustment_amount, payable_amount, order_count, bill_count,
                  status, generated_at, remark)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                 """, new String[] {"id"});
             statement.setString(1, row.statementNo());
             statement.setString(2, row.statementMonth());
@@ -75,13 +75,14 @@ public class SettlementStatementRepository {
             statement.setBigDecimal(8, row.signFeeIncomeAmount());
             statement.setBigDecimal(9, row.rentShareIncomeAmount());
             statement.setBigDecimal(10, row.operationFeeAmount());
-            statement.setBigDecimal(11, row.maintenanceDeductAmount());
-            statement.setBigDecimal(12, row.adjustmentAmount());
-            statement.setBigDecimal(13, row.payableAmount());
-            statement.setInt(14, row.orderCount());
-            statement.setInt(15, row.billCount());
-            statement.setString(16, row.status().name());
-            statement.setString(17, row.remark());
+            statement.setBigDecimal(11, row.batteryCostAmount());
+            statement.setBigDecimal(12, row.maintenanceDeductAmount());
+            statement.setBigDecimal(13, row.adjustmentAmount());
+            statement.setBigDecimal(14, row.payableAmount());
+            statement.setInt(15, row.orderCount());
+            statement.setInt(16, row.billCount());
+            statement.setString(17, row.status().name());
+            statement.setString(18, row.remark());
             return statement;
         }, keyHolder);
         return findStatement(keyHolder.getKey().longValue()).orElseThrow();
@@ -165,6 +166,7 @@ public class SettlementStatementRepository {
               s.sign_fee_income_amount,
               COALESCE(line_total.store_operation_amount, 0) AS store_operation_amount,
               COALESCE(line_total.store_maintenance_amount, 0) AS store_maintenance_amount,
+              s.battery_cost_amount,
               COALESCE(line_total.maintenance_reimburse_amount, 0) AS maintenance_reimburse_amount,
               s.maintenance_deduct_amount,
               s.adjustment_amount,
@@ -211,6 +213,7 @@ public class SettlementStatementRepository {
             rs.getBigDecimal("sign_fee_income_amount"),
             rs.getBigDecimal("store_operation_amount"),
             rs.getBigDecimal("store_maintenance_amount"),
+            rs.getBigDecimal("battery_cost_amount"),
             rs.getBigDecimal("maintenance_reimburse_amount"),
             rs.getBigDecimal("maintenance_deduct_amount"),
             rs.getBigDecimal("adjustment_amount"),
@@ -297,6 +300,7 @@ public class SettlementStatementRepository {
               COALESCE(SUM(CASE WHEN beneficiary_type = 'MERCHANT' THEN payable_amount ELSE 0 END), 0) AS merchant_payable,
               COALESCE(SUM(CASE WHEN beneficiary_type = 'INVESTOR' THEN payable_amount ELSE 0 END), 0) AS investor_payable,
               COALESCE(SUM(operation_fee_amount), 0) AS operation_fee,
+              COALESCE(SUM(CASE WHEN beneficiary_type = 'MERCHANT' THEN battery_cost_amount ELSE 0 END), 0) AS battery_cost,
               COALESCE(SUM(maintenance_deduct_amount), 0) AS maintenance_deduct,
               COALESCE(SUM(CASE WHEN beneficiary_type = 'MERCHANT' THEN sign_fee_income_amount ELSE 0 END), 0) AS sign_fee_total,
               COALESCE(SUM(CASE WHEN beneficiary_type = 'MERCHANT' THEN rent_base_amount ELSE 0 END), 0) AS rent_base_total,
@@ -308,6 +312,7 @@ public class SettlementStatementRepository {
             rs.getBigDecimal("merchant_payable"),
             rs.getBigDecimal("investor_payable"),
             rs.getBigDecimal("operation_fee"),
+            rs.getBigDecimal("battery_cost"),
             rs.getBigDecimal("maintenance_deduct"),
             rs.getBigDecimal("sign_fee_total"),
             rs.getBigDecimal("rent_base_total"),
@@ -325,6 +330,7 @@ public class SettlementStatementRepository {
             sums == null ? BigDecimal.ZERO : sums.merchantPayableAmount(),
             sums == null ? BigDecimal.ZERO : sums.investorPayableAmount(),
             sums == null ? BigDecimal.ZERO : sums.operationFeeAmount(),
+            sums == null ? BigDecimal.ZERO : sums.batteryCostAmount(),
             sums == null ? BigDecimal.ZERO : sums.maintenanceDeductAmount(),
             sums == null ? BigDecimal.ZERO : sums.signFeeIncomeAmount(),
             sums == null ? BigDecimal.ZERO : sums.rentBaseAmount(),
@@ -463,6 +469,7 @@ public class SettlementStatementRepository {
         BigDecimal signFeeIncomeAmount,
         BigDecimal rentShareIncomeAmount,
         BigDecimal operationFeeAmount,
+        BigDecimal batteryCostAmount,
         BigDecimal maintenanceDeductAmount,
         BigDecimal adjustmentAmount,
         BigDecimal payableAmount,
@@ -546,6 +553,7 @@ public class SettlementStatementRepository {
         BigDecimal signFeeAmount,
         BigDecimal storeOperationAmount,
         BigDecimal storeMaintenanceAmount,
+        BigDecimal batteryCostAmount,
         BigDecimal maintenanceReimburseAmount,
         BigDecimal maintenanceDeductAmount,
         BigDecimal adjustmentAmount,
@@ -564,6 +572,7 @@ public class SettlementStatementRepository {
         BigDecimal merchantPayableAmount,
         BigDecimal investorPayableAmount,
         BigDecimal operationFeeAmount,
+        BigDecimal batteryCostAmount,
         BigDecimal maintenanceDeductAmount,
         BigDecimal signFeeIncomeAmount,
         BigDecimal rentBaseAmount,
@@ -588,6 +597,7 @@ public class SettlementStatementRepository {
                 rs.getBigDecimal("sign_fee_income_amount"),
                 rs.getBigDecimal("rent_share_income_amount"),
                 rs.getBigDecimal("operation_fee_amount"),
+                rs.getBigDecimal("battery_cost_amount"),
                 rs.getBigDecimal("maintenance_deduct_amount"),
                 rs.getBigDecimal("adjustment_amount"),
                 rs.getBigDecimal("payable_amount"),

@@ -151,6 +151,25 @@ public class SettlementStatementService {
             var profitAllocation = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
                 ? calculateProfitV2(snapshot, rentAmount)
                 : null;
+            if (profitAllocation != null && profitAllocation.batteryCostAmount().signum() > 0) {
+                merchantDraft(merchantDrafts, first.merchantId(), first.storeId()).register(
+                    new LineDraft(
+                        "BILL",
+                        first.billId(),
+                        first.orderId(),
+                        first.billId(),
+                        null,
+                        first.merchantId(),
+                        first.storeId(),
+                        0L,
+                        SettlementStatementLineType.MERCHANT_BATTERY_COST_PAYABLE,
+                        profitAllocation.batteryCostAmount(),
+                        first.paidAt(),
+                        "外卖换电车型电池费（门店应付电池公司）"
+                    ),
+                    rentAmount
+                );
+            }
             var merchantShare = profitAllocation == null
                 ? money(rentAmount.multiply(snapshot.merchantRentShareRate()))
                 : profitAllocation.storeOperationAmount();
@@ -171,7 +190,7 @@ public class SettlementStatementService {
                         first.paidAt(),
                         snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2 ? "门店运营分润" : "租金分润"
                     ),
-                    rentAmount
+                    profitAllocation != null && profitAllocation.batteryCostAmount().signum() > 0 ? BigDecimal.ZERO : rentAmount
                 );
             }
             if (profitAllocation != null && profitAllocation.maintenanceFundAmount().signum() > 0) {
@@ -249,6 +268,26 @@ public class SettlementStatementService {
             if (settlementBase.signum() <= 0) {
                 continue;
             }
+            if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+                && snapshot.batteryCostAmount().signum() > 0) {
+                merchantDraft(merchantDrafts, externalOrder.merchantId(), externalOrder.storeId()).register(
+                    new LineDraft(
+                        "EXTERNAL_ORDER",
+                        externalOrder.externalOrderId(),
+                        null,
+                        null,
+                        null,
+                        externalOrder.merchantId(),
+                        externalOrder.storeId(),
+                        0L,
+                        SettlementStatementLineType.MERCHANT_BATTERY_COST_PAYABLE,
+                        snapshot.batteryCostAmount(),
+                        externalOrder.createdAt(),
+                        "补录订单 " + externalOrder.recordNo() + " 电池费（门店应付电池公司）"
+                    ),
+                    settlementBase
+                );
+            }
             var merchantShare = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
                 ? snapshot.storeOperationAmount()
                 : money(settlementBase.multiply(snapshot.merchantRentShareRate()));
@@ -268,7 +307,8 @@ public class SettlementStatementService {
                         externalOrder.createdAt(),
                         "补录订单 " + externalOrder.recordNo() + " 门店运营分润"
                     ),
-                    settlementBase
+                    snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+                        && snapshot.batteryCostAmount().signum() > 0 ? BigDecimal.ZERO : settlementBase
                 );
             }
             if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
@@ -405,6 +445,7 @@ public class SettlementStatementService {
             money(overview.merchantPayableAmount()),
             money(overview.investorPayableAmount()),
             money(overview.operationFeeAmount()),
+            money(overview.batteryCostAmount()),
             money(overview.maintenanceDeductAmount()),
             money(overview.overdueAmount()),
             overview.merchantStatementCount(),
@@ -426,6 +467,7 @@ public class SettlementStatementService {
                 money(row.signFeeAmount()),
                 money(row.storeOperationAmount()),
                 money(row.storeMaintenanceAmount()),
+                money(row.batteryCostAmount()),
                 money(row.maintenanceReimburseAmount()),
                 money(row.maintenanceDeductAmount()),
                 money(row.adjustmentAmount()),
@@ -551,6 +593,7 @@ public class SettlementStatementService {
                 money(draft.signFeeIncomeAmount()),
                 money(draft.rentShareIncomeAmount()),
                 money(draft.operationFeeAmount()),
+                money(draft.batteryCostAmount()),
                 money(draft.maintenanceDeductAmount()),
                 money(draft.adjustmentAmount()),
                 money(draft.payableAmount()),
@@ -694,6 +737,7 @@ public class SettlementStatementService {
             statement.signFeeIncomeAmount(),
             statement.rentShareIncomeAmount(),
             statement.operationFeeAmount(),
+            statement.batteryCostAmount(),
             statement.maintenanceDeductAmount(),
             statement.adjustmentAmount(),
             statement.payableAmount(),
@@ -833,6 +877,7 @@ public class SettlementStatementService {
         private BigDecimal signFeeIncomeAmount = BigDecimal.ZERO;
         private BigDecimal rentShareIncomeAmount = BigDecimal.ZERO;
         private BigDecimal operationFeeAmount = BigDecimal.ZERO;
+        private BigDecimal batteryCostAmount = BigDecimal.ZERO;
         private BigDecimal maintenanceDeductAmount = BigDecimal.ZERO;
         private BigDecimal adjustmentAmount = BigDecimal.ZERO;
         private BigDecimal payableAmount = BigDecimal.ZERO;
@@ -857,11 +902,14 @@ public class SettlementStatementService {
             }
             lines.add(line);
             rentBaseAmount = rentBaseAmount.add(rentBaseIncrement == null ? BigDecimal.ZERO : rentBaseIncrement);
-            payableAmount = payableAmount.add(line.amount());
+            if (line.lineType() != SettlementStatementLineType.MERCHANT_BATTERY_COST_PAYABLE) {
+                payableAmount = payableAmount.add(line.amount());
+            }
             switch (line.lineType()) {
                 case MERCHANT_SIGN_FEE -> signFeeIncomeAmount = signFeeIncomeAmount.add(line.amount());
                 case MERCHANT_RENT_SHARE, MERCHANT_MAINTENANCE_SHARE, INVESTOR_GROSS_RENT -> rentShareIncomeAmount = rentShareIncomeAmount.add(line.amount());
                 case INVESTOR_OPERATION_FEE -> operationFeeAmount = operationFeeAmount.add(line.amount().abs());
+                case MERCHANT_BATTERY_COST_PAYABLE -> batteryCostAmount = batteryCostAmount.add(line.amount().abs());
                 case MERCHANT_MAINTENANCE_DEDUCT, INVESTOR_MAINTENANCE_DEDUCT -> maintenanceDeductAmount = maintenanceDeductAmount.add(line.amount().abs());
                 case MERCHANT_ADJUSTMENT, INVESTOR_ADJUSTMENT -> adjustmentAmount = adjustmentAmount.add(line.amount());
             }
@@ -909,6 +957,10 @@ public class SettlementStatementService {
 
         private BigDecimal operationFeeAmount() {
             return operationFeeAmount;
+        }
+
+        private BigDecimal batteryCostAmount() {
+            return batteryCostAmount;
         }
 
         private BigDecimal maintenanceDeductAmount() {

@@ -13,6 +13,7 @@ public record StoreProfitOverviewResponse(
     BigDecimal signFeeAmount,
     BigDecimal storeOperationAmount,
     BigDecimal storeMaintenanceAmount,
+    BigDecimal batteryCostAmount,
     BigDecimal maintenanceReimburseAmount,
     BigDecimal maintenanceDeductAmount,
     BigDecimal adjustmentAmount,

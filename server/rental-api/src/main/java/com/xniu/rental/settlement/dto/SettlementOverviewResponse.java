@@ -9,6 +9,7 @@ public record SettlementOverviewResponse(
     BigDecimal totalMerchantPayableAmount,
     BigDecimal totalInvestorPayableAmount,
     BigDecimal totalOperationFeeAmount,
+    BigDecimal totalBatteryCostAmount,
     BigDecimal totalMaintenanceDeductAmount,
     BigDecimal totalOpenOverdueAmount,
     Integer merchantStatementCount,

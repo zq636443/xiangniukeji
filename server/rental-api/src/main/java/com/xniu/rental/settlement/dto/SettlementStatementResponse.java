@@ -15,6 +15,7 @@ public record SettlementStatementResponse(
     BigDecimal signFeeIncomeAmount,
     BigDecimal rentShareIncomeAmount,
     BigDecimal operationFeeAmount,
+    BigDecimal batteryCostAmount,
     BigDecimal maintenanceDeductAmount,
     BigDecimal adjustmentAmount,
     BigDecimal payableAmount,

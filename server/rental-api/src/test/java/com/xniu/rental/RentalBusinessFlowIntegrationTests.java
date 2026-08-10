@@ -1026,7 +1026,10 @@ class RentalBusinessFlowIntegrationTests {
     }
 
     @Test
-    void monthStatementsIncludeStoreMaintenanceShareWithoutInvestorMaintenanceDeduction() {
+    void monthStatementsTrackBatteryPayableWithoutDeductingMerchantPayableTwice() {
+        jdbcTemplate.update(
+            "UPDATE product_sku SET battery_cost_daily_amount = 6.60, battery_cost_monthly_amount = 200.00 WHERE id = 1"
+        );
         jdbcTemplate.update(
             "UPDATE asset_item SET current_merchant_id = ?, current_store_id = ? WHERE id IN (?, ?)",
             1L,
@@ -1128,10 +1131,10 @@ class RentalBusinessFlowIntegrationTests {
               AND beneficiary_id = 1
             """);
         assertThat(investorStatement.get("rent_base_amount")).isEqualTo(new BigDecimal("399.00"));
-        assertThat(investorStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("201.89"));
+        assertThat(investorStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("91.89"));
         assertThat(investorStatement.get("operation_fee_amount")).isEqualTo(new BigDecimal("0.00"));
         assertThat(investorStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("0.00"));
-        assertThat(investorStatement.get("payable_amount")).isEqualTo(new BigDecimal("201.89"));
+        assertThat(investorStatement.get("payable_amount")).isEqualTo(new BigDecimal("91.89"));
         assertThat(jdbcTemplate.queryForObject("""
             SELECT COUNT(1)
             FROM settlement_statement_line
@@ -1145,7 +1148,7 @@ class RentalBusinessFlowIntegrationTests {
         var merchantStatement = jdbcTemplate.queryForMap(
             """
             SELECT rent_base_amount, sign_fee_income_amount, rent_share_income_amount,
-                   maintenance_deduct_amount, payable_amount
+                   battery_cost_amount, maintenance_deduct_amount, payable_amount
             FROM settlement_statement
             WHERE statement_month = '2026-09'
               AND beneficiary_type = 'MERCHANT'
@@ -1155,9 +1158,19 @@ class RentalBusinessFlowIntegrationTests {
             """);
         assertThat(merchantStatement.get("rent_base_amount")).isEqualTo(new BigDecimal("399.00"));
         assertThat(merchantStatement.get("sign_fee_income_amount")).isEqualTo(new BigDecimal("29.10"));
-        assertThat(merchantStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("91.77"));
+        assertThat(merchantStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("41.77"));
+        assertThat(merchantStatement.get("battery_cost_amount")).isEqualTo(new BigDecimal("200.00"));
         assertThat(merchantStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("12.00"));
-        assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("108.87"));
+        assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("58.87"));
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_statement_line
+            WHERE line_type = 'MERCHANT_BATTERY_COST_PAYABLE'
+              AND order_id = ?
+            """, BigDecimal.class, order.id())).isEqualByComparingTo("200.00");
+
+        assertThat(settlementStatementService.overview("2026-09").totalBatteryCostAmount())
+            .isEqualByComparingTo("200.00");
 
         assertThat(settlementStatementService.listStoreProfitOverview("2026-09", 1L, 1L))
             .singleElement()
@@ -1167,14 +1180,15 @@ class RentalBusinessFlowIntegrationTests {
                 assertThat(storeProfit.storeId()).isEqualTo(1L);
                 assertThat(storeProfit.settlementBaseAmount()).isEqualByComparingTo("399.00");
                 assertThat(storeProfit.signFeeAmount()).isEqualByComparingTo("29.10");
-                assertThat(storeProfit.storeOperationAmount()).isEqualByComparingTo("55.06");
-                assertThat(storeProfit.storeMaintenanceAmount()).isEqualByComparingTo("36.71");
+                assertThat(storeProfit.storeOperationAmount()).isEqualByComparingTo("25.06");
+                assertThat(storeProfit.storeMaintenanceAmount()).isEqualByComparingTo("16.71");
+                assertThat(storeProfit.batteryCostAmount()).isEqualByComparingTo("200.00");
                 assertThat(storeProfit.maintenanceReimburseAmount()).isEqualByComparingTo("0.00");
                 assertThat(storeProfit.maintenanceDeductAmount()).isEqualByComparingTo("12.00");
-                assertThat(storeProfit.payableAmount()).isEqualByComparingTo("108.87");
+                assertThat(storeProfit.payableAmount()).isEqualByComparingTo("58.87");
                 assertThat(storeProfit.orderCount()).isEqualTo(1);
                 assertThat(storeProfit.billCount()).isEqualTo(1);
-                assertThat(storeProfit.lineCount()).isEqualTo(4);
+                assertThat(storeProfit.lineCount()).isEqualTo(5);
                 assertThat(storeProfit.status()).isEqualTo("DRAFT");
             });
     }
