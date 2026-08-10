@@ -49,7 +49,8 @@ class ExternalOrderFlexibleRenewalPricingIntegrationTests {
         jdbcTemplate.update("UPDATE store_sku SET status = 'ON_SHELF' WHERE id = 1");
         jdbcTemplate.update("""
             UPDATE store_sku_package
-            SET auto_renew_enabled = 1,
+            SET rental_amount = 129.00,
+                auto_renew_enabled = 1,
                 renewal_unit = 'MONTH',
                 renewal_value = 1,
                 renewal_amount = 129.00,

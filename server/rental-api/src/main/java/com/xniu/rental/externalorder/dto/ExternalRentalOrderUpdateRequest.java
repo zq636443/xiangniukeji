@@ -24,6 +24,7 @@ public record ExternalRentalOrderUpdateRequest(
     Long frameAssetId,
     Long batteryAssetId,
     BigDecimal externalRentalAmount,
+    @NotNull(message = "请输入实际核销金额")
     @DecimalMin(value = "0.00", message = "实际核销金额不能小于 0")
     @Digits(integer = 10, fraction = 2, message = "实际核销金额最多保留 2 位小数")
     BigDecimal verificationAmount,

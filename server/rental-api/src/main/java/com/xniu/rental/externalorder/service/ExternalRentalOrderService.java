@@ -237,7 +237,7 @@ public class ExternalRentalOrderService {
             request.externalRentalAmount(),
             packagePricing.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier))
         );
-        var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), externalRentalAmount);
+        var verificationAmount = normalizeVerificationAmount(request.verificationAmount());
         var defaultSignFeeAmount = effectiveSignFeeAmount(packageTemplate, storeSku);
         var updated = externalRentalOrderRepository.update(new ExternalRentalOrderRepository.UpdateRow(
             order.id(),
@@ -373,7 +373,7 @@ public class ExternalRentalOrderService {
             request.externalRentalAmount(),
             packagePricing.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier))
         );
-        var verificationAmount = normalizeVerificationAmount(request.verificationAmount(), externalRentalAmount);
+        var verificationAmount = normalizeVerificationAmount(request.verificationAmount());
         var defaultSignFeeAmount = effectiveSignFeeAmount(packageTemplate, storeSku);
         var order = externalRentalOrderRepository.create(new ExternalRentalOrderRepository.CreateRow(
             nextRecordNo(),
@@ -400,7 +400,7 @@ public class ExternalRentalOrderService {
             packagePricing.autoRenewEnabled(),
             packagePricing.renewalUnit() == null ? null : packagePricing.renewalUnit().name(),
             packagePricing.renewalValue(),
-            packagePricing.renewalAmount(),
+            Boolean.TRUE.equals(packagePricing.autoRenewEnabled()) ? packagePricing.rentalAmount() : null,
             packagePricing.renewalBillingMode().name(),
             packagePricing.renewalDailyAmount(),
             packagePricing.renewalDailyCapEnabled(),
@@ -1038,8 +1038,11 @@ public class ExternalRentalOrderService {
         return amount;
     }
 
-    private BigDecimal normalizeVerificationAmount(BigDecimal value, BigDecimal fallback) {
-        var amount = normalizeMoney(value, fallback);
+    private BigDecimal normalizeVerificationAmount(BigDecimal value) {
+        if (value == null) {
+            throw BusinessException.badRequest("请输入实际核销金额");
+        }
+        var amount = normalizeMoney(value, null);
         return amount.setScale(2, java.math.RoundingMode.HALF_UP);
     }
 

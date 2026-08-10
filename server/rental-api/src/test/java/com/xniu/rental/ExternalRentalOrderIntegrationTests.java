@@ -290,7 +290,7 @@ class ExternalRentalOrderIntegrationTests {
             primaryAssetId,
             secondaryAssetId,
             null,
-            null,
+            new BigDecimal("798.00"),
             null,
             null,
             "租期倍数测试"
@@ -502,6 +502,79 @@ class ExternalRentalOrderIntegrationTests {
 
         assertThat(assetStatus(customAssetId)).isEqualTo("IDLE");
         assertThat(assetStatus(batteryAssetId)).isEqualTo("IDLE");
+    }
+
+    @Test
+    void newExternalOrderShouldSeparateSkuRentFromVerificationAmount() {
+        var suffix = String.valueOf(System.nanoTime());
+        jdbcTemplate.update("""
+            UPDATE store_sku_package
+            SET rental_amount = 129.00,
+                auto_renew_enabled = 1,
+                renewal_amount = 99.00
+            WHERE store_sku_id = 1 AND package_id = 2
+            """);
+        jdbcTemplate.update("""
+            INSERT INTO asset_item
+            (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
+             purchase_amount, maintenance_fee_amount, residual_value, purchased_at)
+            VALUES (?, 'INTEGRATED_VEHICLE',
+                    (SELECT id FROM asset_type_definition WHERE type_code = 'INTEGRATED_VEHICLE'),
+                    ?, 1, 1, 1, 'IDLE', 4200.00, 0.00, NULL, CURRENT_DATE)
+            """, "A-amount-separation-" + suffix, "AMOUNT-SEPARATION-" + suffix);
+        var assetId = jdbcTemplate.queryForObject(
+            "SELECT id FROM asset_item WHERE asset_code = ?",
+            Long.class,
+            "A-amount-separation-" + suffix
+        );
+
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "AMOUNT-SEPARATION-" + suffix,
+            1L,
+            2L,
+            "金额分离客户",
+            "13800132219",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            assetId,
+            null,
+            null,
+            new BigDecimal("96.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            null
+        ));
+
+        assertThat(created.externalRentalAmount()).isEqualByComparingTo("129.00");
+        assertThat(created.verificationAmount()).isEqualByComparingTo("96.00");
+        assertThat(created.renewalAmount()).isEqualByComparingTo("129.00");
+    }
+
+    @Test
+    void newExternalOrderShouldRequireVerificationAmount() {
+        var suffix = String.valueOf(System.nanoTime());
+        var assetId = createIntegratedAsset("verification-required-" + suffix);
+
+        assertThatThrownBy(() -> externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "VERIFICATION-REQUIRED-" + suffix,
+            2L,
+            4L,
+            "核销必填客户",
+            "13800132218",
+            LocalDateTime.of(2026, 7, 19, 10, 0),
+            null,
+            null,
+            assetId,
+            null,
+            null,
+            new BigDecimal("20.00"),
+            BigDecimal.ZERO,
+            null
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("请输入实际核销金额");
     }
 
     @Test

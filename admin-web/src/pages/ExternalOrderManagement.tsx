@@ -294,7 +294,6 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       expectedReturnAt: calculateExpectedReturnAt(rentStartedAt, firstPackage, 1),
       signFeeAmount: Number(firstStoreSku?.signFeeAmount || 0),
       externalRentalAmount: Number(firstPackage?.rentalAmount || 0),
-      verificationAmount: Number(firstPackage?.rentalAmount || 0),
       depositAmount: Number(firstPackage?.depositAmount || 0)
     });
     setEditingOrder(null);
@@ -344,7 +343,6 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       batteryAssetId: retainCurrentAssets ? editingOrder.batteryAssetId ?? undefined : undefined,
       signFeeAmount: Number(nextStoreSku?.signFeeAmount || 0),
       externalRentalAmount: Number(nextPackage?.rentalAmount || 0),
-      verificationAmount: Number(nextPackage?.rentalAmount || 0),
       depositAmount: Number(nextPackage?.depositAmount || 0),
       expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), nextPackage, 1)
     });
@@ -358,7 +356,6 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     const multiplier = createForm.getFieldValue('leaseMultiplier') || 1;
     createForm.setFieldsValue({
       externalRentalAmount: Number(nextPackage.rentalAmount || 0) * multiplier,
-      verificationAmount: Number(nextPackage.rentalAmount || 0) * multiplier,
       depositAmount: Number(nextPackage.depositAmount || 0),
       expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), nextPackage, multiplier)
     });
@@ -371,7 +368,6 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     }
     createForm.setFieldsValue({
       externalRentalAmount: Number(selectedPackage.rentalAmount || 0) * multiplier,
-      verificationAmount: Number(selectedPackage.rentalAmount || 0) * multiplier,
       expectedReturnAt: calculateExpectedReturnAt(createForm.getFieldValue('rentStartedAt'), selectedPackage, multiplier)
     });
   }
@@ -878,7 +874,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             </Form.Item>
           </Space>
           <Space size={12} style={{ width: '100%' }} align="start">
-            <Form.Item name="externalRentalAmount" label="外部订单租金" style={{ flex: 1 }}>
+            <Form.Item name="externalRentalAmount" label="月租金额（默认 SKU 金额）" style={{ flex: 1 }}>
               <InputNumber min={0} precision={2} style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item
