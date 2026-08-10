@@ -3,6 +3,9 @@ import legacy from '@vitejs/plugin-legacy';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
+  resolve: {
+    dedupe: ['dayjs']
+  },
   plugins: [
     react(),
     legacy({
