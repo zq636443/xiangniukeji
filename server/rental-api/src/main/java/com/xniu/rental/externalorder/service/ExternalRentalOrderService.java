@@ -22,6 +22,7 @@ import com.xniu.rental.externalorder.model.ExternalRentalOrder;
 import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
 import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
 import com.xniu.rental.externalorder.repository.ExternalOrderPricingRevisionRepository;
+import com.xniu.rental.externalorder.repository.ExternalOrderRenewalRepository;
 import com.xniu.rental.merchant.model.MerchantStore;
 import com.xniu.rental.merchant.model.MerchantStatus;
 import com.xniu.rental.merchant.model.StoreStatus;
@@ -63,6 +64,7 @@ public class ExternalRentalOrderService {
 
     private final ExternalRentalOrderRepository externalRentalOrderRepository;
     private final ExternalOrderPricingRevisionRepository pricingRevisionRepository;
+    private final ExternalOrderRenewalRepository renewalRepository;
     private final ProductRepository productRepository;
     private final AssetRepository assetRepository;
     private final OrderRepository orderRepository;
@@ -79,6 +81,7 @@ public class ExternalRentalOrderService {
     public ExternalRentalOrderService(
         ExternalRentalOrderRepository externalRentalOrderRepository,
         ExternalOrderPricingRevisionRepository pricingRevisionRepository,
+        ExternalOrderRenewalRepository renewalRepository,
         ProductRepository productRepository,
         AssetRepository assetRepository,
         OrderRepository orderRepository,
@@ -94,6 +97,7 @@ public class ExternalRentalOrderService {
     ) {
         this.externalRentalOrderRepository = externalRentalOrderRepository;
         this.pricingRevisionRepository = pricingRevisionRepository;
+        this.renewalRepository = renewalRepository;
         this.productRepository = productRepository;
         this.assetRepository = assetRepository;
         this.orderRepository = orderRepository;
@@ -305,6 +309,7 @@ public class ExternalRentalOrderService {
         if (settlementIncomeRepository.hasNonPendingBySource(IncomeSourceType.EXTERNAL_ORDER, order.id())) {
             throw BusinessException.badRequest("补录订单收益已结算或冻结，不能删除");
         }
+        ensureRenewalsReversible(order.id(), "删除");
 
         if (order.orderStatus() == ExternalRentalOrderStatus.ACTIVE) {
             releaseDeletedActiveAsset(order.frameAssetId(), order, "删除补录订单释放主资产");
@@ -312,6 +317,7 @@ public class ExternalRentalOrderService {
         }
 
         settlementIncomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, order.id());
+        reverseRenewals(order.id(), true);
         externalRentalOrderRepository.deleteLogs(order.id());
         externalRentalOrderRepository.delete(order.id());
         settlementRepository.deleteSnapshotsBySource(SnapshotSourceType.EXTERNAL_ORDER, order.id());
@@ -615,6 +621,27 @@ public class ExternalRentalOrderService {
         }
         deleteDraftStatementsByExternalOrder(orderId);
         settlementIncomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, orderId);
+        ensureRenewalsReversible(orderId, "终止");
+        reverseRenewals(orderId, false);
+    }
+
+    private void ensureRenewalsReversible(Long orderId, String action) {
+        if (renewalRepository.hasLockedStatementLinesByExternalOrder(orderId)) {
+            throw BusinessException.badRequest("补录订单续租收益已进入已确认或已支付月结单，不能" + action);
+        }
+        if (renewalRepository.hasNonPendingIncomeByExternalOrder(orderId)) {
+            throw BusinessException.badRequest("补录订单续租收益已结算或冻结，不能" + action);
+        }
+    }
+
+    private void reverseRenewals(Long orderId, boolean deleteEvents) {
+        for (var statementMonth : renewalRepository.listDraftStatementMonthsByExternalOrder(orderId)) {
+            settlementStatementRepository.deleteDraftStatements(statementMonth);
+        }
+        renewalRepository.reversePendingByExternalOrder(orderId);
+        if (deleteEvents) {
+            renewalRepository.deleteByExternalOrder(orderId);
+        }
     }
 
     private void deleteDraftStatementsByExternalOrder(Long orderId) {

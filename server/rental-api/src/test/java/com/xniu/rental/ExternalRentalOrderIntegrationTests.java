@@ -13,6 +13,7 @@ import com.xniu.rental.externalorder.dto.ExternalRentalOrderImportRowRequest;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderCreateRequest;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderTerminateRequest;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderUpdateRequest;
+import com.xniu.rental.externalorder.service.ExternalOrderAutoRenewalService;
 import com.xniu.rental.externalorder.service.ExternalRentalOrderService;
 import com.xniu.rental.merchant.dto.StoreRequest;
 import com.xniu.rental.merchant.service.MerchantService;
@@ -36,6 +37,9 @@ class ExternalRentalOrderIntegrationTests {
 
     @Autowired
     private ExternalRentalOrderService externalRentalOrderService;
+
+    @Autowired
+    private ExternalOrderAutoRenewalService externalOrderAutoRenewalService;
 
     @Autowired
     private MerchantService merchantService;
@@ -269,6 +273,194 @@ class ExternalRentalOrderIntegrationTests {
             FROM settlement_statement
             WHERE statement_month = '2099-01'
             """, Integer.class)).isZero();
+    }
+
+    @Test
+    void dueExternalOrderShouldAccrueRenewalIncome() {
+        var suffix = String.valueOf(System.nanoTime());
+        var assetId = createIntegratedAsset("auto-renew-" + suffix);
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "AUTO-RENEW-" + suffix,
+            2L,
+            4L,
+            "自动续租客户",
+            "13800139980",
+            LocalDateTime.of(2026, 7, 1, 10, 0),
+            null,
+            null,
+            assetId,
+            new BigDecimal("129.00"),
+            new BigDecimal("129.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            "自动续租测试"
+        ));
+        var dueAt = LocalDateTime.of(2026, 8, 1, 10, 0);
+        jdbcTemplate.update("""
+            UPDATE external_rental_order
+            SET expected_return_at = ?, auto_renew_enabled = 1,
+                renewal_unit = 'MONTH', renewal_value = 1, renewal_amount = 129.00,
+                created_at = '2026-07-01 10:00:00'
+            WHERE id = ?
+            """, dueAt, created.id());
+
+        assertThat(externalOrderAutoRenewalService.accrueDueOrders(dueAt)).isEqualTo(1);
+
+        var eventId = jdbcTemplate.queryForObject("""
+            SELECT id
+            FROM external_order_renewal_event
+            WHERE external_order_id = ? AND period_start_at = ?
+            """, Long.class, created.id(), dueAt);
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT expected_return_at FROM external_rental_order WHERE id = ?",
+            LocalDateTime.class,
+            created.id()
+        )).isEqualTo(dueAt.plusDays(30));
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+            """, BigDecimal.class, eventId)).isEqualByComparingTo("129.00");
+        assertThat(jdbcTemplate.queryForList("""
+            SELECT line_type
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+            ORDER BY line_type
+            """, String.class, eventId)).containsExactlyInAnyOrder(
+                "CHANNEL_VERIFICATION_FEE",
+                "PLATFORM_SERVICE_FEE",
+                "STORE_OPERATION_SHARE",
+                "MAINTENANCE_FUND_SHARE",
+                "CHANNEL_REFERRAL_SHARE",
+                "INVESTOR_SHARE"
+            );
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL'
+              AND source_id = ?
+              AND line_type IN ('MERCHANT_ORDER_FEE', 'PLATFORM_ORDER_FEE_SERVICE_FEE')
+            """, BigDecimal.class, eventId)).isEqualByComparingTo("0.00");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+              AND line_type = 'CHANNEL_VERIFICATION_FEE'
+            """, BigDecimal.class, eventId)).isEqualByComparingTo("6.45");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+              AND line_type = 'PLATFORM_SERVICE_FEE'
+            """, BigDecimal.class, eventId)).isEqualByComparingTo("3.87");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+              AND line_type = 'STORE_OPERATION_SHARE'
+            """, BigDecimal.class, eventId)).isEqualByComparingTo("17.80");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+              AND line_type = 'MAINTENANCE_FUND_SHARE'
+            """, BigDecimal.class, eventId)).isEqualByComparingTo("11.87");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+              AND line_type = 'CHANNEL_REFERRAL_SHARE'
+            """, BigDecimal.class, eventId)).isEqualByComparingTo("23.74");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+              AND line_type = 'INVESTOR_SHARE'
+            """, BigDecimal.class, eventId)).isEqualByComparingTo("65.27");
+
+        assertThat(externalOrderAutoRenewalService.accrueDueOrders(dueAt)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(1) FROM external_order_renewal_event WHERE external_order_id = ?",
+            Integer.class,
+            created.id()
+        )).isEqualTo(1);
+
+        var generated = settlementStatementService.generateMonth("2026-08");
+        assertThat(generated.merchantStatementCount()).isEqualTo(1);
+        assertThat(generated.investorStatementCount()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement_line
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+            """, Integer.class, eventId)).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT order_count
+            FROM settlement_statement
+            WHERE statement_month = '2026-08'
+              AND beneficiary_type = 'MERCHANT'
+              AND store_id = ?
+            """, Integer.class, created.storeId())).isZero();
+
+        externalRentalOrderService.terminate(created.id(), new ExternalRentalOrderTerminateRequest(
+            created.storeId(),
+            "IDLE",
+            null,
+            "客户人工终止",
+            "终止自动续租测试"
+        ));
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+            """, Integer.class, eventId)).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_rule_snapshot
+            WHERE source_type = 'EXTERNAL_RENEWAL' AND source_id = ?
+            """, Integer.class, eventId)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT event_status FROM external_order_renewal_event WHERE id = ?",
+            String.class,
+            eventId
+        )).isEqualTo("REVERSED");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(1) FROM settlement_statement WHERE statement_month = '2026-08'",
+            Integer.class
+        )).isZero();
+    }
+
+    @Test
+    void overdueExternalOrderShouldCatchUpEachRenewalPeriodOnce() {
+        var suffix = String.valueOf(System.nanoTime());
+        var assetId = createIntegratedAsset("renewal-catch-up-" + suffix);
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE", "RENEWAL-CATCH-UP-" + suffix, 2L, 4L,
+            "多期续租客户", "13800139981", LocalDateTime.of(2026, 5, 1, 10, 0),
+            null, null, assetId, new BigDecimal("129.00"), new BigDecimal("129.00"),
+            BigDecimal.ZERO, BigDecimal.ZERO, "多期续租追赶测试"
+        ));
+        var firstDueAt = LocalDateTime.of(2026, 6, 1, 10, 0);
+        jdbcTemplate.update("""
+            UPDATE external_rental_order
+            SET expected_return_at = ?, auto_renew_enabled = 1,
+                renewal_unit = 'MONTH', renewal_value = 1, renewal_amount = 129.00
+            WHERE id = ?
+            """, firstDueAt, created.id());
+
+        var scanAt = firstDueAt.plusDays(60);
+        assertThat(externalOrderAutoRenewalService.accrueDueOrders(scanAt)).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1) FROM external_order_renewal_event WHERE external_order_id = ?
+            """, Integer.class, created.id())).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT expected_return_at FROM external_rental_order WHERE id = ?
+            """, LocalDateTime.class, created.id())).isEqualTo(firstDueAt.plusDays(90));
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(renewal_amount), 0)
+            FROM external_order_renewal_event WHERE external_order_id = ?
+            """, BigDecimal.class, created.id())).isEqualByComparingTo("387.00");
+        assertThat(externalOrderAutoRenewalService.accrueDueOrders(scanAt)).isZero();
     }
 
     @Test

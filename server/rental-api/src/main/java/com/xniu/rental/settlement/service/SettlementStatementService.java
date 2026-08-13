@@ -83,6 +83,7 @@ public class SettlementStatementService {
         settlementIncomeService.syncPaidBills(range.startAt(), range.endAt());
         var paidBillItems = statementRepository.listPaidBillItems(range.startAt(), range.endAt());
         var externalOrderItems = statementRepository.listExternalOrderItems(range.startAt(), range.endAt());
+        var externalRenewalItems = statementRepository.listExternalRenewalItems(range.startAt(), range.endAt());
         var maintenanceCosts = statementRepository.listMaintenanceCosts(range.startAt(), range.endAt());
         var snapshotIds = paidBillItems.stream()
             .map(SettlementStatementRepository.PaidBillItemRow::settlementSnapshotId)
@@ -90,6 +91,10 @@ public class SettlementStatementService {
             .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         externalOrderItems.stream()
             .map(SettlementStatementRepository.ExternalOrderItemRow::settlementSnapshotId)
+            .filter(java.util.Objects::nonNull)
+            .forEach(snapshotIds::add);
+        externalRenewalItems.stream()
+            .map(SettlementStatementRepository.ExternalRenewalItemRow::settlementSnapshotId)
             .filter(java.util.Objects::nonNull)
             .forEach(snapshotIds::add);
         var snapshotMap = settlementRepository.findSnapshotsByIds(snapshotIds).stream()
@@ -349,6 +354,67 @@ public class SettlementStatementService {
                         allocation.grossRentAmount(),
                         externalOrder.createdAt(),
                         "补录订单 " + externalOrder.recordNo() + " 出资方分润"
+                    ),
+                    allocation.rentBaseAmount()
+                );
+            }
+        }
+
+        for (var renewal : externalRenewalItems) {
+            var snapshot = snapshotMap.get(renewal.settlementSnapshotId());
+            if (snapshot == null
+                || !"EXTERNAL_RENEWAL".equals(snapshot.sourceType().name())
+                || !renewal.renewalEventId().equals(snapshot.sourceId())) {
+                throw BusinessException.badRequest("补录订单 " + renewal.recordNo() + " 的续租分润快照不存在或不匹配");
+            }
+            var settlementBase = money(renewal.renewalAmount());
+            if (snapshot.batteryCostAmount().signum() > 0) {
+                merchantDraft(merchantDrafts, renewal.merchantId(), renewal.storeId()).register(
+                    new LineDraft(
+                        "EXTERNAL_RENEWAL", renewal.renewalEventId(), null, null, null,
+                        renewal.merchantId(), renewal.storeId(), 0L,
+                        SettlementStatementLineType.MERCHANT_BATTERY_COST_PAYABLE,
+                        snapshot.batteryCostAmount(), renewal.periodStartAt(),
+                        "补录订单 " + renewal.recordNo() + " 续租电池费（门店应付电池公司）"
+                    ),
+                    settlementBase
+                );
+            }
+            if (snapshot.storeOperationAmount().signum() > 0) {
+                merchantDraft(merchantDrafts, renewal.merchantId(), renewal.storeId()).register(
+                    new LineDraft(
+                        "EXTERNAL_RENEWAL", renewal.renewalEventId(), null, null, null,
+                        renewal.merchantId(), renewal.storeId(), 0L,
+                        SettlementStatementLineType.MERCHANT_RENT_SHARE,
+                        snapshot.storeOperationAmount(), renewal.periodStartAt(),
+                        "补录订单 " + renewal.recordNo() + " 自动续租门店运营分润"
+                    ),
+                    snapshot.batteryCostAmount().signum() > 0 ? BigDecimal.ZERO : settlementBase
+                );
+            }
+            if (snapshot.maintenanceFundAmount().signum() > 0) {
+                merchantDraft(merchantDrafts, renewal.merchantId(), renewal.storeId()).register(
+                    new LineDraft(
+                        "EXTERNAL_RENEWAL", renewal.renewalEventId(), null, null, null,
+                        renewal.merchantId(), renewal.storeId(), 0L,
+                        SettlementStatementLineType.MERCHANT_MAINTENANCE_SHARE,
+                        snapshot.maintenanceFundAmount(), renewal.periodStartAt(),
+                        "补录订单 " + renewal.recordNo() + " 自动续租门店维修分润"
+                    ),
+                    BigDecimal.ZERO
+                );
+            }
+            for (var allocation : buildInvestorAllocations(snapshot, null, settlementBase, null)) {
+                if (allocation.grossRentAmount().signum() <= 0) {
+                    continue;
+                }
+                investorDraft(investorDrafts, allocation.investorId()).register(
+                    new LineDraft(
+                        "EXTERNAL_RENEWAL", renewal.renewalEventId(), null, null, null,
+                        renewal.merchantId(), renewal.storeId(), allocation.investorId(),
+                        SettlementStatementLineType.INVESTOR_GROSS_RENT,
+                        allocation.grossRentAmount(), renewal.periodStartAt(),
+                        "补录订单 " + renewal.recordNo() + " 自动续租出资方分润"
                     ),
                     allocation.rentBaseAmount()
                 );

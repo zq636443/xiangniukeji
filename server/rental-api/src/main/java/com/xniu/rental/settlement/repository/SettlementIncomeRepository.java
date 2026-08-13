@@ -177,6 +177,11 @@ public class SettlementIncomeRepository {
                   AND (
                     (l.source_type = 'BILL' AND e.source_type = 'BILL' AND e.source_id = l.bill_id)
                     OR (
+                      l.source_type = 'EXTERNAL_RENEWAL'
+                      AND e.source_type = 'EXTERNAL_RENEWAL'
+                      AND e.source_id = l.source_id
+                    )
+                    OR (
                       l.source_type = 'EXTERNAL_ORDER'
                       AND e.source_type = 'EXTERNAL_ORDER'
                       AND e.source_id = l.source_id

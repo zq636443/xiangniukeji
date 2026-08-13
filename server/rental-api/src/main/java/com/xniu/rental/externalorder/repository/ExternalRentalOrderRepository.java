@@ -214,6 +214,15 @@ public class ExternalRentalOrderRepository {
         return list.stream().findFirst();
     }
 
+    public ExternalRentalOrder advanceExpectedReturnAt(Long id, LocalDateTime expectedReturnAt) {
+        jdbcTemplate.update(
+            "UPDATE external_rental_order SET expected_return_at = ? WHERE id = ?",
+            expectedReturnAt,
+            id
+        );
+        return findById(id).orElseThrow();
+    }
+
     public List<Long> listIdsWithoutSettlementSnapshot() {
         return jdbcTemplate.queryForList("""
             SELECT id

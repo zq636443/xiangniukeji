@@ -1,0 +1,20 @@
+CREATE TABLE external_order_renewal_event (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  external_order_id BIGINT NOT NULL,
+  event_no VARCHAR(64) NOT NULL,
+  period_no INT NOT NULL,
+  period_start_at DATETIME NOT NULL,
+  period_end_at DATETIME NOT NULL,
+  renewal_amount DECIMAL(12, 2) NOT NULL,
+  battery_cost_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  settlement_snapshot_id BIGINT NULL,
+  event_status VARCHAR(24) NOT NULL DEFAULT 'ACCRUED',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_external_renewal_event_no (event_no),
+  UNIQUE KEY uk_external_renewal_order_start (external_order_id, period_start_at),
+  UNIQUE KEY uk_external_renewal_order_period (external_order_id, period_no),
+  KEY idx_external_renewal_period_start (period_start_at),
+  KEY idx_external_renewal_snapshot (settlement_snapshot_id),
+  KEY idx_external_renewal_status (event_status)
+);

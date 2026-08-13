@@ -215,6 +215,76 @@ public class SettlementService {
         return createSnapshotInternal(request);
     }
 
+    @Transactional
+    public SettlementSnapshotResponse createExternalRenewalSnapshot(
+        Long eventId,
+        Long originalSnapshotId,
+        BigDecimal renewalAmount,
+        BigDecimal batteryCostAmount
+    ) {
+        var original = settlementRepository.findSnapshot(originalSnapshotId)
+            .orElseThrow(() -> BusinessException.badRequest("补录订单原始分润快照不存在"));
+        if (original.sourceType() != SnapshotSourceType.EXTERNAL_ORDER) {
+            throw BusinessException.badRequest("补录订单原始分润快照类型不匹配");
+        }
+        var allocation = ProfitSharingCalculator.calculate(
+            renewalAmount,
+            original.channelFeeRate(),
+            original.platformFeeRate(),
+            batteryCostAmount,
+            original.storeOperationRate(),
+            original.maintenanceFundRate(),
+            original.channelReferralRate(),
+            original.investorShareRate()
+        );
+        var snapshot = settlementRepository.createSnapshot(new SettlementRuleSnapshot(
+            null,
+            nextCode("SNP"),
+            SnapshotSourceType.EXTERNAL_RENEWAL,
+            eventId,
+            SettlementCalculationVersion.PROFIT_V2,
+            original.sourceChannel(),
+            original.storeSkuId(),
+            original.skuId(),
+            original.merchantId(),
+            original.storeId(),
+            original.frameAssetId(),
+            original.batteryAssetId(),
+            original.matchedRuleId(),
+            original.matchedRuleScope(),
+            money(renewalAmount),
+            allocation.settlementBaseAmount(),
+            BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+            BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+            allocation.storeOperationRate(),
+            allocation.storeOperationAmount(),
+            allocation.platformFeeRate(),
+            allocation.platformFeeAmount(),
+            allocation.investorShareRate(),
+            allocation.investorShareAmount(),
+            BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+            allocation.maintenanceFundAmount(),
+            allocation.investorShareAmount(),
+            allocation.channelFeeRate(),
+            allocation.channelFeeAmount(),
+            allocation.platformFeeRate(),
+            allocation.platformFeeAmount(),
+            allocation.batteryCostAmount(),
+            allocation.distributableAmount(),
+            allocation.storeOperationRate(),
+            allocation.storeOperationAmount(),
+            allocation.maintenanceFundRate(),
+            allocation.maintenanceFundAmount(),
+            allocation.channelReferralRate(),
+            allocation.channelReferralAmount(),
+            allocation.investorShareRate(),
+            allocation.investorShareAmount(),
+            original.ruleSummary() + ";externalRenewal=true",
+            null
+        ));
+        return toResponse(snapshot);
+    }
+
     private SettlementSnapshotResponse createSnapshotInternal(SnapshotCreateRequest request) {
         var snapshot = buildSnapshot(
             parseSourceType(request.sourceType()),

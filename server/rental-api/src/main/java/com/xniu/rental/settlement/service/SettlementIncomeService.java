@@ -179,6 +179,30 @@ public class SettlementIncomeService {
     }
 
     @Transactional
+    public int createExternalRenewalEntries(
+        Long eventId,
+        String eventNo,
+        Long snapshotId,
+        LocalDateTime occurredAt,
+        BigDecimal renewalAmount
+    ) {
+        var snapshot = settlementRepository.findSnapshot(snapshotId)
+            .orElseThrow(() -> BusinessException.badRequest("补录续租分润快照不存在"));
+        if (snapshot.sourceType() != SnapshotSourceType.EXTERNAL_RENEWAL || !eventId.equals(snapshot.sourceId())) {
+            throw BusinessException.badRequest("补录续租事件与分润快照不匹配");
+        }
+        return createEntries(snapshot, new IncomeSource(
+            IncomeSourceType.EXTERNAL_RENEWAL,
+            eventId,
+            eventNo,
+            null,
+            occurredAt,
+            BigDecimal.ZERO,
+            renewalAmount
+        )).size();
+    }
+
+    @Transactional
     public SettlementIncomeEntryResponse updateStatus(Long id, String status) {
         authorizationService.requirePermission("settlement.write");
         return toResponse(incomeRepository.updateStatus(id, parseStatus(status)));
@@ -194,6 +218,7 @@ public class SettlementIncomeService {
     private List<SettlementIncomeEntry> createProfitV2Entries(SettlementRuleSnapshot snapshot, IncomeSource source) {
         var created = new ArrayList<SettlementIncomeEntry>();
         var allocation = source.sourceType() == IncomeSourceType.BILL
+            || source.sourceType() == IncomeSourceType.EXTERNAL_RENEWAL
             ? ProfitSharingCalculator.calculate(
                 source.rentAmount(),
                 snapshot.channelFeeRate(),
@@ -279,7 +304,9 @@ public class SettlementIncomeService {
             throw BusinessException.badRequest("订单资产未绑定出资方，不能生成分润");
         }
         var investorIds = assets.stream().map(AssetItem::investorId).distinct().toList();
-        if (snapshot.sourceType() != SnapshotSourceType.EXTERNAL_ORDER && investorIds.size() > 1) {
+        if (snapshot.sourceType() != SnapshotSourceType.EXTERNAL_ORDER
+            && snapshot.sourceType() != SnapshotSourceType.EXTERNAL_RENEWAL
+            && investorIds.size() > 1) {
             throw BusinessException.badRequest("订单绑定了不同出资方的资产，请拆分订单后再生成分润");
         }
         var amountByInvestor = new LinkedHashMap<Long, BigDecimal>();

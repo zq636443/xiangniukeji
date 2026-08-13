@@ -405,6 +405,39 @@ public class SettlementStatementRepository {
         ), startAt, endAt);
     }
 
+    public List<ExternalRenewalItemRow> listExternalRenewalItems(LocalDateTime startAt, LocalDateTime endAt) {
+        return jdbcTemplate.query("""
+            SELECT
+              r.id AS renewal_event_id,
+              r.event_no,
+              r.external_order_id,
+              r.period_start_at,
+              r.renewal_amount,
+              r.settlement_snapshot_id,
+              eo.record_no,
+              eo.merchant_id,
+              eo.store_id
+            FROM external_order_renewal_event r
+            JOIN external_rental_order eo ON eo.id = r.external_order_id
+            WHERE r.event_status = 'ACCRUED'
+              AND r.settlement_snapshot_id IS NOT NULL
+              AND eo.order_status <> 'TERMINATED'
+              AND r.period_start_at >= ?
+              AND r.period_start_at < ?
+            ORDER BY r.period_start_at, r.id
+            """, (rs, rowNum) -> new ExternalRenewalItemRow(
+            rs.getLong("renewal_event_id"),
+            rs.getString("event_no"),
+            rs.getLong("external_order_id"),
+            rs.getString("record_no"),
+            rs.getLong("merchant_id"),
+            rs.getLong("store_id"),
+            rs.getBigDecimal("renewal_amount"),
+            rs.getLong("settlement_snapshot_id"),
+            rs.getObject("period_start_at", LocalDateTime.class)
+        ), startAt, endAt);
+    }
+
     public List<MaintenanceCostRow> listMaintenanceCosts(LocalDateTime startAt, LocalDateTime endAt) {
         return jdbcTemplate.query("""
             SELECT
@@ -522,6 +555,19 @@ public class SettlementStatementRepository {
         BigDecimal signFeeAmount,
         Long settlementSnapshotId,
         LocalDateTime createdAt
+    ) {
+    }
+
+    public record ExternalRenewalItemRow(
+        Long renewalEventId,
+        String eventNo,
+        Long externalOrderId,
+        String recordNo,
+        Long merchantId,
+        Long storeId,
+        BigDecimal renewalAmount,
+        Long settlementSnapshotId,
+        LocalDateTime periodStartAt
     ) {
     }
 
