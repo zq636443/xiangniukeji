@@ -161,6 +161,7 @@ export function InvestorIncomePage() {
   const actualEntries = useMemo(() => entries.filter((item) => item.sourceType !== 'ORDER'), [entries]);
   const incomeMetrics = useMemo(() => ({
     total: sum(actualEntries.map((item) => item.amount)),
+    renewal: sum(actualEntries.filter((item) => item.sourceType === 'EXTERNAL_RENEWAL').map((item) => item.amount)),
     settled: sum(actualEntries.filter((item) => item.entryStatus === 'SETTLED').map((item) => item.amount)),
     pending: sum(actualEntries.filter((item) => item.entryStatus === 'PENDING').map((item) => item.amount)),
     frozen: sum(actualEntries.filter((item) => item.entryStatus === 'FROZEN').map((item) => item.amount)),
@@ -299,7 +300,7 @@ export function InvestorIncomePage() {
       />
 
       <Row gutter={[12, 12]}>
-        <Col span={4}><InvestorMetric icon={<DollarOutlined />} tone="blue" label="累计收益流水" value={money(incomeMetrics.total)} detail={`${entries.length} 笔收益记录`} /></Col>
+        <Col span={4}><InvestorMetric icon={<DollarOutlined />} tone="blue" label="累计收益流水" value={money(incomeMetrics.total)} detail={`其中续租 ${money(incomeMetrics.renewal)}`} /></Col>
         <Col span={4}><InvestorMetric icon={<CheckCircleOutlined />} tone="green" label="已结算收益" value={money(incomeMetrics.settled)} detail="收益台账已结算" /></Col>
         <Col span={4}><InvestorMetric icon={<WalletOutlined />} tone="orange" label="待归集收益" value={money(incomeMetrics.pending)} detail="等待进入月结" /></Col>
         <Col span={4}><InvestorMetric icon={<ExclamationCircleOutlined />} tone="red" label="冻结收益" value={money(incomeMetrics.frozen)} detail="等待平台处理" /></Col>
@@ -341,6 +342,7 @@ export function InvestorIncomePage() {
                     options={[
                       { label: '实收账单', value: 'BILL' },
                       { label: '补录订单', value: 'EXTERNAL_ORDER' },
+                      { label: '补录续租', value: 'EXTERNAL_RENEWAL' },
                       { label: '历史整单预计', value: 'ORDER' }
                     ]}
                   />
@@ -1562,12 +1564,14 @@ const incomeStatusMap: Record<SettlementIncomeEntry['entryStatus'], { label: str
 function incomeSourceTag(value: SettlementIncomeEntry['sourceType']) {
   if (value === 'BILL') return <Tag color="green">实收账单</Tag>;
   if (value === 'EXTERNAL_ORDER') return <Tag color="purple">补录订单</Tag>;
+  if (value === 'EXTERNAL_RENEWAL') return <Tag color="cyan">补录续租</Tag>;
   return <Tag>历史整单预计</Tag>;
 }
 
 function incomeSourceText(value: SettlementIncomeEntry['sourceType']) {
   if (value === 'BILL') return '实收账单';
   if (value === 'EXTERNAL_ORDER') return '补录订单';
+  if (value === 'EXTERNAL_RENEWAL') return '补录续租';
   return '历史整单预计';
 }
 
@@ -1610,12 +1614,14 @@ function statementLineText(value: SettlementStatementLine['lineType']) {
 
 function statementSourceTag(value: string) {
   if (value === 'EXTERNAL_ORDER') return <Tag color="purple">补录订单</Tag>;
+  if (value === 'EXTERNAL_RENEWAL') return <Tag color="cyan">补录续租</Tag>;
   if (value === 'MAINTENANCE') return <Tag color="orange">维修记录</Tag>;
   return <Tag color="blue">正式订单/账单</Tag>;
 }
 
 function statementSourceText(value: string) {
   if (value === 'EXTERNAL_ORDER') return '补录订单';
+  if (value === 'EXTERNAL_RENEWAL') return '补录续租';
   if (value === 'MAINTENANCE') return '维修记录';
   return '正式订单/账单';
 }

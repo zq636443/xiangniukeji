@@ -138,6 +138,23 @@ export type ExternalRentalOrder = {
   logs: ExternalRentalOrderLog[];
 };
 
+export type ExternalOrderRenewal = {
+  id: number;
+  externalOrderId: number;
+  eventNo: string;
+  externalOrderRecordNo: string;
+  merchantId: number;
+  storeId: number;
+  periodNo: number;
+  periodStartAt: string;
+  periodEndAt: string;
+  renewalAmount: number;
+  batteryCostAmount: number;
+  eventStatus: 'ACCRUED';
+  includedInMerchantStatement: boolean;
+  occurredAt: string;
+};
+
 export type ExternalOrderPricingRevision = {
   id: number;
   externalOrderId: number;
@@ -636,7 +653,7 @@ export type ProfitRule = {
 export type SettlementSnapshot = {
   id?: number | null;
   snapshotNo: string;
-  sourceType: 'PREVIEW' | 'ORDER' | 'EXTERNAL_ORDER';
+  sourceType: 'PREVIEW' | 'ORDER' | 'EXTERNAL_ORDER' | 'EXTERNAL_RENEWAL';
   sourceId?: number | null;
   calculationVersion: 'LEGACY_V1' | 'PROFIT_V2';
   sourceChannel: string;
@@ -682,7 +699,7 @@ export type SettlementSnapshot = {
 export type SettlementIncomeEntry = {
   id: number;
   entryNo: string;
-  sourceType: 'ORDER' | 'BILL' | 'EXTERNAL_ORDER';
+  sourceType: 'ORDER' | 'BILL' | 'EXTERNAL_ORDER' | 'EXTERNAL_RENEWAL';
   sourceId: number;
   sourceNo?: string | null;
   orderId?: number | null;

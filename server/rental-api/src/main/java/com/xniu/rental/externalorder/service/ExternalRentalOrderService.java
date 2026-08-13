@@ -16,6 +16,7 @@ import com.xniu.rental.externalorder.dto.ExternalRentalOrderLogResponse;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderResponse;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderTerminateRequest;
 import com.xniu.rental.externalorder.dto.ExternalRentalOrderUpdateRequest;
+import com.xniu.rental.externalorder.dto.ExternalOrderRenewalResponse;
 import com.xniu.rental.externalorder.model.ExternalOrderOperationType;
 import com.xniu.rental.externalorder.model.ExternalOrderSourcePlatform;
 import com.xniu.rental.externalorder.model.ExternalRentalOrder;
@@ -175,6 +176,21 @@ public class ExternalRentalOrderService {
             ).stream()
             .map(this::toResponse)
             .toList();
+    }
+
+    public List<ExternalOrderRenewalResponse> listRenewals(Long storeId) {
+        authorizationService.requirePermission("order.read");
+        return renewalRepository.listAccrued(storeId).stream().map(this::toRenewalResponse).toList();
+    }
+
+    public List<ExternalOrderRenewalResponse> listMerchantRenewals(Long storeId) {
+        authorizationService.requirePermission("order.read");
+        if (storeId == null) {
+            throw BusinessException.badRequest("请选择门店");
+        }
+        var store = ensureStore(storeId);
+        authorizationService.requireStoreAccess(store.merchantId(), store.id());
+        return renewalRepository.listAccrued(storeId).stream().map(this::toRenewalResponse).toList();
     }
 
     public ExternalRentalOrderResponse getOrder(Long id) {
@@ -873,6 +889,26 @@ public class ExternalRentalOrderService {
             order.createdAt(),
             order.updatedAt(),
             externalRentalOrderRepository.listLogs(order.id()).stream().map(this::toLogResponse).toList()
+        );
+    }
+
+    private ExternalOrderRenewalResponse toRenewalResponse(ExternalOrderRenewalRepository.RenewalView view) {
+        var event = view.event();
+        return new ExternalOrderRenewalResponse(
+            event.id(),
+            event.externalOrderId(),
+            event.eventNo(),
+            view.externalOrderRecordNo(),
+            view.merchantId(),
+            view.storeId(),
+            event.periodNo(),
+            event.periodStartAt(),
+            event.periodEndAt(),
+            event.renewalAmount(),
+            event.batteryCostAmount(),
+            event.eventStatus(),
+            view.includedInMerchantStatement(),
+            event.periodStartAt()
         );
     }
 

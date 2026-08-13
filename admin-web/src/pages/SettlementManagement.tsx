@@ -353,6 +353,8 @@ export function SettlementManagement() {
       ? orderMap.get(snapshot.sourceId || 0)?.orderNo
       : snapshot.sourceType === 'EXTERNAL_ORDER'
         ? externalOrderMap.get(snapshot.sourceId || 0)?.recordNo
+        : snapshot.sourceType === 'EXTERNAL_RENEWAL'
+          ? `补录续租 #${snapshot.sourceId || '-'}`
         : '人工测算';
     return [snapshot.snapshotNo, snapshot.sourceId, sourceNo, rule?.ruleName, rule?.ruleCode, store?.storeName, store?.storeCode, storeSku?.displayName]
       .some((value) => String(value ?? '').toLowerCase().includes(keyword));
@@ -727,6 +729,9 @@ export function SettlementManagement() {
     }
     if (record.sourceType === 'EXTERNAL_ORDER') {
       return externalOrderMap.get(record.sourceId || 0)?.recordNo || `补录订单 #${record.sourceId || '-'}`;
+    }
+    if (record.sourceType === 'EXTERNAL_RENEWAL') {
+      return `补录续租 #${record.sourceId || '-'}`;
     }
     return '人工规则测算';
   }
@@ -1400,6 +1405,7 @@ export function SettlementManagement() {
                       options={[
                         { label: '正式订单', value: 'ORDER' },
                         { label: '补录订单', value: 'EXTERNAL_ORDER' },
+                        { label: '补录续租', value: 'EXTERNAL_RENEWAL' },
                         { label: '人工测算', value: 'PREVIEW' }
                       ]}
                       style={{ width: 145 }}
@@ -1767,7 +1773,7 @@ export function SettlementManagement() {
                     <Input allowClear prefix={<FileSearchOutlined />} placeholder="搜索收益单号、业务单号、门店或收益方" value={incomeKeyword} onChange={(event) => setIncomeKeyword(event.target.value)} style={{ width: 320 }} />
                     <DatePicker picker="month" allowClear={false} value={dayjs(`${incomeMonth}-01`)} onChange={(value) => setIncomeMonth(value ? value.format('YYYY-MM') : currentMonth())} />
                     <Select allowClear showSearch optionFilterProp="label" placeholder="所属门店" value={incomeStoreFilter} onChange={setIncomeStoreFilter} options={stores.map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id }))} style={{ width: 220 }} />
-                    <Select allowClear placeholder="业务来源" value={incomeSourceFilter} onChange={setIncomeSourceFilter} options={[{ label: '实收账单', value: 'BILL' }, { label: '补录订单', value: 'EXTERNAL_ORDER' }, { label: '历史整单预计', value: 'ORDER' }]} style={{ width: 160 }} />
+                    <Select allowClear placeholder="业务来源" value={incomeSourceFilter} onChange={setIncomeSourceFilter} options={[{ label: '实收账单', value: 'BILL' }, { label: '补录订单', value: 'EXTERNAL_ORDER' }, { label: '补录续租', value: 'EXTERNAL_RENEWAL' }, { label: '历史整单预计', value: 'ORDER' }]} style={{ width: 160 }} />
                     <Select
                       allowClear
                       placeholder="收益方"
@@ -2151,7 +2157,7 @@ export function SettlementManagement() {
                   width: 210,
                   render: (_, line) => (
                     <Space direction="vertical" size={0}>
-                      <Tag color={line.sourceType === 'EXTERNAL_ORDER' ? 'purple' : line.sourceType === 'MAINTENANCE' ? 'orange' : 'blue'}>{statementLineSourceTypeText(line.sourceType)}</Tag>
+                      <Tag color={line.sourceType === 'EXTERNAL_ORDER' ? 'purple' : line.sourceType === 'EXTERNAL_RENEWAL' ? 'cyan' : line.sourceType === 'MAINTENANCE' ? 'orange' : 'blue'}>{statementLineSourceTypeText(line.sourceType)}</Tag>
                       <Typography.Text>{statementLineSourceText(line, externalOrderMap)}</Typography.Text>
                     </Space>
                   )
@@ -2347,7 +2353,8 @@ function snapshotSourceTypeText(value: SettlementSnapshot['sourceType']) {
   const map: Record<SettlementSnapshot['sourceType'], string> = {
     PREVIEW: '人工测算',
     ORDER: '正式订单',
-    EXTERNAL_ORDER: '补录订单'
+    EXTERNAL_ORDER: '补录订单',
+    EXTERNAL_RENEWAL: '补录续租'
   };
   return map[value];
 }
@@ -2356,7 +2363,8 @@ function snapshotSourceColor(value: SettlementSnapshot['sourceType']) {
   const map: Record<SettlementSnapshot['sourceType'], string> = {
     PREVIEW: 'default',
     ORDER: 'blue',
-    EXTERNAL_ORDER: 'purple'
+    EXTERNAL_ORDER: 'purple',
+    EXTERNAL_RENEWAL: 'cyan'
   };
   return map[value];
 }
@@ -2388,13 +2396,14 @@ function incomeSourceText(value: SettlementIncomeEntry['sourceType']) {
   const map: Record<SettlementIncomeEntry['sourceType'], string> = {
     BILL: '实收账单',
     EXTERNAL_ORDER: '补录订单',
+    EXTERNAL_RENEWAL: '补录续租',
     ORDER: '历史整单预计'
   };
   return map[value];
 }
 
 function incomeSourceTag(value: SettlementIncomeEntry['sourceType']) {
-  const color = value === 'BILL' ? 'green' : value === 'EXTERNAL_ORDER' ? 'purple' : 'default';
+  const color = value === 'BILL' ? 'green' : value === 'EXTERNAL_ORDER' ? 'purple' : value === 'EXTERNAL_RENEWAL' ? 'cyan' : 'default';
   return <Tag color={color}>{incomeSourceText(value)}</Tag>;
 }
 
@@ -2402,6 +2411,7 @@ function statementLineSourceTypeText(value: string) {
   const map: Record<string, string> = {
     BILL: '正式订单账单',
     EXTERNAL_ORDER: '补录订单',
+    EXTERNAL_RENEWAL: '补录续租',
     MAINTENANCE: '维修记录'
   };
   return map[value] || value;
@@ -2413,6 +2423,9 @@ function statementLineSourceText(line: SettlementStatementLine, externalOrderMap
   }
   if (line.sourceType === 'MAINTENANCE') {
     return `维修记录 #${line.sourceId}`;
+  }
+  if (line.sourceType === 'EXTERNAL_RENEWAL') {
+    return `补录续租 #${line.sourceId}`;
   }
   if (line.sourceType === 'BILL') {
     return `账单 #${line.sourceId}`;

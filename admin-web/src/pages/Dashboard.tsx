@@ -30,6 +30,7 @@ import { http } from '../services/request';
 import type {
   Asset,
   DeductRecord,
+  ExternalOrderRenewal,
   ExternalRentalOrder,
   Investor,
   OverdueCase,
@@ -57,6 +58,7 @@ import {
 type DashboardData = {
   orders: RentalOrder[];
   externalOrders: ExternalRentalOrder[];
+  externalRenewals: ExternalOrderRenewal[];
   bills: RentalBill[];
   assets: Asset[];
   overdues: OverdueCase[];
@@ -111,6 +113,7 @@ type InvestorPerformance = {
 const initialData: DashboardData = {
   orders: [],
   externalOrders: [],
+  externalRenewals: [],
   bills: [],
   assets: [],
   overdues: [],
@@ -140,9 +143,10 @@ export function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      const [orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeEntries] = await Promise.all([
+      const [orders, externalOrders, externalRenewals, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeEntries] = await Promise.all([
         http.get<unknown, RentalOrder[]>('/api/admin/orders'),
         http.get<unknown, ExternalRentalOrder[]>('/api/admin/external-orders'),
+        http.get<unknown, ExternalOrderRenewal[]>('/api/admin/external-orders/renewals'),
         http.get<unknown, RentalBill[]>('/api/admin/bills'),
         http.get<unknown, Asset[]>('/api/admin/assets'),
         http.get<unknown, OverdueCase[]>('/api/admin/overdues?overdueStatus=OPEN'),
@@ -155,7 +159,7 @@ export function Dashboard() {
         optionalGet<SettlementStatement[]>('/api/admin/settlement/statements?beneficiaryType=MERCHANT', []),
         optionalGet<SettlementIncomeEntry[]>('/api/admin/settlement/income/entries', [])
       ]);
-      setData({ orders, externalOrders, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeEntries });
+      setData({ orders, externalOrders, externalRenewals, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeEntries });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '经营驾驶舱数据加载失败');
     } finally {
@@ -181,6 +185,7 @@ export function Dashboard() {
     return {
       orders,
       externalOrders: data.externalOrders.filter((item) => item.storeId === selectedStoreId),
+      externalRenewals: data.externalRenewals.filter((item) => item.storeId === selectedStoreId),
       bills: data.bills.filter((item) => item.storeId === selectedStoreId),
       assets: data.assets.filter((item) => item.currentStoreId === selectedStoreId),
       overdues: data.overdues.filter((item) => item.storeId === selectedStoreId),
@@ -199,10 +204,16 @@ export function Dashboard() {
     const previousPayments = scopedData.payments.filter((item) => item.payStatus === 'PAID' && isInWindow(item.paidAt, window.previousStart, window.previousEnd));
     const periodExternal = scopedData.externalOrders.filter((item) => isInWindow(item.createdAt || item.rentStartedAt, window.start, window.end));
     const previousExternal = scopedData.externalOrders.filter((item) => isInWindow(item.createdAt || item.rentStartedAt, window.previousStart, window.previousEnd));
-    const periodCollected = netPayments(periodPayments) + sumNumbers(periodExternal.map((item) => item.verificationAmount));
-    const previousCollected = netPayments(previousPayments) + sumNumbers(previousExternal.map((item) => item.verificationAmount));
+    const periodRenewals = scopedData.externalRenewals.filter((item) => isInWindow(item.occurredAt, window.start, window.end));
+    const previousRenewals = scopedData.externalRenewals.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd));
+    const periodRenewalAmount = sumNumbers(periodRenewals.map((item) => item.renewalAmount));
+    const periodCollected = netPayments(periodPayments) + sumNumbers(periodExternal.map((item) => item.verificationAmount)) + periodRenewalAmount;
+    const previousCollected = netPayments(previousPayments) + sumNumbers(previousExternal.map((item) => item.verificationAmount)) + sumNumbers(previousRenewals.map((item) => item.renewalAmount));
     const platformIncome = sumNumbers(scopedData.incomeEntries
       .filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN' && item.beneficiaryType === 'PLATFORM' && isInWindow(item.occurredAt, window.start, window.end))
+      .map((item) => item.amount));
+    const platformRenewalIncome = sumNumbers(scopedData.incomeEntries
+      .filter((item) => item.sourceType === 'EXTERNAL_RENEWAL' && item.entryStatus !== 'FROZEN' && item.beneficiaryType === 'PLATFORM' && isInWindow(item.occurredAt, window.start, window.end))
       .map((item) => item.amount));
     const previousPlatformIncome = sumNumbers(scopedData.incomeEntries
       .filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN' && item.beneficiaryType === 'PLATFORM' && isInWindow(item.occurredAt, window.previousStart, window.previousEnd))
@@ -225,8 +236,10 @@ export function Dashboard() {
     const batteryCostMonth = monthKey(selectedMonth);
     return {
       periodCollected,
+      periodRenewalAmount,
       collectedChange: percentageChange(periodCollected, previousCollected),
       platformIncome,
+      platformRenewalIncome,
       platformIncomeChange: percentageChange(platformIncome, previousPlatformIncome),
       dueAmount,
       collectionRate,
@@ -241,6 +254,8 @@ export function Dashboard() {
       batteryCostMonth,
       batteryCostAmount: sumNumbers(scopedData.merchantStatements
         .filter((item) => item.statementMonth === batteryCostMonth)
+        .map((item) => item.batteryCostAmount)) + sumNumbers(scopedData.externalRenewals
+        .filter((item) => !item.includedInMerchantStatement && item.occurredAt.slice(0, 7) === batteryCostMonth)
         .map((item) => item.batteryCostAmount)),
       overdueAmount: sumNumbers(scopedData.overdues.map((item) => item.unpaidAmount)),
       repairAssets: activeAssets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length,
@@ -253,10 +268,11 @@ export function Dashboard() {
     const buckets = buildTimeBuckets(window);
     const paymentValues = valueByBuckets(buckets, scopedData.payments.filter((item) => item.payStatus === 'PAID'), (item) => item.paidAt, (item) => Math.max(0, Number(item.paidAmount || 0) - Number(item.refundAmount || 0)));
     const externalValues = valueByBuckets(buckets, scopedData.externalOrders, (item) => item.createdAt || item.rentStartedAt, (item) => Number(item.verificationAmount || 0));
+    const renewalValues = valueByBuckets(buckets, scopedData.externalRenewals, (item) => item.occurredAt, (item) => Number(item.renewalAmount || 0));
     return {
       labels: buckets.map((item) => item.label),
       receivable: valueByBuckets(buckets, scopedData.bills.filter((item) => item.billStatus !== 'CANCELLED'), (item) => item.dueAt, (item) => Number(item.payableAmount || 0)),
-      collected: paymentValues.map((value, index) => value + externalValues[index])
+      collected: paymentValues.map((value, index) => value + externalValues[index] + renewalValues[index])
     };
   }, [scopedData, window]);
 
@@ -282,6 +298,9 @@ export function Dashboard() {
     data.externalOrders
       .filter((item) => isInWindow(item.createdAt || item.rentStartedAt, window.start, window.end))
       .forEach((item) => { ensureStore(item.storeId, item.storeName).collected += Number(item.verificationAmount || 0); });
+    data.externalRenewals
+      .filter((item) => isInWindow(item.occurredAt, window.start, window.end))
+      .forEach((item) => { ensureStore(item.storeId).collected += Number(item.renewalAmount || 0); });
     data.assets.filter((item) => !['SCRAPPED', 'SOLD'].includes(item.status)).forEach((item) => {
       if (!item.currentStoreId) return;
       const row = ensureStore(item.currentStoreId, item.storeName);
@@ -485,8 +504,8 @@ export function Dashboard() {
       {error ? <Alert type="error" message={error} showIcon /> : null}
 
       <div className="cockpit-metric-grid">
-        <CockpitMetric icon={<WalletOutlined />} tone="green" label="期间实收" value={fullMoney(dashboard.periodCollected)} detail={`含补录核销 · ${dashboard.totalPeriodOrders} 笔订单`} change={dashboard.collectedChange} changeLabel="环比" />
-        <CockpitMetric icon={<RiseOutlined />} tone="violet" label="平台期间收入" value={fullMoney(dashboard.platformIncome)} detail="平台服务费及运营费流水" change={dashboard.platformIncomeChange} changeLabel="环比" />
+        <CockpitMetric icon={<WalletOutlined />} tone="green" label="期间营业额" value={fullMoney(dashboard.periodCollected)} detail={`续租 ${fullMoney(dashboard.periodRenewalAmount)} · ${dashboard.totalPeriodOrders} 笔订单`} change={dashboard.collectedChange} changeLabel="环比" />
+        <CockpitMetric icon={<RiseOutlined />} tone="violet" label="平台期间收入" value={fullMoney(dashboard.platformIncome)} detail={`其中续租 ${fullMoney(dashboard.platformRenewalIncome)}`} change={dashboard.platformIncomeChange} changeLabel="环比" />
         <CockpitMetric icon={<CheckCircleOutlined />} tone="blue" label="到期账单回款率" value={percent(dashboard.collectionRate)} detail={`期间应收 ${fullMoney(dashboard.dueAmount)}`} change={dashboard.collectionRateChange} changeLabel="百分点" />
         <CockpitMetric icon={<CarOutlined />} tone="orange" label="当前资产投放率" value={percent(dashboard.deploymentRate)} detail={`${dashboard.rentingAssets.length} / ${dashboard.activeAssets.length} 台在租`} />
         <CockpitMetric icon={<ThunderboltOutlined />} tone="orange" label="月度应付电池公司" value={fullMoney(dashboard.batteryCostAmount)} detail={`${dashboard.batteryCostMonth} · ${selectedStore?.storeName || '全部门店'}`} />

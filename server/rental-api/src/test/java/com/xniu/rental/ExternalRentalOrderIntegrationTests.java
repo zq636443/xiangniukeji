@@ -317,6 +317,20 @@ class ExternalRentalOrderIntegrationTests {
             LocalDateTime.class,
             created.id()
         )).isEqualTo(dueAt.plusDays(30));
+        assertThat(externalRentalOrderService.listRenewals(created.storeId()))
+            .singleElement()
+            .satisfies(renewal -> {
+                assertThat(renewal.externalOrderId()).isEqualTo(created.id());
+                assertThat(renewal.storeId()).isEqualTo(created.storeId());
+                assertThat(renewal.renewalAmount()).isEqualByComparingTo("129.00");
+                assertThat(renewal.includedInMerchantStatement()).isFalse();
+                assertThat(renewal.occurredAt()).isEqualTo(dueAt);
+            });
+        var otherStoreId = created.storeId().equals(1L) ? 2L : 1L;
+        assertThat(externalRentalOrderService.listRenewals(otherStoreId)).isEmpty();
+        assertThat(externalRentalOrderService.listMerchantRenewals(created.storeId()))
+            .extracting("externalOrderId")
+            .containsExactly(created.id());
         assertThat(jdbcTemplate.queryForObject("""
             SELECT COALESCE(SUM(amount), 0)
             FROM settlement_income_entry
@@ -401,6 +415,10 @@ class ExternalRentalOrderIntegrationTests {
               AND beneficiary_type = 'MERCHANT'
               AND store_id = ?
             """, Integer.class, created.storeId())).isZero();
+        assertThat(externalRentalOrderService.listRenewals(created.storeId()))
+            .singleElement()
+            .extracting("includedInMerchantStatement")
+            .isEqualTo(true);
 
         externalRentalOrderService.terminate(created.id(), new ExternalRentalOrderTerminateRequest(
             created.storeId(),

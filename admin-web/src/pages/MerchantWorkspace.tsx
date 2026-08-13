@@ -74,6 +74,7 @@ import type {
   AssetTypeDefinition,
   CollectionStatus,
   CurrentAccount,
+  ExternalOrderRenewal,
   ExternalRentalOrder,
   OrderStatus,
   OverdueCase,
@@ -335,6 +336,7 @@ function MerchantMaintenanceFormFields({
 export function MerchantDashboard({ account, storeId, stores }: MerchantPageProps) {
   const [orders, setOrders] = useState<RentalOrder[]>([]);
   const [externalOrders, setExternalOrders] = useState<ExternalRentalOrder[]>([]);
+  const [externalRenewals, setExternalRenewals] = useState<ExternalOrderRenewal[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [overdues, setOverdues] = useState<OverdueCase[]>([]);
   const [incomeEntries, setIncomeEntries] = useState<SettlementIncomeEntry[]>([]);
@@ -350,6 +352,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     if (!storeId) {
       setOrders([]);
       setExternalOrders([]);
+      setExternalRenewals([]);
       setAssets([]);
       setOverdues([]);
       setIncomeEntries([]);
@@ -359,9 +362,10 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     setLoading(true);
     setError('');
     try {
-      const [orderData, externalOrderData, assetData, overdueData, incomeData, statementData] = await Promise.all([
+      const [orderData, externalOrderData, externalRenewalData, assetData, overdueData, incomeData, statementData] = await Promise.all([
         http.get<unknown, RentalOrder[]>('/api/merchant/orders', { params: { storeId } }),
         http.get<unknown, ExternalRentalOrder[]>('/api/merchant/external-orders', { params: { storeId } }),
+        http.get<unknown, ExternalOrderRenewal[]>('/api/merchant/external-orders/renewals', { params: { storeId } }),
         http.get<unknown, Asset[]>(`/api/merchant/assets/stores/${storeId}`),
         http.get<unknown, OverdueCase[]>('/api/merchant/overdues', { params: { storeId, overdueStatus: 'OPEN' } }),
         canReadSettlement
@@ -373,6 +377,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       ]);
       setOrders(orderData);
       setExternalOrders(externalOrderData);
+      setExternalRenewals(externalRenewalData);
       setAssets(assetData);
       setOverdues(overdueData);
       setIncomeEntries(incomeData);
@@ -395,10 +400,14 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     const previousOrders = orders.filter((item) => isInWindow(item.orderedAt, window.previousStart, window.previousEnd));
     const periodExternal = externalOrders.filter((item) => isInWindow(item.createdAt || item.rentStartedAt, window.start, window.end));
     const previousExternal = externalOrders.filter((item) => isInWindow(item.createdAt || item.rentStartedAt, window.previousStart, window.previousEnd));
-    const periodCollected = sumNumbers(periodOrders.map((item) => item.paidAmount)) + sumNumbers(periodExternal.map((item) => item.verificationAmount));
-    const previousCollected = sumNumbers(previousOrders.map((item) => item.paidAmount)) + sumNumbers(previousExternal.map((item) => item.verificationAmount));
+    const periodRenewals = externalRenewals.filter((item) => isInWindow(item.occurredAt, window.start, window.end));
+    const previousRenewals = externalRenewals.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd));
+    const periodRenewalAmount = sumNumbers(periodRenewals.map((item) => item.renewalAmount));
+    const periodCollected = sumNumbers(periodOrders.map((item) => item.paidAmount)) + sumNumbers(periodExternal.map((item) => item.verificationAmount)) + periodRenewalAmount;
+    const previousCollected = sumNumbers(previousOrders.map((item) => item.paidAmount)) + sumNumbers(previousExternal.map((item) => item.verificationAmount)) + sumNumbers(previousRenewals.map((item) => item.renewalAmount));
     const actualIncomeEntries = incomeEntries.filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN');
     const periodIncome = sumNumbers(actualIncomeEntries.filter((item) => isInWindow(item.occurredAt, window.start, window.end)).map((item) => item.amount));
+    const periodRenewalIncome = sumNumbers(actualIncomeEntries.filter((item) => item.sourceType === 'EXTERNAL_RENEWAL' && isInWindow(item.occurredAt, window.start, window.end)).map((item) => item.amount));
     const previousIncome = sumNumbers(actualIncomeEntries.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd)).map((item) => item.amount));
     const activeAssets = assets.filter((item) => !['SCRAPPED', 'SOLD'].includes(item.status));
     const rentingAssets = activeAssets.filter((item) => item.status === 'RENTING');
@@ -415,8 +424,10 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       periodOrders,
       periodExternal,
       periodCollected,
+      periodRenewalAmount,
       collectedChange: percentageChange(periodCollected, previousCollected),
       periodIncome,
+      periodRenewalIncome,
       incomeChange: percentageChange(periodIncome, previousIncome),
       activeAssets,
       rentingAssets,
@@ -427,7 +438,9 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       startedCount,
       fulfilledCount,
       batteryCostMonth,
-      batteryCostAmount: Number(monthStatement?.batteryCostAmount || 0),
+      batteryCostAmount: Number(monthStatement?.batteryCostAmount || 0) + sumNumbers(externalRenewals
+        .filter((item) => !item.includedInMerchantStatement && item.occurredAt.slice(0, 7) === batteryCostMonth)
+        .map((item) => item.batteryCostAmount)),
       pendingPickup: orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').length,
       pendingReturn: orders.filter((item) => item.orderStatus === 'PENDING_RETURN').length,
       repairingAssets: activeAssets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length,
@@ -435,7 +448,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       pendingIncome: sumNumbers(incomeEntries.filter((item) => item.entryStatus === 'PENDING').map((item) => item.amount)),
       latestStatement: [...statements].sort((left, right) => right.statementMonth.localeCompare(left.statementMonth))[0]
     };
-  }, [orders, externalOrders, assets, overdues, incomeEntries, statements, window]);
+  }, [orders, externalOrders, externalRenewals, assets, overdues, incomeEntries, statements, window]);
 
   const trend = useMemo(() => {
     const buckets = buildTimeBuckets(window);
@@ -444,7 +457,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     return {
       labels: buckets.map((item) => item.label),
       orders: formalCounts.map((value, index) => value + externalCounts[index]),
-      income: valueByBuckets(buckets, incomeEntries, (item) => item.occurredAt, (item) => Number(item.amount || 0))
+      income: valueByBuckets(buckets, incomeEntries.filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN'), (item) => item.occurredAt, (item) => Number(item.amount || 0))
     };
   }, [orders, externalOrders, incomeEntries, window]);
 
@@ -524,9 +537,9 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       {error ? <Alert type="error" message={error} showIcon /> : null}
 
       <div className="cockpit-metric-grid">
-        <CockpitMetric icon={<WalletOutlined />} tone="green" label="期间订单核销" value={compactMoney(dashboard.periodCollected)} detail={`${dashboard.periodOrderCount} 笔订单，含外部补录`} change={dashboard.collectedChange} changeLabel="环比" />
+        <CockpitMetric icon={<WalletOutlined />} tone="green" label="期间营业额" value={compactMoney(dashboard.periodCollected)} detail={`续租 ${compactMoney(dashboard.periodRenewalAmount)} · ${dashboard.periodOrderCount} 笔订单`} change={dashboard.collectedChange} changeLabel="环比" />
         {canReadSettlement ? (
-          <CockpitMetric icon={<CheckCircleOutlined />} tone="violet" label="期间门店收益" value={compactMoney(dashboard.periodIncome)} detail={`待归集 ${compactMoney(dashboard.pendingIncome)}`} change={dashboard.incomeChange} changeLabel="环比" />
+          <CockpitMetric icon={<CheckCircleOutlined />} tone="violet" label="期间门店收益" value={compactMoney(dashboard.periodIncome)} detail={`其中续租 ${compactMoney(dashboard.periodRenewalIncome)}`} change={dashboard.incomeChange} changeLabel="环比" />
         ) : (
           <CockpitMetric icon={<BankOutlined />} tone="violet" label="期间新增订单" value={`${dashboard.periodOrderCount} 单`} detail="正式订单与补录订单" />
         )}
@@ -2960,12 +2973,14 @@ function incomeStatusTag(value: SettlementIncomeEntry['entryStatus']) {
 function merchantIncomeSourceTag(value: SettlementIncomeEntry['sourceType']) {
   if (value === 'BILL') return <Tag color="green">实收账单</Tag>;
   if (value === 'EXTERNAL_ORDER') return <Tag color="purple">补录订单</Tag>;
+  if (value === 'EXTERNAL_RENEWAL') return <Tag color="cyan">补录续租</Tag>;
   return <Tag>历史整单预计</Tag>;
 }
 
 function merchantStatementSourceTag(value: string) {
   if (value === 'BILL') return <Tag color="green">实收账单</Tag>;
   if (value === 'EXTERNAL_ORDER') return <Tag color="purple">补录订单</Tag>;
+  if (value === 'EXTERNAL_RENEWAL') return <Tag color="cyan">补录续租</Tag>;
   if (value === 'MAINTENANCE') return <Tag color="orange">维保调整</Tag>;
   return <Tag>{value}</Tag>;
 }

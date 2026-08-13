@@ -14,6 +14,7 @@ import com.xniu.rental.externalorder.dto.ExternalOrderPricingBatchResultResponse
 import com.xniu.rental.externalorder.dto.ExternalOrderPricingConfirmRequest;
 import com.xniu.rental.externalorder.dto.ExternalOrderPricingPreviewResponse;
 import com.xniu.rental.externalorder.dto.ExternalOrderPricingRevisionResponse;
+import com.xniu.rental.externalorder.dto.ExternalOrderRenewalResponse;
 import com.xniu.rental.externalorder.service.ExternalOrderRenewalPricingService;
 import com.xniu.rental.externalorder.service.ExternalRentalOrderService;
 import com.xniu.rental.merchant.service.MerchantService;
@@ -67,6 +68,11 @@ public class MerchantExternalRentalOrderController {
             storeId, status, sourcePlatform, storeSkuId, packageId, rentStartedFrom, rentStartedTo,
             expectedReturnFrom, expectedReturnTo, keyword
         ));
+    }
+
+    @GetMapping("/renewals")
+    public ApiResponse<List<ExternalOrderRenewalResponse>> listRenewals(@RequestParam Long storeId) {
+        return ApiResponse.ok(externalRentalOrderService.listMerchantRenewals(storeId));
     }
 
     @GetMapping("/{id}")

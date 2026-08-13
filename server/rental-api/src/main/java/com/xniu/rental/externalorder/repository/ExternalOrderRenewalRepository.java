@@ -103,6 +103,37 @@ public class ExternalOrderRenewalRepository {
             """, mapper, externalOrderId);
     }
 
+    public List<RenewalView> listAccrued(Long storeId) {
+        var sql = new StringBuilder("""
+            SELECT r.*, o.record_no AS external_order_record_no, o.merchant_id, o.store_id,
+                   EXISTS (
+                     SELECT 1
+                     FROM settlement_statement_line l
+                     JOIN settlement_statement s ON s.id = l.statement_id
+                     WHERE l.source_type = 'EXTERNAL_RENEWAL'
+                       AND l.source_id = r.id
+                       AND s.beneficiary_type = 'MERCHANT'
+                       AND s.store_id = o.store_id
+                   ) AS included_in_merchant_statement
+            FROM external_order_renewal_event r
+            JOIN external_rental_order o ON o.id = r.external_order_id
+            WHERE r.event_status = 'ACCRUED'
+            """);
+        var params = new java.util.ArrayList<Object>();
+        if (storeId != null) {
+            sql.append(" AND o.store_id = ?");
+            params.add(storeId);
+        }
+        sql.append(" ORDER BY r.period_start_at DESC, r.id DESC");
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new RenewalView(
+            mapper.mapRow(rs, rowNum),
+            rs.getString("external_order_record_no"),
+            rs.getLong("merchant_id"),
+            rs.getLong("store_id"),
+            rs.getBoolean("included_in_merchant_statement")
+        ), params.toArray());
+    }
+
     public boolean hasNonPendingIncomeByExternalOrder(Long externalOrderId) {
         var count = jdbcTemplate.queryForObject("""
             SELECT COUNT(1)
@@ -174,6 +205,15 @@ public class ExternalOrderRenewalRepository {
     private static Long nullableLong(ResultSet rs, String column) throws SQLException {
         var value = rs.getLong(column);
         return rs.wasNull() ? null : value;
+    }
+
+    public record RenewalView(
+        ExternalOrderRenewalEvent event,
+        String externalOrderRecordNo,
+        Long merchantId,
+        Long storeId,
+        Boolean includedInMerchantStatement
+    ) {
     }
 
     private static class EventMapper implements RowMapper<ExternalOrderRenewalEvent> {

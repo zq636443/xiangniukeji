@@ -96,6 +96,7 @@ export function InvestorOperationsCockpit({ account }: InvestorOperationsCockpit
     const periodEntries = actualEntries.filter((item) => isInWindow(item.occurredAt, window.start, window.end));
     const previousEntries = actualEntries.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd));
     const periodIncome = sumNumbers(periodEntries.map((item) => item.amount));
+    const periodRenewalIncome = sumNumbers(periodEntries.filter((item) => item.sourceType === 'EXTERNAL_RENEWAL').map((item) => item.amount));
     const previousIncome = sumNumbers(previousEntries.map((item) => item.amount));
     const periodSettledIncome = sumNumbers(periodEntries.filter((item) => item.entryStatus === 'SETTLED').map((item) => item.amount));
     const settledIncome = sumNumbers(actualEntries.filter((item) => item.entryStatus === 'SETTLED').map((item) => item.amount));
@@ -111,6 +112,7 @@ export function InvestorOperationsCockpit({ account }: InvestorOperationsCockpit
       unassignedAssets,
       periodEntries,
       periodIncome,
+      periodRenewalIncome,
       periodSettledIncome,
       incomeChange: percentageChange(periodIncome, previousIncome),
       settledIncome,
@@ -195,7 +197,7 @@ export function InvestorOperationsCockpit({ account }: InvestorOperationsCockpit
       <div className="cockpit-metric-grid">
         <CockpitMetric icon={<BankOutlined />} tone="blue" label="运营资产投入" value={compactMoney(dashboard.purchaseAmount)} detail={`${dashboard.activeAssets.length} 台有效资产`} />
         <CockpitMetric icon={<ShopOutlined />} tone="green" label="当前资产投放率" value={percent(dashboard.deploymentRate)} detail={`${dashboard.rentingAssets.length} / ${dashboard.activeAssets.length} 台在租`} />
-        <CockpitMetric icon={<WalletOutlined />} tone="violet" label="期间确认收益" value={compactMoney(dashboard.periodIncome)} detail={`其中已结算 ${compactMoney(dashboard.periodSettledIncome)}`} change={dashboard.incomeChange} changeLabel="环比" />
+        <CockpitMetric icon={<WalletOutlined />} tone="violet" label="期间确认收益" value={compactMoney(dashboard.periodIncome)} detail={`其中续租 ${compactMoney(dashboard.periodRenewalIncome)}`} change={dashboard.incomeChange} changeLabel="环比" />
         <CockpitMetric icon={<CheckCircleOutlined />} tone="orange" label="累计已结算回报率" value={percent(dashboard.cumulativeReturnRate, 2)} detail={`累计已结算 ${compactMoney(dashboard.settledIncome)}`} />
       </div>
 
