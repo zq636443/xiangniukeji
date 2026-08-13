@@ -1028,7 +1028,7 @@ class RentalBusinessFlowIntegrationTests {
     @Test
     void monthStatementsTrackBatteryPayableWithoutDeductingMerchantPayableTwice() {
         jdbcTemplate.update(
-            "UPDATE product_sku SET battery_cost_daily_amount = 6.60, battery_cost_monthly_amount = 200.00 WHERE id = 1"
+            "UPDATE product_sku SET battery_cost_daily_amount = 6.80, battery_cost_monthly_amount = 200.00 WHERE id = 1"
         );
         jdbcTemplate.update(
             "UPDATE asset_item SET current_merchant_id = ?, current_store_id = ? WHERE id IN (?, ?)",

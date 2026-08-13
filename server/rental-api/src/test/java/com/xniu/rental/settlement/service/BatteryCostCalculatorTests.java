@@ -11,7 +11,7 @@ class BatteryCostCalculatorTests {
     @Test
     void monthlyRentalShouldUseFixedMonthlyCost() {
         var cost = BatteryCostCalculator.calculate(
-            new BigDecimal("6.60"),
+            new BigDecimal("6.80"),
             new BigDecimal("200.00"),
             LeaseUnit.MONTH,
             1,
@@ -24,27 +24,40 @@ class BatteryCostCalculatorTests {
     @Test
     void partialMonthShouldUseDailyCost() {
         var cost = BatteryCostCalculator.calculate(
-            new BigDecimal("6.60"),
+            new BigDecimal("6.80"),
             new BigDecimal("200.00"),
             LeaseUnit.DAY,
             7,
             1
         );
 
-        assertThat(cost).isEqualByComparingTo("46.20");
+        assertThat(cost).isEqualByComparingTo("47.60");
+    }
+
+    @Test
+    void thirtyDailyRentalDaysShouldUseMonthlyCap() {
+        var cost = BatteryCostCalculator.calculate(
+            new BigDecimal("6.80"),
+            new BigDecimal("200.00"),
+            LeaseUnit.DAY,
+            30,
+            1
+        );
+
+        assertThat(cost).isEqualByComparingTo("200.00");
     }
 
     @Test
     void fullMonthsAndRemainingDaysShouldUseBothRates() {
         var cost = BatteryCostCalculator.calculate(
-            new BigDecimal("6.60"),
+            new BigDecimal("6.80"),
             new BigDecimal("200.00"),
             LeaseUnit.DAY,
             31,
             1
         );
 
-        assertThat(cost).isEqualByComparingTo("206.60");
+        assertThat(cost).isEqualByComparingTo("206.80");
     }
 
     @Test
