@@ -397,6 +397,19 @@ class ProductLinkSkuIntegrationTests {
         )))
             .isInstanceOf(BusinessException.class)
             .hasMessageContaining("同一商户");
+
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(1) FROM store_sku WHERE store_id = ? AND sku_id = ?",
+            Integer.class,
+            firstStore.id(),
+            link.id()
+        )).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(1) FROM store_sku WHERE store_id = ? AND sku_id = ?",
+            Integer.class,
+            secondStore.id(),
+            link.id()
+        )).isZero();
     }
 
     private com.xniu.rental.merchant.dto.MerchantResponse createMerchant(String name, String phone) {
