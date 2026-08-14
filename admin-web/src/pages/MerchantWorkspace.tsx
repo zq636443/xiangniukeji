@@ -39,7 +39,7 @@ import {
 } from 'antd';
 import type { FormInstance } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AssetBatchImportModal, downloadAssetImportTemplate } from '../components/AssetBatchImportModal';
 import {
   CockpitAttentionList,
@@ -1496,6 +1496,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
 }
 
 export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPageProps) {
+  const assetLoadVersionRef = useRef(0);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [assetTypes, setAssetTypes] = useState<AssetTypeDefinition[]>([]);
   const [investorOptions, setInvestorOptions] = useState<AssetInvestorOption[]>([]);
@@ -1571,16 +1572,39 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     });
   }, [assetKeyword, assetStatusFilter, assetTypeFilter, assets]);
 
+  async function loadTransferTargets(loadVersion: number, requestedStoreId: number) {
+    let targetData: TransferStore[] = [];
+    if (canOperateAssets) {
+      try {
+        targetData = await http.get<unknown, TransferStore[]>(
+          `/api/merchant/assets/stores/${requestedStoreId}/transfer-targets`
+        );
+      } catch {
+        targetData = [];
+      }
+    }
+    if (loadVersion === assetLoadVersionRef.current) {
+      setTransferTargets(targetData);
+    }
+  }
+
   async function loadAssets() {
+    const loadVersion = ++assetLoadVersionRef.current;
+    setAssets([]);
+    setTransferTargets([]);
+    setMaintenanceStocks([]);
     if (!storeId) {
-      setAssets([]);
-      setMaintenanceStocks([]);
-      setTransferTargets([]);
+      setLoading(false);
       return;
     }
     setLoading(true);
+    void loadTransferTargets(loadVersion, storeId).catch(() => {
+      if (loadVersion === assetLoadVersionRef.current) {
+        setTransferTargets([]);
+      }
+    });
     try {
-      const [assetData, typeData, investorData, stockData, transferTargetData] = await Promise.all([
+      const [assetData, typeData, investorData, stockData] = await Promise.all([
         http.get<unknown, Asset[]>(`/api/merchant/assets/stores/${storeId}`),
         http.get<unknown, AssetTypeDefinition[]>('/api/merchant/assets/types'),
         canManageAssets
@@ -1588,24 +1612,25 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           : Promise.resolve<AssetInvestorOption[]>([]),
         canOperateMaintenance
           ? http.get<unknown, StoreSparePartStock[]>('/api/merchant/spare-parts/store-stocks', { params: { storeId } })
-          : Promise.resolve<StoreSparePartStock[]>([]),
-        canOperateAssets
-          ? http.get<unknown, TransferStore[]>(`/api/merchant/assets/stores/${storeId}/transfer-targets`)
-          : Promise.resolve<TransferStore[]>([])
+          : Promise.resolve<StoreSparePartStock[]>([])
       ]);
+      if (loadVersion !== assetLoadVersionRef.current) return;
       setAssets(assetData);
       setAssetTypes(typeData);
       setInvestorOptions(investorData);
       setMaintenanceStocks(stockData);
-      setTransferTargets(transferTargetData);
+    } catch {
+      // The current request keeps its store-specific state empty when core loading fails.
     } finally {
-      setLoading(false);
+      if (loadVersion === assetLoadVersionRef.current) {
+        setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
-    void loadAssets();
-  }, [storeId]);
+    void loadAssets().catch(() => undefined);
+  }, [storeId, canManageAssets, canOperateMaintenance, canOperateAssets]);
 
   async function openDetail(record: Asset) {
     setDetailOpen(true);
