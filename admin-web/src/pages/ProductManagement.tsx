@@ -6,6 +6,8 @@ import { http } from '../services/request';
 import type { Merchant, ProductCategory, ProductPackage, ProductSku, Store, StoreSku } from '../types/api';
 import {
   buildDefaultPackagePrices,
+  findInactivePackageIds,
+  getStorePackagePriceValidationErrors,
   reconcilePackagePrices,
   type StorePackagePriceForm
 } from '../utils/storeProductPublishing';
@@ -55,6 +57,15 @@ type BatchForm = {
   packageIds: number[];
   packages: StorePackagePriceForm[];
 };
+
+type StorePackageOption = {
+  label: string;
+  value: number;
+  packageName: string;
+  status: ProductPackage['status'];
+};
+
+type StorePackagePriceValidationField = keyof ReturnType<typeof getStorePackagePriceValidationErrors>;
 
 type ProductManagementProps = {
   mode?: 'all' | 'skus' | 'packages' | 'storeSkus';
@@ -117,15 +128,45 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
     [selectedBatchMerchantId, stores]
   );
   const storeSkuPackageOptions = useMemo(
-    () => packages
-      .filter((item) => item.status === 'ENABLED' && (!selectedStoreSkuSkuId || item.skuId === selectedStoreSkuSkuId))
-      .map((item) => ({ label: `${item.packageName} / ¥${item.priceAmount} / ${item.leaseValue}${item.leaseUnit === 'DAY' ? '天' : '个月'}`, value: item.id })),
-    [packages, selectedStoreSkuSkuId]
+    () => {
+      if (!selectedStoreSkuSkuId) {
+        return [];
+      }
+
+      const configuredPackagesById = new Map(
+        (editingStoreSku?.packages ?? []).map((item) => [item.packageId, item])
+      );
+      const options = packages
+        .filter((item) => item.skuId === selectedStoreSkuSkuId
+          && (item.status === 'ENABLED' || configuredPackagesById.has(item.id)))
+        .map((item) => {
+          const configuredPackage = configuredPackagesById.get(item.id);
+          const status = item.status === 'ENABLED' && configuredPackage?.status !== 'DISABLED'
+            ? 'ENABLED'
+            : 'DISABLED';
+          return buildStorePackageOption(item, status);
+        });
+      const includedPackageIds = new Set(options.map((item) => item.value));
+      const missingConfiguredOptions = (editingStoreSku?.packages ?? [])
+        .filter((item) => !includedPackageIds.has(item.packageId))
+        .map((item) => buildStorePackageOption({
+          id: item.packageId,
+          packageName: item.packageName,
+          priceAmount: item.rentalAmount,
+          leaseValue: item.leaseValue,
+          leaseUnit: item.leaseUnit
+        }, 'DISABLED'));
+
+      return [...options, ...missingConfiguredOptions];
+    },
+    [editingStoreSku, packages, selectedStoreSkuSkuId]
   );
   const batchPackageOptions = useMemo(
-    () => packages
-      .filter((item) => item.status === 'ENABLED' && (!selectedBatchSkuId || item.skuId === selectedBatchSkuId))
-      .map((item) => ({ label: `${item.packageName} / ¥${item.priceAmount} / ${item.leaseValue}${item.leaseUnit === 'DAY' ? '天' : '个月'}`, value: item.id })),
+    () => selectedBatchSkuId
+      ? packages
+        .filter((item) => item.status === 'ENABLED' && item.skuId === selectedBatchSkuId)
+        .map((item) => buildStorePackageOption(item, 'ENABLED'))
+      : [],
     [packages, selectedBatchSkuId]
   );
 
@@ -739,14 +780,44 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
 }
 
 type StoreSkuFieldsProps = {
-  packageOptions: { label: string; value: number }[];
+  packageOptions: StorePackageOption[];
   packageTemplates: ProductPackage[];
   form: FormInstance;
 };
 
+function buildStorePackageOption(
+  item: Pick<ProductPackage, 'id' | 'packageName' | 'priceAmount' | 'leaseValue' | 'leaseUnit'>,
+  status: ProductPackage['status']
+): StorePackageOption {
+  const inactiveLabel = status === 'ENABLED' ? '' : '（已停用，请移除）';
+  return {
+    label: `${item.packageName} / ¥${item.priceAmount} / ${item.leaseValue}${item.leaseUnit === 'DAY' ? '天' : '个月'}${inactiveLabel}`,
+    value: item.id,
+    packageName: item.packageName,
+    status
+  };
+}
+
 function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFieldsProps) {
   const selectedSkuId = Form.useWatch('skuId', form) as number | undefined;
   const selectedPackageIds = (Form.useWatch('packageIds', form) ?? []) as number[];
+  const visiblePackageOptions = packageOptions.filter(
+    (item) => item.status === 'ENABLED' || selectedPackageIds.includes(item.value)
+  );
+
+  function packagePriceValidationRule(fieldIndex: number, fieldName: StorePackagePriceValidationField) {
+    return {
+      validator(_: unknown, value: number | null | undefined) {
+        const current = form.getFieldValue(['packages', fieldIndex]) as Partial<StorePackagePriceForm> | undefined;
+        const errors = getStorePackagePriceValidationErrors({
+          ...current,
+          [fieldName]: value ?? undefined
+        });
+        const error = errors[fieldName];
+        return error ? Promise.reject(new Error(error)) : Promise.resolve();
+      }
+    };
+  }
 
   return (
     <>
@@ -756,13 +827,26 @@ function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFiel
       <Form.Item
         name="packageIds"
         label="上架 SKU"
-        rules={[{ required: true, type: 'array', min: 1, message: '请至少选择一个上架 SKU' }]}
+        rules={[
+          { required: true, type: 'array', min: 1, message: '请至少选择一个上架 SKU' },
+          {
+            validator(_, value: number[] | undefined) {
+              const inactivePackageIds = findInactivePackageIds(value ?? [], packageOptions.map((item) => ({
+                id: item.value,
+                status: item.status
+              })));
+              return inactivePackageIds.length > 0
+                ? Promise.reject(new Error('存在已停用 SKU，请先移除后再提交'))
+                : Promise.resolve();
+            }
+          }
+        ]}
       >
         <Select
           mode="multiple"
-          options={packageOptions}
+          options={visiblePackageOptions}
           placeholder={selectedSkuId
-            ? packageOptions.length > 0 ? '选择需要上架的 SKU' : '当前链接暂无启用 SKU'
+            ? visiblePackageOptions.length > 0 ? '选择需要上架的 SKU' : '当前链接暂无启用 SKU'
             : '请先选择商品链接'}
           onChange={(packageIds: number[]) => {
             const current = form.getFieldValue('packages') as StorePackagePriceForm[] | undefined;
@@ -776,7 +860,8 @@ function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFiel
             <Typography.Title level={5} style={{ margin: 0 }}>SKU 价格配置</Typography.Title>
             {fields.map((field, index) => {
               const packageId = form.getFieldValue(['packages', field.name, 'packageId']) as number | undefined;
-              const packageName = packageTemplates.find((item) => item.id === packageId)?.packageName;
+              const packageName = packageOptions.find((item) => item.value === packageId)?.packageName
+                ?? packageTemplates.find((item) => item.id === packageId)?.packageName;
               return (
                 <div key={field.key} className="section" style={{ marginBottom: 0 }}>
                   <Space align="center" style={{ justifyContent: 'space-between', width: '100%', marginBottom: 12 }}>
@@ -816,8 +901,9 @@ function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFiel
                         min={0}
                         style={{ width: '100%' }}
                         onChange={(value) => {
-                          if (!form.getFieldValue(['packages', field.name, 'renewalAmount'])) {
-                            form.setFieldValue(['packages', field.name, 'renewalAmount'], Number(value || 0));
+                          const renewalAmount = form.getFieldValue(['packages', field.name, 'renewalAmount']);
+                          if (renewalAmount == null) {
+                            form.setFieldValue(['packages', field.name, 'renewalAmount'], Number(value ?? 0));
                           }
                         }}
                       />
@@ -846,6 +932,8 @@ function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFiel
                       style={{ width: '30%' }}
                       name={[field.name, 'renewalValue']}
                       label="续租周期"
+                      dependencies={[['packages', field.name, 'autoRenewEnabled']]}
+                      rules={[packagePriceValidationRule(field.name, 'renewalValue')]}
                     >
                       <InputNumber min={1} style={{ width: '100%' }} />
                     </Form.Item>
@@ -853,8 +941,10 @@ function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFiel
                       style={{ width: '40%' }}
                       name={[field.name, 'renewalAmount']}
                       label="续租金额"
+                      dependencies={[['packages', field.name, 'autoRenewEnabled']]}
+                      rules={[packagePriceValidationRule(field.name, 'renewalAmount')]}
                     >
-                      <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+                      <InputNumber min={0.01} precision={2} style={{ width: '100%' }} />
                     </Form.Item>
                   </Space.Compact>
                   <Space.Compact block>
@@ -872,15 +962,21 @@ function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFiel
                       style={{ width: '33%' }}
                       name={[field.name, 'renewalDailyAmount']}
                       label="日续租价"
+                      dependencies={[
+                        ['packages', field.name, 'autoRenewEnabled'],
+                        ['packages', field.name, 'renewalBillingMode']
+                      ]}
+                      rules={[packagePriceValidationRule(field.name, 'renewalDailyAmount')]}
                     >
-                      <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+                      <InputNumber min={0.01} precision={2} style={{ width: '100%' }} />
                     </Form.Item>
                     <Form.Item
                       style={{ width: '33%' }}
                       name={[field.name, 'overdueDailyAmount']}
                       label="逾期日占用费"
+                      rules={[packagePriceValidationRule(field.name, 'overdueDailyAmount')]}
                     >
-                      <InputNumber min={0} precision={2} placeholder="不填则同日续租价" style={{ width: '100%' }} />
+                      <InputNumber min={0.01} precision={2} placeholder="不填则同日续租价" style={{ width: '100%' }} />
                     </Form.Item>
                   </Space.Compact>
                   <Space.Compact block>

@@ -21,10 +21,18 @@ type PackageTemplate = Pick<
   'id' | 'skuId' | 'priceAmount' | 'leaseUnit' | 'leaseValue' | 'totalPeriods' | 'status'
 >;
 
+type PackageStatusTemplate = Pick<ProductPackage, 'id' | 'status'>;
+
+export type StorePackagePriceValidationErrors = Partial<Record<
+  'renewalValue' | 'renewalAmount' | 'renewalDailyAmount' | 'overdueDailyAmount',
+  string
+>>;
+
 function buildDefaultPackagePrice(template: PackageTemplate): StorePackagePriceForm {
   const rentalAmount = Number(template.priceAmount || 0);
   const totalPeriods = Math.max(Number(template.totalPeriods || 0), 1);
-  const periodAmount = Number((rentalAmount / totalPeriods).toFixed(2));
+  const rentalAmountInCents = Math.round(rentalAmount * 100);
+  const periodAmount = Math.round(rentalAmountInCents / totalPeriods) / 100;
 
   return {
     packageId: template.id,
@@ -67,4 +75,37 @@ export function reconcilePackagePrices(
     const template = templatesByPackageId.get(packageId);
     return template ? [buildDefaultPackagePrice(template)] : [];
   });
+}
+
+export function findInactivePackageIds(
+  selectedPackageIds: readonly number[],
+  templates: readonly PackageStatusTemplate[]
+): number[] {
+  const statusByPackageId = new Map(templates.map((template) => [template.id, template.status]));
+  return selectedPackageIds.filter((packageId) => statusByPackageId.get(packageId) !== 'ENABLED');
+}
+
+export function getStorePackagePriceValidationErrors(
+  packagePrice: Partial<StorePackagePriceForm>
+): StorePackagePriceValidationErrors {
+  const errors: StorePackagePriceValidationErrors = {};
+  const isPositive = (value: number | undefined) => value != null && Number.isFinite(value) && value > 0;
+
+  if (packagePrice.autoRenewEnabled) {
+    if (!isPositive(packagePrice.renewalValue)) {
+      errors.renewalValue = '请输入大于 0 的续租周期';
+    }
+    if (!isPositive(packagePrice.renewalAmount)) {
+      errors.renewalAmount = '请输入大于 0 的续租金额';
+    }
+    if (packagePrice.renewalBillingMode === 'DAILY_CAPPED' && !isPositive(packagePrice.renewalDailyAmount)) {
+      errors.renewalDailyAmount = '按日计费时请输入大于 0 的日续租价';
+    }
+  }
+
+  if (packagePrice.overdueDailyAmount != null && !isPositive(packagePrice.overdueDailyAmount)) {
+    errors.overdueDailyAmount = '逾期日占用费必须大于 0';
+  }
+
+  return errors;
 }

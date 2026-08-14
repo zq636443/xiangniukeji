@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import {
   buildDefaultPackagePrices,
+  findInactivePackageIds,
+  getStorePackagePriceValidationErrors,
   reconcilePackagePrices,
   type StorePackagePriceForm
 } from '../src/utils/storeProductPublishing.ts';
@@ -63,6 +65,16 @@ test('buildDefaultPackagePrices derives the complete publishing defaults from th
   assert.equal(rounded.renewalAmount, 33.33);
 });
 
+test('buildDefaultPackagePrices rounds positive amounts HALF_UP from integer cents', () => {
+  const result = buildDefaultPackagePrices(100, [
+    packageTemplate({ id: 31, priceAmount: 2.01, totalPeriods: 2 }),
+    packageTemplate({ id: 32, priceAmount: 10.05, totalPeriods: 2 })
+  ]);
+
+  assert.deepEqual(result.map((item) => item.periodAmount), [1.01, 5.03]);
+  assert.deepEqual(result.map((item) => item.renewalAmount), [1.01, 5.03]);
+});
+
 test('reconcilePackagePrices removes deselected SKUs, preserves selected custom values, and defaults new SKUs', () => {
   const deselected: StorePackagePriceForm = {
     packageId: 11,
@@ -85,7 +97,7 @@ test('reconcilePackagePrices removes deselected SKUs, preserves selected custom 
     autoRenewEnabled: false,
     renewalUnit: 'DAY',
     renewalValue: 9,
-    renewalAmount: 66.66,
+    renewalAmount: 0,
     renewalBillingMode: 'DAILY_CAPPED',
     renewalDailyAmount: 8.88,
     renewalDailyCapEnabled: false,
@@ -94,7 +106,7 @@ test('reconcilePackagePrices removes deselected SKUs, preserves selected custom 
   };
   const templates = [
     packageTemplate({ id: 11, priceAmount: 200 }),
-    packageTemplate({ id: 12, priceAmount: 240 }),
+    packageTemplate({ id: 12, priceAmount: 240, status: 'DISABLED' }),
     packageTemplate({ id: 13, priceAmount: 99, leaseUnit: 'DAY', leaseValue: 2, totalPeriods: 3 })
   ];
 
@@ -102,6 +114,7 @@ test('reconcilePackagePrices removes deselected SKUs, preserves selected custom 
 
   assert.equal(result.length, 2);
   assert.strictEqual(result[0], retained);
+  assert.equal(result[0].renewalAmount, 0);
   assert.deepEqual(result[1], {
     packageId: 13,
     rentalAmount: 99,
@@ -115,4 +128,58 @@ test('reconcilePackagePrices removes deselected SKUs, preserves selected custom 
     renewalDailyCapEnabled: true,
     renewalGraceHours: 0
   });
+});
+
+test('findInactivePackageIds reports disabled and missing selected templates without removing them', () => {
+  const selectedPackageIds = [11, 12, 13];
+
+  const inactivePackageIds = findInactivePackageIds(selectedPackageIds, [
+    { id: 11, status: 'ENABLED' },
+    { id: 12, status: 'DISABLED' }
+  ]);
+
+  assert.deepEqual(inactivePackageIds, [12, 13]);
+});
+
+test('getStorePackagePriceValidationErrors does not require renewal fields when auto-renew is off', () => {
+  assert.deepEqual(getStorePackagePriceValidationErrors({
+    autoRenewEnabled: false,
+    renewalValue: 0,
+    renewalAmount: 0,
+    renewalBillingMode: 'DAILY_CAPPED',
+    renewalDailyAmount: 0
+  }), {});
+});
+
+test('getStorePackagePriceValidationErrors requires positive renewal amounts for enabled modes', () => {
+  assert.deepEqual(getStorePackagePriceValidationErrors({
+    autoRenewEnabled: true,
+    renewalValue: 0,
+    renewalAmount: undefined,
+    renewalBillingMode: 'PERIOD'
+  }), {
+    renewalValue: '请输入大于 0 的续租周期',
+    renewalAmount: '请输入大于 0 的续租金额'
+  });
+
+  assert.deepEqual(getStorePackagePriceValidationErrors({
+    autoRenewEnabled: true,
+    renewalValue: 1,
+    renewalAmount: 1,
+    renewalBillingMode: 'DAILY_CAPPED',
+    renewalDailyAmount: 0,
+    overdueDailyAmount: 0
+  }), {
+    renewalDailyAmount: '按日计费时请输入大于 0 的日续租价',
+    overdueDailyAmount: '逾期日占用费必须大于 0'
+  });
+
+  assert.deepEqual(getStorePackagePriceValidationErrors({
+    autoRenewEnabled: true,
+    renewalValue: 1,
+    renewalAmount: 1,
+    renewalBillingMode: 'DAILY_CAPPED',
+    renewalDailyAmount: 0.01,
+    overdueDailyAmount: 0.01
+  }), {});
 });
