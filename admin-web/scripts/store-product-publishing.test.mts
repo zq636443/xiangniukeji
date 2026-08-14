@@ -75,6 +75,17 @@ test('buildDefaultPackagePrices rounds positive amounts HALF_UP from integer cen
   assert.deepEqual(result.map((item) => item.renewalAmount), [1.01, 5.03]);
 });
 
+test('buildDefaultPackagePrices disables auto-renew when the default period amount is zero', () => {
+  const result = buildDefaultPackagePrices(100, [
+    packageTemplate({ id: 41, priceAmount: 0, totalPeriods: 2 }),
+    packageTemplate({ id: 42, priceAmount: 0.01, totalPeriods: 3 })
+  ]);
+
+  assert.deepEqual(result.map((item) => item.periodAmount), [0, 0]);
+  assert.deepEqual(result.map((item) => item.autoRenewEnabled), [false, false]);
+  assert.deepEqual(result.map((item) => item.renewalAmount), [0, 0]);
+});
+
 test('reconcilePackagePrices removes deselected SKUs, preserves selected custom values, and defaults new SKUs', () => {
   const deselected: StorePackagePriceForm = {
     packageId: 11,
@@ -147,7 +158,8 @@ test('getStorePackagePriceValidationErrors does not require renewal fields when 
     renewalValue: 0,
     renewalAmount: 0,
     renewalBillingMode: 'DAILY_CAPPED',
-    renewalDailyAmount: 0
+    renewalDailyAmount: 0,
+    overdueDailyAmount: 0
   }), {});
 });
 
@@ -181,5 +193,41 @@ test('getStorePackagePriceValidationErrors requires positive renewal amounts for
     renewalBillingMode: 'DAILY_CAPPED',
     renewalDailyAmount: 0.01,
     overdueDailyAmount: 0.01
+  }), {});
+});
+
+test('getStorePackagePriceValidationErrors rejects capped daily totals below the period amount', () => {
+  const expectedError = {
+    renewalDailyAmount: '启用整期封顶时，日租累计整期金额不能低于整期续租价'
+  };
+
+  assert.deepEqual(getStorePackagePriceValidationErrors({
+    autoRenewEnabled: true,
+    renewalUnit: 'MONTH',
+    renewalValue: 1,
+    renewalAmount: 100,
+    renewalBillingMode: 'DAILY_CAPPED',
+    renewalDailyAmount: 3,
+    renewalDailyCapEnabled: true
+  }), expectedError);
+
+  assert.deepEqual(getStorePackagePriceValidationErrors({
+    autoRenewEnabled: true,
+    renewalUnit: 'DAY',
+    renewalValue: 5,
+    renewalAmount: 11,
+    renewalBillingMode: 'DAILY_CAPPED',
+    renewalDailyAmount: 2,
+    renewalDailyCapEnabled: true
+  }), expectedError);
+
+  assert.deepEqual(getStorePackagePriceValidationErrors({
+    autoRenewEnabled: true,
+    renewalUnit: 'MONTH',
+    renewalValue: 1,
+    renewalAmount: 100,
+    renewalBillingMode: 'DAILY_CAPPED',
+    renewalDailyAmount: 3,
+    renewalDailyCapEnabled: false
   }), {});
 });

@@ -39,7 +39,7 @@ function buildDefaultPackagePrice(template: PackageTemplate): StorePackagePriceF
     rentalAmount,
     periodAmount,
     depositAmount: 0,
-    autoRenewEnabled: true,
+    autoRenewEnabled: periodAmount > 0,
     renewalUnit: template.leaseUnit,
     renewalValue: Math.max(1, Math.floor(Number(template.leaseValue || 0) / totalPeriods)),
     renewalAmount: periodAmount,
@@ -101,10 +101,26 @@ export function getStorePackagePriceValidationErrors(
     if (packagePrice.renewalBillingMode === 'DAILY_CAPPED' && !isPositive(packagePrice.renewalDailyAmount)) {
       errors.renewalDailyAmount = '按日计费时请输入大于 0 的日续租价';
     }
-  }
+    if (packagePrice.overdueDailyAmount != null && !isPositive(packagePrice.overdueDailyAmount)) {
+      errors.overdueDailyAmount = '逾期日占用费必须大于 0';
+    }
 
-  if (packagePrice.overdueDailyAmount != null && !isPositive(packagePrice.overdueDailyAmount)) {
-    errors.overdueDailyAmount = '逾期日占用费必须大于 0';
+    const hasCappedDailyPricing = packagePrice.renewalBillingMode === 'DAILY_CAPPED'
+      && packagePrice.renewalDailyCapEnabled !== false
+      && (packagePrice.renewalUnit === 'DAY' || packagePrice.renewalUnit === 'MONTH')
+      && isPositive(packagePrice.renewalValue)
+      && isPositive(packagePrice.renewalAmount)
+      && isPositive(packagePrice.renewalDailyAmount);
+    if (hasCappedDailyPricing) {
+      const periodDays = packagePrice.renewalUnit === 'MONTH'
+        ? packagePrice.renewalValue! * 30
+        : packagePrice.renewalValue!;
+      const dailyAmountInCents = Math.round(packagePrice.renewalDailyAmount! * 100);
+      const renewalAmountInCents = Math.round(packagePrice.renewalAmount! * 100);
+      if (dailyAmountInCents * periodDays < renewalAmountInCents) {
+        errors.renewalDailyAmount = '启用整期封顶时，日租累计整期金额不能低于整期续租价';
+      }
+    }
   }
 
   return errors;

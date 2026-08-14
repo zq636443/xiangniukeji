@@ -964,7 +964,11 @@ function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFiel
                       label="日续租价"
                       dependencies={[
                         ['packages', field.name, 'autoRenewEnabled'],
-                        ['packages', field.name, 'renewalBillingMode']
+                        ['packages', field.name, 'renewalUnit'],
+                        ['packages', field.name, 'renewalValue'],
+                        ['packages', field.name, 'renewalAmount'],
+                        ['packages', field.name, 'renewalBillingMode'],
+                        ['packages', field.name, 'renewalDailyCapEnabled']
                       ]}
                       rules={[packagePriceValidationRule(field.name, 'renewalDailyAmount')]}
                     >
@@ -974,6 +978,7 @@ function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFiel
                       style={{ width: '33%' }}
                       name={[field.name, 'overdueDailyAmount']}
                       label="逾期日占用费"
+                      dependencies={[['packages', field.name, 'autoRenewEnabled']]}
                       rules={[packagePriceValidationRule(field.name, 'overdueDailyAmount')]}
                     >
                       <InputNumber min={0.01} precision={2} placeholder="不填则同日续租价" style={{ width: '100%' }} />
