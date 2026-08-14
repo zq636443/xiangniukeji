@@ -45,6 +45,7 @@ class AssetTransferIntegrationTests {
     private JdbcTemplate jdbcTemplate;
 
     private Long siblingStoreId;
+    private Long disabledStoreId;
     private Long otherMerchantId;
     private Long otherMerchantStoreId;
 
@@ -60,6 +61,16 @@ class AssetTransferIntegrationTests {
             "SELECT id FROM merchant_store WHERE store_code = ?",
             Long.class,
             "S-transfer-" + suffix
+        );
+        jdbcTemplate.update("""
+            INSERT INTO merchant_store
+            (merchant_id, store_code, store_name, address, business_hours, qr_content, status)
+            VALUES (1, ?, ?, '深圳市南山区调拨路 3 号', '09:00-22:00', ?, 'DISABLED')
+            """, "S-transfer-disabled-" + suffix, "同商户停用门店-" + suffix, "xniu://store/transfer-disabled-" + suffix);
+        disabledStoreId = jdbcTemplate.queryForObject(
+            "SELECT id FROM merchant_store WHERE store_code = ?",
+            Long.class,
+            "S-transfer-disabled-" + suffix
         );
 
         jdbcTemplate.update("""
@@ -114,6 +125,32 @@ class AssetTransferIntegrationTests {
         var visibleStores = merchantService.listStores(null, null);
         assertThat(visibleStores).extracting("merchantId").containsOnly(1L);
         assertThat(visibleStores).extracting("id").contains(1L, siblingStoreId).doesNotContain(otherMerchantStoreId);
+    }
+
+    @Test
+    void storeManagerShouldListOnlyEnabledSiblingStoresAsTransferTargets() {
+        var transferTargets = assetService.listMerchantTransferTargets(1L);
+
+        assertThat(transferTargets).extracting("id").containsOnly(siblingStoreId);
+        assertThat(transferTargets).extracting("merchantId").containsOnly(1L);
+        assertThat(transferTargets).allSatisfy(target -> {
+            assertThat(target.storeCode()).isNotNull();
+            assertThat(target.storeName()).isNotNull();
+        });
+        assertThat(transferTargets).extracting("id")
+            .doesNotContain(1L, disabledStoreId, otherMerchantStoreId);
+
+        var visibleStores = merchantService.listMyStores();
+        assertThat(visibleStores).extracting("id").containsOnly(1L);
+    }
+
+    @Test
+    void storeManagerShouldNotListTransferTargetsFromUnauthorizedSourceStore() {
+        setStoreManager(siblingStoreId);
+
+        assertThatThrownBy(() -> assetService.listMerchantTransferTargets(1L))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("没有该门店权限");
     }
 
     @Test

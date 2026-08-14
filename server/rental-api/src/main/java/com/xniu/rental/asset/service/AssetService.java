@@ -13,6 +13,7 @@ import com.xniu.rental.asset.dto.AssetResponse;
 import com.xniu.rental.asset.dto.AssetStatusRequest;
 import com.xniu.rental.asset.dto.AssetStoreOptionResponse;
 import com.xniu.rental.asset.dto.AssetTransferRequest;
+import com.xniu.rental.asset.dto.AssetTransferStoreResponse;
 import com.xniu.rental.asset.dto.AssetUpdateRequest;
 import com.xniu.rental.asset.dto.InvestorAssetRequest;
 import com.xniu.rental.asset.dto.InvestorAssetUpdateRequest;
@@ -228,6 +229,20 @@ public class AssetService {
         }
         ensureStoreBelongsToMerchant(sourceStore.merchantId(), request.storeId());
         return transferAssetInternal(asset, sourceStore.merchantId(), request.storeId(), request.remark());
+    }
+
+    public List<AssetTransferStoreResponse> listMerchantTransferTargets(Long sourceStoreId) {
+        authorizationService.requirePermission("asset.operate");
+        var sourceStore = requireActiveAccessibleStore(sourceStoreId);
+        return storeRepository.findByMerchantId(sourceStore.merchantId()).stream()
+            .filter(store -> store.status() == StoreStatus.ENABLED && !store.id().equals(sourceStore.id()))
+            .map(store -> new AssetTransferStoreResponse(
+                store.id(),
+                store.merchantId(),
+                store.storeCode(),
+                store.storeName()
+            ))
+            .toList();
     }
 
     @Transactional

@@ -162,6 +162,13 @@ type AssetTransferForm = {
   remark?: string;
 };
 
+type TransferStore = {
+  id: number;
+  merchantId: number;
+  storeCode: string;
+  storeName: string;
+};
+
 type MerchantMaintenanceForm = {
   assetId?: number;
   orderId?: number;
@@ -1492,6 +1499,7 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
   const [assets, setAssets] = useState<Asset[]>([]);
   const [assetTypes, setAssetTypes] = useState<AssetTypeDefinition[]>([]);
   const [investorOptions, setInvestorOptions] = useState<AssetInvestorOption[]>([]);
+  const [transferTargets, setTransferTargets] = useState<TransferStore[]>([]);
   const [assetKeyword, setAssetKeyword] = useState('');
   const [assetTypeFilter, setAssetTypeFilter] = useState<number>();
   const [assetStatusFilter, setAssetStatusFilter] = useState<AssetStatus>();
@@ -1535,13 +1543,11 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     value: investor.id
   })), [investorOptions]);
   const transferStoreOptions = useMemo(
-    () => stores
-      .filter((item) => item.merchantId === currentStore?.merchantId && item.status === 'ENABLED' && item.id !== storeId)
-      .map((item) => ({
-        label: `${item.storeName} / ${item.storeCode}`,
-        value: item.id
-      })),
-    [currentStore?.merchantId, storeId, stores]
+    () => transferTargets.map((item) => ({
+      label: `${item.storeName} / ${item.storeCode}`,
+      value: item.id
+    })),
+    [transferTargets]
   );
   const maintenancePartOptions = useMemo(() => maintenanceStocks.map((stock) => ({
     label: `${stock.partName} / 库存 ${stock.stockQuantity}`,
@@ -1569,11 +1575,12 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
     if (!storeId) {
       setAssets([]);
       setMaintenanceStocks([]);
+      setTransferTargets([]);
       return;
     }
     setLoading(true);
     try {
-      const [assetData, typeData, investorData, stockData] = await Promise.all([
+      const [assetData, typeData, investorData, stockData, transferTargetData] = await Promise.all([
         http.get<unknown, Asset[]>(`/api/merchant/assets/stores/${storeId}`),
         http.get<unknown, AssetTypeDefinition[]>('/api/merchant/assets/types'),
         canManageAssets
@@ -1581,12 +1588,16 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
           : Promise.resolve<AssetInvestorOption[]>([]),
         canOperateMaintenance
           ? http.get<unknown, StoreSparePartStock[]>('/api/merchant/spare-parts/store-stocks', { params: { storeId } })
-          : Promise.resolve<StoreSparePartStock[]>([])
+          : Promise.resolve<StoreSparePartStock[]>([]),
+        canOperateAssets
+          ? http.get<unknown, TransferStore[]>(`/api/merchant/assets/stores/${storeId}/transfer-targets`)
+          : Promise.resolve<TransferStore[]>([])
       ]);
       setAssets(assetData);
       setAssetTypes(typeData);
       setInvestorOptions(investorData);
       setMaintenanceStocks(stockData);
+      setTransferTargets(transferTargetData);
     } finally {
       setLoading(false);
     }
@@ -1847,8 +1858,8 @@ export function MerchantAssetWorkspace({ account, storeId, stores }: MerchantPag
                     <Button
                       size="small"
                       icon={<SwapOutlined />}
-                      disabled={record.status === 'RENTING' || transferStoreOptions.length === 0}
-                      title={record.status === 'RENTING' ? '租赁中的资产暂不能调拨' : transferStoreOptions.length === 0 ? '当前商户暂无可调拨门店' : undefined}
+                      disabled={record.status !== 'IDLE' || transferStoreOptions.length === 0}
+                      title={record.status !== 'IDLE' ? '只有空闲资产可以调拨' : transferStoreOptions.length === 0 ? '当前商户暂无可调拨门店' : undefined}
                       onClick={() => openTransfer(record)}
                     >
                       调拨
