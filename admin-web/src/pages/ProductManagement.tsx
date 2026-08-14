@@ -835,14 +835,14 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
               disabled={Boolean(editingStoreSku)}
               onChange={(merchantId) => {
                 const storeId = storeSkuForm.getFieldValue('storeId') as number | undefined;
-                if (!stores.some((store) => store.id === storeId && store.merchantId === merchantId)) {
+                if (storeId != null && !stores.some((store) => store.id === storeId && store.merchantId === merchantId)) {
                   storeSkuForm.setFieldValue('storeId', undefined);
                 }
               }}
             />
           </Form.Item>
           <Form.Item name="storeId" label="门店" rules={[{ required: true, message: '请选择门店' }]}>
-            <Select options={filteredStoreOptions} disabled={Boolean(editingStoreSku)} />
+            <Select options={filteredStoreOptions} optionLabelProp="label" disabled={Boolean(editingStoreSku)} />
           </Form.Item>
           <Form.Item name="skuId" label="商品链接" rules={[{ required: true, message: '请选择商品链接' }]}>
             <Select
@@ -880,11 +880,16 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
           <Form.Item name="merchantId" label="商户" rules={[{ required: true, message: '请选择商户' }]}>
             <Select
               options={merchantOptions}
-              onChange={() => batchForm.setFieldValue('storeIds', undefined)}
+              onChange={() => {
+                const storeIds = batchForm.getFieldValue('storeIds') as number[] | undefined;
+                if (storeIds?.length) {
+                  batchForm.setFieldValue('storeIds', undefined);
+                }
+              }}
             />
           </Form.Item>
           <Form.Item name="storeIds" label="门店" rules={[{ required: true, message: '请选择门店' }]}>
-            <Select mode="multiple" options={batchStoreOptions} placeholder={selectedBatchMerchantId ? '选择同一商户下需要上架的门店' : '请先选择商户'} />
+            <Select mode="multiple" options={batchStoreOptions} optionLabelProp="label" placeholder={selectedBatchMerchantId ? '选择同一商户下需要上架的门店' : '请先选择商户'} />
           </Form.Item>
           <Form.Item name="skuId" label="商品链接" rules={[{ required: true, message: '请选择商品链接' }]}>
             <Select options={skuOptions} onChange={(skuId) => {
