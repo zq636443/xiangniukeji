@@ -633,8 +633,8 @@ public class AssetService {
     }
 
     private AssetResponse transferAssetInternal(AssetItem asset, Long targetMerchantId, Long targetStoreId, String remark) {
-        if (asset.status() == AssetStatus.RENTING) {
-            throw BusinessException.badRequest("租赁中的资产不能调拨门店");
+        if (asset.status() != AssetStatus.IDLE) {
+            throw BusinessException.badRequest("只有空闲资产可以调拨门店");
         }
         if (targetMerchantId.equals(asset.currentMerchantId()) && targetStoreId.equals(asset.currentStoreId())) {
             throw BusinessException.badRequest("资产已在目标门店，无需重复调拨");

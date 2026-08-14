@@ -60,6 +60,7 @@ class AuthWorkspaceLoginIntegrationTests {
         assertThat(login.token()).isNotBlank();
         assertThat(login.account().accountType()).isEqualTo("MERCHANT_OWNER");
         assertThat(login.account().merchantId()).isEqualTo(1L);
+        assertThat(login.account().permissions()).contains("asset.operate");
     }
 
     @Test

@@ -15,6 +15,8 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -129,17 +131,25 @@ class AssetTransferIntegrationTests {
             .hasMessageContaining("没有该门店权限");
     }
 
-    @Test
-    void storeManagerShouldNotTransferRentingAsset() {
-        var assetId = createAsset("RENTING");
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "RENTING",
+        "PENDING_REPAIR",
+        "REPAIRING",
+        "SCRAPPED",
+        "SOLD",
+        "EXCEPTION"
+    })
+    void storeManagerShouldNotTransferNonIdleAsset(String status) {
+        var assetId = createAsset(status);
 
         assertThatThrownBy(() -> assetService.transferMerchantAsset(1L, assetId, new AssetTransferRequest(
             1L,
             siblingStoreId,
-            "错误调拨在租资产"
+            "错误调拨非空闲资产"
         )))
             .isInstanceOf(BusinessException.class)
-            .hasMessageContaining("租赁中的资产不能调拨");
+            .hasMessageContaining("只有空闲资产可以调拨");
     }
 
     @Test
