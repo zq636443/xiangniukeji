@@ -4,6 +4,11 @@ import type { FormInstance } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
 import type { Merchant, ProductCategory, ProductPackage, ProductSku, Store, StoreSku } from '../types/api';
+import {
+  buildDefaultPackagePrices,
+  reconcilePackagePrices,
+  type StorePackagePriceForm
+} from '../utils/storeProductPublishing';
 
 type CategoryForm = { categoryName: string; sortOrder?: number };
 type SkuForm = {
@@ -28,21 +33,6 @@ type PackageForm = {
   billDayMode: 'PAYMENT_DAY' | 'FIXED_DAY';
   billDay?: number;
 };
-type PackagePriceForm = {
-  packageId: number;
-  rentalAmount: number;
-  periodAmount: number;
-  depositAmount: number;
-  autoRenewEnabled?: boolean;
-  renewalUnit?: 'DAY' | 'MONTH';
-  renewalValue?: number;
-  renewalAmount?: number;
-  renewalBillingMode?: 'PERIOD' | 'DAILY_CAPPED';
-  renewalDailyAmount?: number;
-  renewalDailyCapEnabled?: boolean;
-  renewalGraceHours?: number;
-  overdueDailyAmount?: number;
-};
 type StoreSkuForm = {
   merchantId: number;
   storeId: number;
@@ -51,7 +41,8 @@ type StoreSkuForm = {
   saleMode: 'RENTAL' | 'SALE';
   signFeeAmount: number;
   signFeePayer: 'USER' | 'MERCHANT';
-  packages: PackagePriceForm[];
+  packageIds: number[];
+  packages: StorePackagePriceForm[];
 };
 type BatchForm = {
   merchantId: number;
@@ -61,7 +52,8 @@ type BatchForm = {
   saleMode: 'RENTAL' | 'SALE';
   signFeeAmount: number;
   signFeePayer: 'USER' | 'MERCHANT';
-  packages: PackagePriceForm[];
+  packageIds: number[];
+  packages: StorePackagePriceForm[];
 };
 
 type ProductManagementProps = {
@@ -320,13 +312,18 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       saleMode: 'RENTAL',
       signFeePayer: 'USER',
       signFeeAmount: 0,
-      packages: [defaultPackagePrice()]
+      packageIds: [],
+      packages: []
     });
     setStoreSkuOpen(true);
   }
 
   function openEditStoreSku(record: StoreSku) {
     setEditingStoreSku(record);
+    const packageIds = record.packages.map((item) => item.packageId);
+    const defaultPricesByPackageId = new Map(
+      reconcilePackagePrices([], packageIds, packages).map((item) => [item.packageId, item])
+    );
     storeSkuForm.setFieldsValue({
       merchantId: record.merchantId,
       storeId: record.storeId,
@@ -335,23 +332,31 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       saleMode: skus.find((item) => item.id === record.skuId)?.skuType ?? record.saleMode,
       signFeeAmount: record.signFeeAmount,
       signFeePayer: record.signFeePayer,
+      packageIds,
       packages: record.packages.map((item) => ({
+        ...defaultPricesByPackageId.get(item.packageId),
         packageId: item.packageId,
-        rentalAmount: packages.find((template) => template.id === item.packageId)?.priceAmount ?? item.rentalAmount,
+        rentalAmount: item.rentalAmount,
         periodAmount: item.periodAmount,
         depositAmount: item.depositAmount,
         autoRenewEnabled: item.autoRenewEnabled,
-        renewalUnit: item.renewalUnit ?? item.leaseUnit,
-        renewalValue: item.renewalValue ?? defaultRenewalValue(item),
-        renewalAmount: item.renewalAmount ?? item.periodAmount,
-        renewalBillingMode: item.renewalBillingMode ?? 'PERIOD',
+        renewalUnit: item.renewalUnit ?? defaultPricesByPackageId.get(item.packageId)?.renewalUnit ?? item.leaseUnit,
+        renewalValue: item.renewalValue ?? defaultPricesByPackageId.get(item.packageId)?.renewalValue ?? 1,
+        renewalAmount: item.renewalAmount ?? defaultPricesByPackageId.get(item.packageId)?.renewalAmount ?? item.periodAmount,
+        renewalBillingMode: item.renewalBillingMode ?? defaultPricesByPackageId.get(item.packageId)?.renewalBillingMode ?? 'PERIOD',
         renewalDailyAmount: item.renewalDailyAmount ?? undefined,
-        renewalDailyCapEnabled: item.renewalDailyCapEnabled ?? true,
-        renewalGraceHours: item.renewalGraceHours ?? 0,
+        renewalDailyCapEnabled: item.renewalDailyCapEnabled ?? defaultPricesByPackageId.get(item.packageId)?.renewalDailyCapEnabled ?? true,
+        renewalGraceHours: item.renewalGraceHours ?? defaultPricesByPackageId.get(item.packageId)?.renewalGraceHours ?? 0,
         overdueDailyAmount: item.overdueDailyAmount ?? undefined
       }))
     });
     setStoreSkuOpen(true);
+  }
+
+  function setDefaultPackagePrices(form: FormInstance, skuId: number) {
+    const defaultPrices = buildDefaultPackagePrices(skuId, packages);
+    form.setFieldValue('packageIds', defaultPrices.map((item) => item.packageId));
+    form.setFieldValue('packages', defaultPrices);
   }
 
   async function toggleStoreSku(record: StoreSku) {
@@ -380,7 +385,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
         {showStoreSkus && <Button type={mode === 'storeSkus' ? 'primary' : 'default'} icon={<PlusOutlined />} onClick={openCreateStoreSku}>门店上架</Button>}
         {showStoreSkus && <Button onClick={() => {
           batchForm.resetFields();
-          batchForm.setFieldsValue({ saleMode: 'RENTAL', signFeePayer: 'USER', signFeeAmount: 0, packages: [defaultPackagePrice()] });
+          batchForm.setFieldsValue({ saleMode: 'RENTAL', signFeePayer: 'USER', signFeeAmount: 0, packageIds: [], packages: [] });
           setBatchOpen(true);
         }} icon={<PlusOutlined />}>批量上架</Button>}
       </Space>
@@ -673,7 +678,6 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
               disabled={Boolean(editingStoreSku)}
               onChange={() => {
                 storeSkuForm.setFieldValue('storeId', undefined);
-                storeSkuForm.setFieldValue('packages', [defaultPackagePrice()]);
               }}
             />
           </Form.Item>
@@ -688,12 +692,12 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
                 const sku = skus.find((item) => item.id === skuId);
                 storeSkuForm.setFieldValue('saleMode', sku?.skuType);
                 storeSkuForm.setFieldValue('displayName', sku?.skuName);
-                storeSkuForm.setFieldValue('packages', [defaultPackagePrice()]);
+                setDefaultPackagePrices(storeSkuForm, skuId);
               }}
             />
           </Form.Item>
           <Form.Item name="displayName" label="门店商品名" rules={[{ required: true, message: '请输入门店商品名' }]}><Input /></Form.Item>
-          {storeSkuFields(storeSkuPackageOptions, packages, storeSkuForm)}
+          <StoreSkuFields packageOptions={storeSkuPackageOptions} packageTemplates={packages} form={storeSkuForm} />
         </Form>
       </Modal>
 
@@ -723,209 +727,186 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
               const sku = skus.find((item) => item.id === skuId);
               batchForm.setFieldValue('saleMode', sku?.skuType);
               batchForm.setFieldValue('displayName', sku?.skuName);
-              batchForm.setFieldValue('packages', [defaultPackagePrice()]);
+              setDefaultPackagePrices(batchForm, skuId);
             }} />
           </Form.Item>
           <Form.Item name="displayName" label="门店商品名"><Input placeholder="不填则使用链接名称" /></Form.Item>
-          {storeSkuFields(batchPackageOptions, packages, batchForm)}
+          <StoreSkuFields packageOptions={batchPackageOptions} packageTemplates={packages} form={batchForm} />
         </Form>
       </Modal>
     </Space>
   );
 }
 
-function storeSkuFields(
-  packageOptions: { label: string; value: number }[],
-  packageTemplates: ProductPackage[],
-  form: FormInstance
-) {
+type StoreSkuFieldsProps = {
+  packageOptions: { label: string; value: number }[];
+  packageTemplates: ProductPackage[];
+  form: FormInstance;
+};
+
+function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFieldsProps) {
+  const selectedSkuId = Form.useWatch('skuId', form) as number | undefined;
+  const selectedPackageIds = (Form.useWatch('packageIds', form) ?? []) as number[];
+
   return (
     <>
       <Form.Item name="saleMode" label="商品类型（由链接决定）" rules={[{ required: true, message: '请选择商品链接' }]}><Select disabled options={[{ label: '租赁', value: 'RENTAL' }, { label: '售卖', value: 'SALE' }]} /></Form.Item>
       <Form.Item name="signFeeAmount" label="签单费" rules={[{ required: true, message: '请输入签单费' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>
       <Form.Item name="signFeePayer" label="签单费承担方" rules={[{ required: true, message: '请选择承担方' }]}><Select options={[{ label: '用户', value: 'USER' }, { label: '商户', value: 'MERCHANT' }]} /></Form.Item>
+      <Form.Item
+        name="packageIds"
+        label="上架 SKU"
+        rules={[{ required: true, type: 'array', min: 1, message: '请至少选择一个上架 SKU' }]}
+      >
+        <Select
+          mode="multiple"
+          options={packageOptions}
+          placeholder={selectedSkuId
+            ? packageOptions.length > 0 ? '选择需要上架的 SKU' : '当前链接暂无启用 SKU'
+            : '请先选择商品链接'}
+          onChange={(packageIds: number[]) => {
+            const current = form.getFieldValue('packages') as StorePackagePriceForm[] | undefined;
+            form.setFieldValue('packages', reconcilePackagePrices(current, packageIds, packageTemplates));
+          }}
+        />
+      </Form.Item>
       <Form.List name="packages">
-        {(fields, { add, remove }) => (
+        {(fields) => (
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
-              <Typography.Title level={5} style={{ margin: 0 }}>SKU 与价格</Typography.Title>
-              <Button onClick={() => add(defaultPackagePrice())}>新增 SKU</Button>
-            </Space>
-            {fields.map((field, index) => (
-              <div key={field.key} className="section" style={{ marginBottom: 0 }}>
-                <Space align="center" style={{ justifyContent: 'space-between', width: '100%', marginBottom: 12 }}>
-                  <Typography.Text strong>{`SKU ${index + 1}`}</Typography.Text>
-                  <Button danger disabled={fields.length === 1} onClick={() => remove(field.name)}>删除 SKU</Button>
-                </Space>
-                <Form.Item
-                  name={[field.name, 'packageId']}
-                  label="SKU"
-                  rules={[
-                    { required: true, message: '请选择 SKU' },
-                    ({ getFieldValue }) => ({
-                      validator(_, value) {
-                        const selected = (getFieldValue('packages') || [])
-                          .map((item: PackagePriceForm | undefined) => item?.packageId)
-                          .filter(Boolean);
-                        return value && selected.filter((item: number) => item === value).length > 1
-                          ? Promise.reject(new Error('每个 SKU 只能配置一套价格'))
-                          : Promise.resolve();
-                      }
-                    })
-                  ]}
-                >
-                  <Select
-                    options={packageOptions}
-                    onChange={(packageId) => applyRenewalDefaults(form, field.name, packageTemplates.find((item) => item.id === packageId))}
-                  />
-                </Form.Item>
-                <Space.Compact block>
-                  <Form.Item
-                    style={{ width: '34%' }}
-                    name={[field.name, 'rentalAmount']}
-                    label="SKU 价格"
-                    rules={[{ required: true, message: '请输入金额' }]}
-                  >
-                    <InputNumber min={0} precision={2} disabled style={{ width: '100%' }} />
-                  </Form.Item>
-                  <Form.Item
-                    style={{ width: '33%' }}
-                    name={[field.name, 'periodAmount']}
-                    label="分期金额"
-                    rules={[{ required: true, message: '请输入每期金额' }]}
-                  >
-                    <InputNumber
-                      min={0}
-                      style={{ width: '100%' }}
-                      onChange={(value) => {
-                        if (!form.getFieldValue(['packages', field.name, 'renewalAmount'])) {
-                          form.setFieldValue(['packages', field.name, 'renewalAmount'], Number(value || 0));
-                        }
+            <Typography.Title level={5} style={{ margin: 0 }}>SKU 价格配置</Typography.Title>
+            {fields.map((field, index) => {
+              const packageId = form.getFieldValue(['packages', field.name, 'packageId']) as number | undefined;
+              const packageName = packageTemplates.find((item) => item.id === packageId)?.packageName;
+              return (
+                <div key={field.key} className="section" style={{ marginBottom: 0 }}>
+                  <Space align="center" style={{ justifyContent: 'space-between', width: '100%', marginBottom: 12 }}>
+                    <Typography.Text strong>{packageName ?? `SKU ${index + 1}`}</Typography.Text>
+                    <Button
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() => {
+                        const nextPackageIds = selectedPackageIds.filter((item) => item !== packageId);
+                        const current = form.getFieldValue('packages') as StorePackagePriceForm[] | undefined;
+                        form.setFieldsValue({
+                          packageIds: nextPackageIds,
+                          packages: reconcilePackagePrices(current, nextPackageIds, packageTemplates)
+                        });
                       }}
-                    />
+                    >
+                      删除 SKU
+                    </Button>
+                  </Space>
+                  <Form.Item name={[field.name, 'packageId']} hidden><InputNumber /></Form.Item>
+                  <Space.Compact block>
+                    <Form.Item
+                      style={{ width: '34%' }}
+                      name={[field.name, 'rentalAmount']}
+                      label="SKU 价格"
+                      rules={[{ required: true, message: '请输入金额' }]}
+                    >
+                      <InputNumber min={0} precision={2} disabled style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                      style={{ width: '33%' }}
+                      name={[field.name, 'periodAmount']}
+                      label="分期金额"
+                      rules={[{ required: true, message: '请输入每期金额' }]}
+                    >
+                      <InputNumber
+                        min={0}
+                        style={{ width: '100%' }}
+                        onChange={(value) => {
+                          if (!form.getFieldValue(['packages', field.name, 'renewalAmount'])) {
+                            form.setFieldValue(['packages', field.name, 'renewalAmount'], Number(value || 0));
+                          }
+                        }}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      style={{ width: '33%' }}
+                      name={[field.name, 'depositAmount']}
+                      label="押金"
+                      rules={[{ required: true, message: '请输入押金' }]}
+                    >
+                      <InputNumber min={0} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Space.Compact>
+                  <Form.Item name={[field.name, 'autoRenewEnabled']} valuePropName="checked">
+                    <Checkbox>开启自动续租</Checkbox>
                   </Form.Item>
-                  <Form.Item
-                    style={{ width: '33%' }}
-                    name={[field.name, 'depositAmount']}
-                    label="押金"
-                    rules={[{ required: true, message: '请输入押金' }]}
-                  >
-                    <InputNumber min={0} style={{ width: '100%' }} />
-                  </Form.Item>
-                </Space.Compact>
-                <Form.Item name={[field.name, 'autoRenewEnabled']} valuePropName="checked">
-                  <Checkbox>开启自动续租</Checkbox>
-                </Form.Item>
-                <Space.Compact block>
-                  <Form.Item
-                    style={{ width: '30%' }}
-                    name={[field.name, 'renewalUnit']}
-                    label="续租周期单位"
-                  >
-                    <Select options={[{ label: '天', value: 'DAY' }, { label: '月', value: 'MONTH' }]} />
-                  </Form.Item>
-                  <Form.Item
-                    style={{ width: '30%' }}
-                    name={[field.name, 'renewalValue']}
-                    label="续租周期"
-                  >
-                    <InputNumber min={1} style={{ width: '100%' }} />
-                  </Form.Item>
-                  <Form.Item
-                    style={{ width: '40%' }}
-                    name={[field.name, 'renewalAmount']}
-                    label="续租金额"
-                  >
-                    <InputNumber min={0} precision={2} style={{ width: '100%' }} />
-                  </Form.Item>
-                </Space.Compact>
-                <Space.Compact block>
-                  <Form.Item
-                    style={{ width: '34%' }}
-                    name={[field.name, 'renewalBillingMode']}
-                    label="续租计费方式"
-                  >
-                    <Select options={[
-                      { label: '只按整期续租', value: 'PERIOD' },
-                      { label: '按日计费（可选整期封顶）', value: 'DAILY_CAPPED' }
-                    ]} />
-                  </Form.Item>
-                  <Form.Item
-                    style={{ width: '33%' }}
-                    name={[field.name, 'renewalDailyAmount']}
-                    label="日续租价"
-                  >
-                    <InputNumber min={0} precision={2} style={{ width: '100%' }} />
-                  </Form.Item>
-                  <Form.Item
-                    style={{ width: '33%' }}
-                    name={[field.name, 'overdueDailyAmount']}
-                    label="逾期日占用费"
-                  >
-                    <InputNumber min={0} precision={2} placeholder="不填则同日续租价" style={{ width: '100%' }} />
-                  </Form.Item>
-                </Space.Compact>
-                <Space.Compact block>
-                  <Form.Item
-                    style={{ width: '50%' }}
-                    name={[field.name, 'renewalGraceHours']}
-                    label="超时宽限（小时）"
-                  >
-                    <InputNumber min={0} max={72} style={{ width: '100%' }} />
-                  </Form.Item>
-                  <Form.Item
-                    style={{ width: '50%', paddingLeft: 16, paddingTop: 30 }}
-                    name={[field.name, 'renewalDailyCapEnabled']}
-                    valuePropName="checked"
-                  >
-                    <Checkbox>按日累计达到整期价格后封顶</Checkbox>
-                  </Form.Item>
-                </Space.Compact>
-              </div>
-            ))}
+                  <Space.Compact block>
+                    <Form.Item
+                      style={{ width: '30%' }}
+                      name={[field.name, 'renewalUnit']}
+                      label="续租周期单位"
+                    >
+                      <Select options={[{ label: '天', value: 'DAY' }, { label: '月', value: 'MONTH' }]} />
+                    </Form.Item>
+                    <Form.Item
+                      style={{ width: '30%' }}
+                      name={[field.name, 'renewalValue']}
+                      label="续租周期"
+                    >
+                      <InputNumber min={1} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                      style={{ width: '40%' }}
+                      name={[field.name, 'renewalAmount']}
+                      label="续租金额"
+                    >
+                      <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Space.Compact>
+                  <Space.Compact block>
+                    <Form.Item
+                      style={{ width: '34%' }}
+                      name={[field.name, 'renewalBillingMode']}
+                      label="续租计费方式"
+                    >
+                      <Select options={[
+                        { label: '只按整期续租', value: 'PERIOD' },
+                        { label: '按日计费（可选整期封顶）', value: 'DAILY_CAPPED' }
+                      ]} />
+                    </Form.Item>
+                    <Form.Item
+                      style={{ width: '33%' }}
+                      name={[field.name, 'renewalDailyAmount']}
+                      label="日续租价"
+                    >
+                      <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                      style={{ width: '33%' }}
+                      name={[field.name, 'overdueDailyAmount']}
+                      label="逾期日占用费"
+                    >
+                      <InputNumber min={0} precision={2} placeholder="不填则同日续租价" style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Space.Compact>
+                  <Space.Compact block>
+                    <Form.Item
+                      style={{ width: '50%' }}
+                      name={[field.name, 'renewalGraceHours']}
+                      label="超时宽限（小时）"
+                    >
+                      <InputNumber min={0} max={72} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                      style={{ width: '50%', paddingLeft: 16, paddingTop: 30 }}
+                      name={[field.name, 'renewalDailyCapEnabled']}
+                      valuePropName="checked"
+                    >
+                      <Checkbox>按日累计达到整期价格后封顶</Checkbox>
+                    </Form.Item>
+                  </Space.Compact>
+                </div>
+              );
+            })}
           </Space>
         )}
       </Form.List>
     </>
   );
-}
-
-function defaultPackagePrice(): PackagePriceForm {
-  return {
-    packageId: undefined as never,
-    rentalAmount: 0,
-    periodAmount: 0,
-    depositAmount: 0,
-    autoRenewEnabled: true,
-    renewalUnit: 'MONTH',
-    renewalValue: 1,
-    renewalAmount: 0,
-    renewalBillingMode: 'PERIOD',
-    renewalDailyCapEnabled: true,
-    renewalGraceHours: 0
-  };
-}
-
-function applyRenewalDefaults(form: FormInstance, fieldName: number, template?: ProductPackage) {
-  if (!template) {
-    return;
-  }
-  const current = form.getFieldValue(['packages', fieldName]) as PackagePriceForm | undefined;
-  const skuPrice = Number(template.priceAmount || 0);
-  const periodAmount = current?.periodAmount || Number((skuPrice / Math.max(template.totalPeriods, 1)).toFixed(2));
-  form.setFieldValue(['packages', fieldName, 'rentalAmount'], skuPrice);
-  form.setFieldValue(['packages', fieldName, 'periodAmount'], periodAmount);
-  form.setFieldValue(['packages', fieldName, 'autoRenewEnabled'], current?.autoRenewEnabled ?? true);
-  form.setFieldValue(['packages', fieldName, 'renewalUnit'], template.leaseUnit);
-  form.setFieldValue(['packages', fieldName, 'renewalValue'], defaultRenewalValue(template));
-  form.setFieldValue(['packages', fieldName, 'renewalAmount'], current?.renewalAmount || periodAmount);
-  form.setFieldValue(['packages', fieldName, 'renewalBillingMode'], current?.renewalBillingMode || 'PERIOD');
-  form.setFieldValue(['packages', fieldName, 'renewalDailyCapEnabled'], current?.renewalDailyCapEnabled ?? true);
-  form.setFieldValue(['packages', fieldName, 'renewalGraceHours'], current?.renewalGraceHours ?? 0);
-}
-
-function defaultRenewalValue(template: Pick<ProductPackage, 'leaseValue' | 'totalPeriods'>) {
-  return Math.max(1, Math.floor(template.leaseValue / Math.max(template.totalPeriods, 1)));
 }
 
 function renewalText(item: {
