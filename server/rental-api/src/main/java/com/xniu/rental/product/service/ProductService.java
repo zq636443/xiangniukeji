@@ -291,18 +291,24 @@ public class ProductService {
         if (storeIds.size() != request.storeIds().size()) {
             throw BusinessException.badRequest("批量上架门店不能重复");
         }
-        var duplicatedStores = storeIds.stream()
-            .filter(storeId -> productRepository.findStoreSkuByStoreAndSku(storeId, request.skuId())
+        var stores = storeIds.stream().map(storeId -> {
+            var store = ensureEnabledStore(storeId);
+            ensureEnabledMerchant(store.merchantId());
+            return store;
+        }).toList();
+        if (stores.stream().map(MerchantStore::merchantId).distinct().count() != 1) {
+            throw BusinessException.badRequest("批量上架门店必须属于同一商户");
+        }
+        var duplicatedStores = stores.stream()
+            .filter(store -> productRepository.findStoreSkuByStoreAndSku(store.id(), request.skuId())
                 .filter(item -> item.status() != StoreSkuStatus.ARCHIVED)
                 .isPresent())
-            .map(storeId -> storeRepository.findById(storeId).map(MerchantStore::storeName).orElse("门店#" + storeId))
+            .map(MerchantStore::storeName)
             .toList();
         if (!duplicatedStores.isEmpty()) {
             throw BusinessException.badRequest("以下门店已配置此商品链接，请单独编辑或重新上架：" + String.join("、", duplicatedStores));
         }
-        return storeIds.stream().map(storeId -> {
-            var store = ensureEnabledStore(storeId);
-            ensureEnabledMerchant(store.merchantId());
+        return stores.stream().map(store -> {
             var publishRequest = new StoreSkuRequest(
                 store.merchantId(),
                 store.id(),

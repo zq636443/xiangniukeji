@@ -1,4 +1,4 @@
-import { DeleteOutlined, EditOutlined, PlusOutlined, PoweroffOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, PlusOutlined, PoweroffOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Button, Checkbox, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
 import type { FormInstance } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
@@ -57,6 +57,12 @@ type BatchForm = {
   packageIds: number[];
   packages: StorePackagePriceForm[];
 };
+type StoreSkuFilters = {
+  merchantId?: number;
+  storeId?: number;
+  skuId?: number;
+  status?: StoreSku['status'];
+};
 
 type StorePackageOption = {
   label: string;
@@ -87,6 +93,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
   const [editingSku, setEditingSku] = useState<ProductSku | null>(null);
   const [editingPackage, setEditingPackage] = useState<ProductPackage | null>(null);
   const [editingStoreSku, setEditingStoreSku] = useState<StoreSku | null>(null);
+  const [storeSkuFilters, setStoreSkuFilters] = useState<StoreSkuFilters>({});
   const [categoryForm] = Form.useForm<CategoryForm>();
   const [skuForm] = Form.useForm<SkuForm>();
   const [packageForm] = Form.useForm<PackageForm>();
@@ -114,18 +121,63 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
   const selectedBatchMerchantId = Form.useWatch('merchantId', batchForm);
   const selectedBatchSkuId = Form.useWatch('skuId', batchForm);
   const selectedBillDayMode = Form.useWatch('billDayMode', packageForm);
+  const configuredStoreSkuStoreIds = useMemo(
+    () => getConfiguredStoreIds(storeSkus, selectedStoreSkuSkuId),
+    [selectedStoreSkuSkuId, storeSkus]
+  );
+  const configuredBatchStoreIds = useMemo(
+    () => getConfiguredStoreIds(storeSkus, selectedBatchSkuId),
+    [selectedBatchSkuId, storeSkus]
+  );
 
   const filteredStoreOptions = useMemo(
     () => stores
-      .filter((store) => store.merchantId === selectedStoreSkuMerchantId && store.status === 'ENABLED')
-      .map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id })),
-    [selectedStoreSkuMerchantId, stores]
+      .filter((store) => store.merchantId === selectedStoreSkuMerchantId
+        && (store.status === 'ENABLED' || store.id === editingStoreSku?.storeId))
+      .map((store) => {
+        const isConfigured = configuredStoreSkuStoreIds.has(store.id) && !editingStoreSku;
+        return {
+          label: `${store.storeName} / ${store.storeCode}${isConfigured ? '（已配置）' : ''}`,
+          value: store.id,
+          disabled: isConfigured
+        };
+      }),
+    [configuredStoreSkuStoreIds, editingStoreSku, selectedStoreSkuMerchantId, stores]
   );
   const batchStoreOptions = useMemo(
     () => stores
       .filter((store) => store.merchantId === selectedBatchMerchantId && store.status === 'ENABLED')
-      .map((store) => ({ label: `${store.storeName} / ${store.storeCode}`, value: store.id })),
-    [selectedBatchMerchantId, stores]
+      .map((store) => {
+        const isConfigured = configuredBatchStoreIds.has(store.id);
+        return {
+          label: `${store.storeName} / ${store.storeCode}${isConfigured ? '（已配置）' : ''}`,
+          value: store.id,
+          disabled: isConfigured
+        };
+      }),
+    [configuredBatchStoreIds, selectedBatchMerchantId, stores]
+  );
+  const storeSkuFilterMerchantOptions = useMemo(
+    () => merchants.map((item) => ({ label: item.merchantName, value: item.id })),
+    [merchants]
+  );
+  const storeSkuFilterStoreOptions = useMemo(
+    () => stores
+      .filter((item) => !storeSkuFilters.merchantId || item.merchantId === storeSkuFilters.merchantId)
+      .map((item) => ({ label: `${item.storeName} / ${item.storeCode}`, value: item.id })),
+    [storeSkuFilters.merchantId, stores]
+  );
+  const storeSkuFilterSkuOptions = useMemo(
+    () => skus.map((item) => ({ label: `${item.skuName} / ${item.skuCode}`, value: item.id })),
+    [skus]
+  );
+  const filteredStoreSkus = useMemo(
+    () => storeSkus.filter((item) =>
+      (!storeSkuFilters.merchantId || item.merchantId === storeSkuFilters.merchantId)
+      && (!storeSkuFilters.storeId || item.storeId === storeSkuFilters.storeId)
+      && (!storeSkuFilters.skuId || item.skuId === storeSkuFilters.skuId)
+      && (!storeSkuFilters.status || item.status === storeSkuFilters.status)),
+    [storeSkuFilters, storeSkus]
   );
   const storeSkuPackageOptions = useMemo(
     () => {
@@ -307,6 +359,11 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
   }
 
   async function publishStoreSku(values: StoreSkuForm) {
+    if (!editingStoreSku && getConfiguredStoreIds(storeSkus, values.skuId).has(values.storeId)) {
+      storeSkuForm.setFieldValue('storeId', undefined);
+      message.error('该门店已配置此商品链接，请在门店商品列表中编辑');
+      return;
+    }
     const store = stores.find((item) => item.id === values.storeId);
     const payload = {
       merchantId: values.merchantId || store?.merchantId,
@@ -331,6 +388,13 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
   }
 
   async function batchPublish(values: BatchForm) {
+    const configuredStoreIds = getConfiguredStoreIds(storeSkus, values.skuId);
+    const availableStoreIds = values.storeIds.filter((storeId) => !configuredStoreIds.has(storeId));
+    if (availableStoreIds.length !== values.storeIds.length) {
+      batchForm.setFieldValue('storeIds', availableStoreIds);
+      message.error('所选门店中存在已配置门店，请确认后重新提交');
+      return;
+    }
     await http.post('/api/admin/products/store-skus/batch', {
       skuId: values.skuId,
       storeIds: values.storeIds,
@@ -564,10 +628,62 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
 
       {showStoreSkus && <div className="section">
         <Typography.Title level={5}>门店商品链接</Typography.Title>
+        <Space wrap size={12} style={{ marginBottom: 16 }}>
+          <Select
+            aria-label="按商户筛选门店商品"
+            allowClear
+            placeholder="全部商户"
+            style={{ width: 200 }}
+            value={storeSkuFilters.merchantId}
+            options={storeSkuFilterMerchantOptions}
+            onChange={(merchantId) => setStoreSkuFilters((current) => ({
+              ...current,
+              merchantId,
+              storeId: !merchantId || stores.some((store) => store.id === current.storeId && store.merchantId === merchantId)
+                ? current.storeId
+                : undefined
+            }))}
+          />
+          <Select
+            aria-label="按门店筛选门店商品"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="全部门店"
+            style={{ width: 220 }}
+            value={storeSkuFilters.storeId}
+            options={storeSkuFilterStoreOptions}
+            onChange={(storeId) => setStoreSkuFilters((current) => ({ ...current, storeId }))}
+          />
+          <Select
+            aria-label="按商品链接筛选门店商品"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="全部商品链接"
+            style={{ width: 240 }}
+            value={storeSkuFilters.skuId}
+            options={storeSkuFilterSkuOptions}
+            onChange={(skuId) => setStoreSkuFilters((current) => ({ ...current, skuId }))}
+          />
+          <Select
+            aria-label="按状态筛选门店商品"
+            allowClear
+            placeholder="全部状态"
+            style={{ width: 140 }}
+            value={storeSkuFilters.status}
+            options={[
+              { label: '已上架', value: 'ON_SHELF' },
+              { label: '已下架', value: 'OFF_SHELF' }
+            ]}
+            onChange={(status) => setStoreSkuFilters((current) => ({ ...current, status }))}
+          />
+          <Button icon={<ReloadOutlined />} onClick={() => setStoreSkuFilters({})}>重置</Button>
+        </Space>
         <Table
           rowKey="id"
           size="small"
-          dataSource={storeSkus}
+          dataSource={filteredStoreSkus}
           pagination={false}
           scroll={{ x: 1100 }}
           columns={[
@@ -717,8 +833,11 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
             <Select
               options={merchantOptions}
               disabled={Boolean(editingStoreSku)}
-              onChange={() => {
-                storeSkuForm.setFieldValue('storeId', undefined);
+              onChange={(merchantId) => {
+                const storeId = storeSkuForm.getFieldValue('storeId') as number | undefined;
+                if (!stores.some((store) => store.id === storeId && store.merchantId === merchantId)) {
+                  storeSkuForm.setFieldValue('storeId', undefined);
+                }
               }}
             />
           </Form.Item>
@@ -734,6 +853,10 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
                 storeSkuForm.setFieldValue('saleMode', sku?.skuType);
                 storeSkuForm.setFieldValue('displayName', sku?.skuName);
                 setDefaultPackagePrices(storeSkuForm, skuId);
+                const storeId = storeSkuForm.getFieldValue('storeId') as number | undefined;
+                if (storeId && getConfiguredStoreIds(storeSkus, skuId).has(storeId)) {
+                  storeSkuForm.setFieldValue('storeId', undefined);
+                }
               }}
             />
           </Form.Item>
@@ -769,6 +892,12 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
               batchForm.setFieldValue('saleMode', sku?.skuType);
               batchForm.setFieldValue('displayName', sku?.skuName);
               setDefaultPackagePrices(batchForm, skuId);
+              const configuredStoreIds = getConfiguredStoreIds(storeSkus, skuId);
+              const selectedStoreIds = (batchForm.getFieldValue('storeIds') ?? []) as number[];
+              batchForm.setFieldValue(
+                'storeIds',
+                selectedStoreIds.filter((storeId) => !configuredStoreIds.has(storeId))
+              );
             }} />
           </Form.Item>
           <Form.Item name="displayName" label="门店商品名"><Input placeholder="不填则使用链接名称" /></Form.Item>
@@ -777,6 +906,15 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
       </Modal>
     </Space>
   );
+}
+
+function getConfiguredStoreIds(storeSkus: StoreSku[], skuId?: number) {
+  if (!skuId) {
+    return new Set<number>();
+  }
+  return new Set(storeSkus
+    .filter((item) => item.skuId === skuId && (item.status as string) !== 'ARCHIVED')
+    .map((item) => item.storeId));
 }
 
 type StoreSkuFieldsProps = {
