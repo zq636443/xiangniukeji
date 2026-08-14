@@ -18,7 +18,7 @@
 - Modify: `server/rental-api/src/test/java/com/xniu/rental/AssetTransferIntegrationTests.java`
 - Modify: `server/rental-api/src/main/java/com/xniu/rental/asset/service/AssetService.java`
 
-- [ ] **Step 1: Write failing permission and status tests**
+- [x] **Step 1: Write failing permission and status tests**
 
 Add `asset.operate` to the merchant login assertion and replace the renting-only test with a loop covering `RENTING`, `PENDING_REPAIR`, `REPAIRING`, `SCRAPPED`, `SOLD`, and `EXCEPTION`:
 
@@ -36,18 +36,18 @@ for (var status : List.of("RENTING", "PENDING_REPAIR", "REPAIRING", "SCRAPPED", 
 }
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run:
 
 ```bash
 cd server/rental-api
-./mvnw -Dtest=AuthWorkspaceLoginIntegrationTests,AssetTransferIntegrationTests test
+mvn -Dtest=AuthWorkspaceLoginIntegrationTests,AssetTransferIntegrationTests test
 ```
 
 Expected: the merchant permission assertion fails because `MERCHANT_OWNER` lacks `asset.operate`, and at least one non-idle status transfers because the service only blocks `RENTING`.
 
-- [ ] **Step 3: Add the permission migration**
+- [x] **Step 3: Add the permission migration**
 
 Create V61 with an idempotent role-permission insert:
 
@@ -64,7 +64,7 @@ WHERE r.role_code = 'MERCHANT_OWNER'
   );
 ```
 
-- [ ] **Step 4: Enforce idle-only transfer in the service**
+- [x] **Step 4: Enforce idle-only transfer in the service**
 
 Change the shared transfer guard to:
 
@@ -74,7 +74,7 @@ if (asset.status() != AssetStatus.IDLE) {
 }
 ```
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run the Task 1 Maven command again. Expected: all tests in both classes pass and Flyway reports migration through V61.
 
@@ -87,7 +87,7 @@ Run the Task 1 Maven command again. Expected: all tests in both classes pass and
 - Modify: `server/rental-api/src/test/java/com/xniu/rental/AssetTransferIntegrationTests.java`
 - Modify: `admin-web/src/pages/MerchantWorkspace.tsx`
 
-- [ ] **Step 1: Write failing target-list tests**
+- [x] **Step 1: Write failing target-list tests**
 
 Create an additional disabled sibling store and assert that a store manager sees only the enabled sibling in transfer targets while `merchantService.listMyStores()` still contains only the authorized source store:
 
@@ -102,18 +102,18 @@ assertThat(merchantService.listMyStores()).extracting("id")
 
 Also set the current account to the sibling store and verify querying targets from source store `1` fails with “没有该门店权限”.
 
-- [ ] **Step 2: Run the target-list test and verify RED**
+- [x] **Step 2: Run the target-list test and verify RED**
 
 Run:
 
 ```bash
 cd server/rental-api
-./mvnw -Dtest=AssetTransferIntegrationTests test
+mvn -Dtest=AssetTransferIntegrationTests test
 ```
 
 Expected: compilation fails because `listMerchantTransferTargets` does not exist.
 
-- [ ] **Step 3: Implement the minimal DTO and service query**
+- [x] **Step 3: Implement the minimal DTO and service query**
 
 Add:
 
@@ -128,7 +128,7 @@ public record AssetTransferStoreResponse(
 
 Implement `listMerchantTransferTargets(sourceStoreId)` by requiring `asset.operate`, loading the source through `requireActiveAccessibleStore`, then filtering `storeRepository.findByMerchantId(source.merchantId())` to enabled stores other than the source.
 
-- [ ] **Step 4: Add the merchant API endpoint**
+- [x] **Step 4: Add the merchant API endpoint**
 
 Expose:
 
@@ -139,15 +139,15 @@ public ApiResponse<List<AssetTransferStoreResponse>> listTransferTargets(@PathVa
 }
 ```
 
-- [ ] **Step 5: Run backend tests and verify GREEN**
+- [x] **Step 5: Run backend tests and verify GREEN**
 
 Run the Task 2 Maven command again. Expected: all `AssetTransferIntegrationTests` pass.
 
-- [ ] **Step 6: Wire the merchant asset workspace to the target endpoint**
+- [x] **Step 6: Wire the merchant asset workspace to the target endpoint**
 
 In `MerchantAssetWorkspace`, add `transferTargets` state, load `/api/merchant/assets/stores/${storeId}/transfer-targets` only when the account can operate assets, and derive the select options from that state instead of the workspace `stores` prop. Disable the transfer button unless `record.status === 'IDLE'` and a target exists; use the title “只有空闲资产可以调拨” for non-idle records.
 
-- [ ] **Step 7: Run the admin typecheck**
+- [x] **Step 7: Run the admin typecheck**
 
 Run:
 
@@ -166,7 +166,7 @@ Expected: TypeScript exits successfully with no errors.
 - Modify: `admin-web/package.json`
 - Modify: `admin-web/src/pages/ProductManagement.tsx`
 
-- [ ] **Step 1: Write failing pure-helper tests**
+- [x] **Step 1: Write failing pure-helper tests**
 
 Use Node's test runner to assert enabled packages for the selected link are all selected, disabled/other-link packages are excluded, period and renewal defaults are calculated, and removing one selected id preserves custom values for the remaining SKU:
 
@@ -182,7 +182,7 @@ const reconciled = reconcilePackagePrices(defaults, [102], templates);
 assert.deepEqual(reconciled.map((item) => item.packageId), [102]);
 ```
 
-- [ ] **Step 2: Run the helper test and verify RED**
+- [x] **Step 2: Run the helper test and verify RED**
 
 Run:
 
@@ -193,15 +193,15 @@ node --test --experimental-strip-types scripts/store-product-publishing.test.mts
 
 Expected: the test fails because `src/utils/storeProductPublishing.ts` does not exist.
 
-- [ ] **Step 3: Implement the pure selection helpers**
+- [x] **Step 3: Implement the pure selection helpers**
 
 Export `StorePackagePriceForm`, `buildDefaultPackagePrices(templates, linkId)`, and `reconcilePackagePrices(current, selectedIds, templates)`. Defaults must use `priceAmount` for rental price, `priceAmount / totalPeriods` rounded to two decimals for each period, zero deposit, enabled auto-renewal, the template lease unit, `max(1, floor(leaseValue / totalPeriods))` renewal value, period amount as renewal amount, `PERIOD` billing, daily cap enabled, and zero grace hours.
 
-- [ ] **Step 4: Run the helper test and verify GREEN**
+- [x] **Step 4: Run the helper test and verify GREEN**
 
 Run the Task 3 Node command. Expected: all helper tests pass.
 
-- [ ] **Step 5: Add a reusable npm test command**
+- [x] **Step 5: Add a reusable npm test command**
 
 Add:
 
@@ -209,11 +209,11 @@ Add:
 "test:store-product-publishing": "node --test --experimental-strip-types scripts/store-product-publishing.test.mts"
 ```
 
-- [ ] **Step 6: Use default-all selection in both forms**
+- [x] **Step 6: Use default-all selection in both forms**
 
 Replace each link-change assignment of `[defaultPackagePrice()]` with `buildDefaultPackagePrices(packages, skuId)`. Convert `storeSkuFields` into a `StoreSkuFields` React component, observe `packages` with `Form.useWatch('packages', form)`, and add a controlled multi-select whose `onChange` calls `reconcilePackagePrices`. Keep the detailed cards for editing price, deposit, and renewal fields, remove the manual “新增 SKU” button, and keep each card's delete command synchronized with the multi-select.
 
-- [ ] **Step 7: Run helper tests and typecheck**
+- [x] **Step 7: Run helper tests and typecheck**
 
 Run:
 
@@ -231,36 +231,36 @@ Expected: the helper tests and TypeScript typecheck pass.
 - Modify: `admin-web/src/pages/ProductManagement.tsx`
 - Modify: `server/rental-api/src/test/java/com/xniu/rental/ProductLinkSkuIntegrationTests.java`
 
-- [ ] **Step 1: Add a backend regression test for subset and duplicate batch behavior**
+- [x] **Step 1: Add a backend regression test for subset and duplicate batch behavior**
 
 Extend `ProductLinkSkuIntegrationTests` to publish two enabled SKUs to one new store, verify both are persisted, then batch-publish only one selected SKU to another store and assert that only that SKU exists. Re-run the same batch request and assert the existing message contains “已配置此商品链接”.
 
-- [ ] **Step 2: Run the focused product test and verify its baseline**
+- [x] **Step 2: Run the focused product test and verify its baseline**
 
 Run:
 
 ```bash
 cd server/rental-api
-./mvnw -Dtest=ProductLinkSkuIntegrationTests test
+mvn -Dtest=ProductLinkSkuIntegrationTests test
 ```
 
 Expected before adding assertions: the existing suite passes. After adding the new test, it must pass against the existing backend contract; any failure identifies a server regression to fix before UI wiring.
 
-- [ ] **Step 3: Add store-product filters**
+- [x] **Step 3: Add store-product filters**
 
 Add merchant, store, link, and status filter state; derive `filteredStoreSkus`; reset the selected store whenever merchant changes; render filter controls above the table; and switch the table data source from `storeSkus` to `filteredStoreSkus`.
 
-- [ ] **Step 4: Mark configured stores in single and batch forms**
+- [x] **Step 4: Mark configured stores in single and batch forms**
 
 For a selected link, derive store ids with non-archived `store_sku` records. Render those stores disabled with “已配置” in both store selectors. When a link change makes an already selected store invalid, clear it; in the batch form, remove configured stores from the current selection before submission.
 
-- [ ] **Step 5: Run focused backend and frontend checks**
+- [x] **Step 5: Run focused backend and frontend checks**
 
 Run:
 
 ```bash
 cd server/rental-api
-./mvnw -Dtest=ProductLinkSkuIntegrationTests test
+mvn -Dtest=ProductLinkSkuIntegrationTests test
 cd ../../admin-web
 npm run test:store-product-publishing
 npm run typecheck
@@ -273,22 +273,22 @@ Expected: all commands pass.
 **Files:**
 - Modify: `docs/feature-content-updates-changelog.md`
 
-- [ ] **Step 1: Update the feature changelog**
+- [x] **Step 1: Update the feature changelog**
 
 Add a 2026-08-14 entry recording merchant-owner transfer permission, store-manager sibling targets without widened data scope, idle-only transfers, and default-all enabled SKU publishing for one or many stores.
 
-- [ ] **Step 2: Run the full backend suite**
+- [x] **Step 2: Run the full backend suite**
 
 Run:
 
 ```bash
 cd server/rental-api
-./mvnw test
+mvn test
 ```
 
 Expected: all tests pass with Flyway at V61.
 
-- [ ] **Step 3: Run admin runtime and production checks**
+- [x] **Step 3: Run admin runtime and production checks**
 
 Run:
 
@@ -302,7 +302,7 @@ npm run build
 
 Expected: helper tests, Dayjs runtime assertion, typecheck, and Vite production build all pass.
 
-- [ ] **Step 4: Inspect the final diff**
+- [x] **Step 4: Inspect the final diff**
 
 Run:
 
@@ -314,7 +314,7 @@ git diff --stat HEAD~2
 
 Expected: no whitespace errors, no secrets, and the pre-existing untracked `admin-web/pnpm-lock.yaml` and `admin-web/pnpm-workspace.yaml` remain unstaged.
 
-- [ ] **Step 5: Commit only implementation files**
+- [x] **Step 5: Commit only implementation files**
 
 Explicitly stage the migration, backend source/tests, admin source/test script/package metadata, changelog, and this plan. Do not stage the two pre-existing untracked pnpm files. Commit with:
 
@@ -322,6 +322,6 @@ Explicitly stage the migration, backend source/tests, admin source/test script/p
 git commit -m "feat: improve merchant transfers and store products"
 ```
 
-- [ ] **Step 6: Report deployment boundary**
+- [x] **Step 6: Report deployment boundary**
 
 Report the local commit and validation results. Do not push or deploy until the user explicitly requests publishing this implementation.
