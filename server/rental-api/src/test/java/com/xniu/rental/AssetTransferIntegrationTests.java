@@ -2,8 +2,10 @@ package com.xniu.rental;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doAnswer;
 
 import com.xniu.rental.asset.dto.AssetTransferRequest;
+import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.asset.service.AssetService;
 import com.xniu.rental.auth.dto.CurrentAccountResponse;
 import com.xniu.rental.auth.dto.StoreScopeResponse;
@@ -12,6 +14,7 @@ import com.xniu.rental.auth.security.CurrentAccount;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.merchant.service.MerchantService;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +22,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +34,9 @@ class AssetTransferIntegrationTests {
 
     @Autowired
     private AssetService assetService;
+
+    @SpyBean
+    private AssetRepository assetRepository;
 
     @Autowired
     private MerchantService merchantService;
@@ -150,6 +157,39 @@ class AssetTransferIntegrationTests {
         )))
             .isInstanceOf(BusinessException.class)
             .hasMessageContaining("只有空闲资产可以调拨");
+    }
+
+    @Test
+    void storeManagerShouldNotTransferAssetThatStopsBeingIdleAfterRead() {
+        var assetId = createAsset("IDLE");
+        var idleAsset = assetRepository.findById(assetId);
+        var firstRead = new AtomicBoolean(true);
+        doAnswer(invocation -> {
+            if (firstRead.compareAndSet(true, false)) {
+                jdbcTemplate.update("UPDATE asset_item SET status = 'RENTING' WHERE id = ?", assetId);
+                return idleAsset;
+            }
+            return invocation.callRealMethod();
+        }).when(assetRepository).findById(assetId);
+
+        assertThatThrownBy(() -> assetService.transferMerchantAsset(1L, assetId, new AssetTransferRequest(
+            1L,
+            siblingStoreId,
+            "读取后变为非空闲"
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("只有空闲资产可以调拨门店");
+
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT current_store_id FROM asset_item WHERE id = ?",
+            Long.class,
+            assetId
+        )).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(1) FROM asset_location_history WHERE asset_id = ? AND remark = '读取后变为非空闲'",
+            Integer.class,
+            assetId
+        )).isZero();
     }
 
     @Test

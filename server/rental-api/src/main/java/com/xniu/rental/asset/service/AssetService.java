@@ -639,7 +639,10 @@ public class AssetService {
         if (targetMerchantId.equals(asset.currentMerchantId()) && targetStoreId.equals(asset.currentStoreId())) {
             throw BusinessException.badRequest("资产已在目标门店，无需重复调拨");
         }
-        var updated = assetRepository.transferStore(asset.id(), targetMerchantId, targetStoreId);
+        if (assetRepository.transferStoreIfIdle(asset.id(), targetMerchantId, targetStoreId) != 1) {
+            throw BusinessException.badRequest("只有空闲资产可以调拨门店");
+        }
+        var updated = assetRepository.findById(asset.id()).orElseThrow();
         assetRepository.insertLocationHistory(
             asset.id(),
             asset.currentMerchantId(),

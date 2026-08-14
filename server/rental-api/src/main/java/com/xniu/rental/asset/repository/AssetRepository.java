@@ -223,6 +223,14 @@ public class AssetRepository {
         return findById(id).orElseThrow();
     }
 
+    public int transferStoreIfIdle(Long id, Long merchantId, Long storeId) {
+        return jdbcTemplate.update("""
+            UPDATE asset_item
+            SET current_merchant_id = ?, current_store_id = ?
+            WHERE id = ? AND status = 'IDLE'
+            """, merchantId, storeId, id);
+    }
+
     public AssetItem changeInvestor(Long id, Long investorId) {
         jdbcTemplate.update("UPDATE asset_item SET investor_id = ? WHERE id = ?", investorId, id);
         return findById(id).orElseThrow();
