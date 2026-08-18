@@ -7,6 +7,7 @@ import {
   EyeOutlined,
   EditOutlined,
   RiseOutlined,
+  ShopOutlined,
   ThunderboltOutlined,
   WalletOutlined
 } from '@ant-design/icons';
@@ -112,10 +113,16 @@ type InvestorPerformance = {
 };
 
 // V2 records use operation/maintenance share names; keep legacy rent-share records visible too.
-const storeRevenueLineTypes: ReadonlySet<SettlementIncomeEntry['lineType']> = new Set([
+const storeOperationRevenueLineTypes: ReadonlySet<SettlementIncomeEntry['lineType']> = new Set([
   'STORE_OPERATION_SHARE',
-  'MAINTENANCE_FUND_SHARE',
   'MERCHANT_RENT_SHARE'
+]);
+const storeMaintenanceRevenueLineTypes: ReadonlySet<SettlementIncomeEntry['lineType']> = new Set([
+  'MAINTENANCE_FUND_SHARE'
+]);
+const storeRevenueLineTypes: ReadonlySet<SettlementIncomeEntry['lineType']> = new Set([
+  ...storeOperationRevenueLineTypes,
+  ...storeMaintenanceRevenueLineTypes
 ]);
 
 const initialData: DashboardData = {
@@ -217,6 +224,21 @@ export function Dashboard() {
     const periodRenewalAmount = sumNumbers(periodRenewals.map((item) => item.renewalAmount));
     const periodCollected = netPayments(periodPayments) + sumNumbers(periodExternal.map((item) => item.verificationAmount)) + periodRenewalAmount;
     const previousCollected = netPayments(previousPayments) + sumNumbers(previousExternal.map((item) => item.verificationAmount)) + sumNumbers(previousRenewals.map((item) => item.renewalAmount));
+    const actualStoreRevenueEntries = scopedData.incomeEntries.filter((item) => item.sourceType !== 'ORDER'
+      && item.entryStatus !== 'FROZEN'
+      && item.beneficiaryType === 'MERCHANT'
+      && storeRevenueLineTypes.has(item.lineType));
+    const periodStoreRevenueEntries = actualStoreRevenueEntries.filter((item) => isInWindow(item.occurredAt, window.start, window.end));
+    const storeOperationRevenue = sumNumbers(periodStoreRevenueEntries
+      .filter((item) => storeOperationRevenueLineTypes.has(item.lineType))
+      .map((item) => item.amount));
+    const storeMaintenanceRevenue = sumNumbers(periodStoreRevenueEntries
+      .filter((item) => storeMaintenanceRevenueLineTypes.has(item.lineType))
+      .map((item) => item.amount));
+    const storeRevenue = storeOperationRevenue + storeMaintenanceRevenue;
+    const previousStoreRevenue = sumNumbers(actualStoreRevenueEntries
+      .filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd))
+      .map((item) => item.amount));
     const platformIncome = sumNumbers(scopedData.incomeEntries
       .filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN' && item.beneficiaryType === 'PLATFORM' && isInWindow(item.occurredAt, window.start, window.end))
       .map((item) => item.amount));
@@ -246,6 +268,10 @@ export function Dashboard() {
       periodCollected,
       periodRenewalAmount,
       collectedChange: percentageChange(periodCollected, previousCollected),
+      storeRevenue,
+      storeOperationRevenue,
+      storeMaintenanceRevenue,
+      storeRevenueChange: percentageChange(storeRevenue, previousStoreRevenue),
       platformIncome,
       platformRenewalIncome,
       platformIncomeChange: percentageChange(platformIncome, previousPlatformIncome),
@@ -520,6 +546,7 @@ export function Dashboard() {
 
       <div className="cockpit-metric-grid">
         <CockpitMetric icon={<WalletOutlined />} tone="green" label="期间营业额" value={fullMoney(dashboard.periodCollected)} detail={`续租 ${fullMoney(dashboard.periodRenewalAmount)} · ${dashboard.totalPeriodOrders} 笔订单`} change={dashboard.collectedChange} changeLabel="环比" />
+        <CockpitMetric icon={<ShopOutlined />} tone="blue" label={selectedStore ? '当前门店收益' : '全平台门店收益'} value={fullMoney(dashboard.storeRevenue)} detail={`运营 ${fullMoney(dashboard.storeOperationRevenue)} · 维修 ${fullMoney(dashboard.storeMaintenanceRevenue)}`} change={dashboard.storeRevenueChange} changeLabel="环比" />
         <CockpitMetric icon={<RiseOutlined />} tone="violet" label="平台期间收入" value={fullMoney(dashboard.platformIncome)} detail={`其中续租 ${fullMoney(dashboard.platformRenewalIncome)}`} change={dashboard.platformIncomeChange} changeLabel="环比" />
         <CockpitMetric icon={<CheckCircleOutlined />} tone="blue" label="到期账单回款率" value={percent(dashboard.collectionRate)} detail={`期间应收 ${fullMoney(dashboard.dueAmount)}`} change={dashboard.collectionRateChange} changeLabel="百分点" />
         <CockpitMetric icon={<CarOutlined />} tone="orange" label="当前资产投放率" value={percent(dashboard.deploymentRate)} detail={`${dashboard.rentingAssets.length} / ${dashboard.activeAssets.length} 台在租`} />
