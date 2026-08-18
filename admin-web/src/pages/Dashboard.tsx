@@ -76,6 +76,7 @@ type StoreRanking = {
   storeId: number;
   storeName: string;
   collected: number;
+  revenue: number;
   activeAssets: number;
   rentingAssets: number;
   overdueAmount: number;
@@ -109,6 +110,13 @@ type InvestorPerformance = {
   payableStatementCount: number;
   deploymentRate: number;
 };
+
+// V2 records use operation/maintenance share names; keep legacy rent-share records visible too.
+const storeRevenueLineTypes: ReadonlySet<SettlementIncomeEntry['lineType']> = new Set([
+  'STORE_OPERATION_SHARE',
+  'MAINTENANCE_FUND_SHARE',
+  'MERCHANT_RENT_SHARE'
+]);
 
 const initialData: DashboardData = {
   orders: [],
@@ -283,6 +291,7 @@ export function Dashboard() {
         storeId,
         storeName: storeName || data.stores.find((item) => item.id === storeId)?.storeName || `门店 ${storeId}`,
         collected: 0,
+        revenue: 0,
         activeAssets: 0,
         rentingAssets: 0,
         overdueAmount: 0,
@@ -301,6 +310,13 @@ export function Dashboard() {
     data.externalRenewals
       .filter((item) => isInWindow(item.occurredAt, window.start, window.end))
       .forEach((item) => { ensureStore(item.storeId).collected += Number(item.renewalAmount || 0); });
+    data.incomeEntries
+      .filter((item) => item.beneficiaryType === 'MERCHANT'
+        && item.sourceType !== 'ORDER'
+        && item.entryStatus !== 'FROZEN'
+        && storeRevenueLineTypes.has(item.lineType)
+        && isInWindow(item.occurredAt, window.start, window.end))
+      .forEach((item) => { ensureStore(item.storeId).revenue += Number(item.amount || 0); });
     data.assets.filter((item) => !['SCRAPPED', 'SOLD'].includes(item.status)).forEach((item) => {
       if (!item.currentStoreId) return;
       const row = ensureStore(item.currentStoreId, item.storeName);
@@ -310,9 +326,8 @@ export function Dashboard() {
     data.overdues.forEach((item) => { ensureStore(item.storeId).overdueAmount += Number(item.unpaidAmount || 0); });
     const rankings = [...storeMap.values()]
       .map((item) => ({ ...item, deploymentRate: item.activeAssets ? item.rentingAssets / item.activeAssets * 100 : 0 }))
-      .filter((item) => item.storeId === selectedStoreId || item.collected || item.activeAssets || item.overdueAmount)
       .sort((left, right) => right.collected - left.collected || right.activeAssets - left.activeAssets);
-    return selectedStoreId ? rankings.filter((item) => item.storeId === selectedStoreId) : rankings.slice(0, 8);
+    return selectedStoreId ? rankings.filter((item) => item.storeId === selectedStoreId) : rankings;
   }, [data, selectedStoreId, window]);
 
   const investorPerformance = useMemo<InvestorPerformance[]>(() => {
@@ -596,22 +611,23 @@ export function Dashboard() {
       <div className="cockpit-layout cockpit-layout-equal">
         <CockpitPanel
           title={selectedStore ? '当前门店经营摘要' : '门店经营排名'}
-          subtitle={`${window.label}实收、当前投放与逾期风险`}
+          subtitle={`${window.label}门店收益（运营分成 + 维修分成）、实收、当前投放与逾期风险`}
           extra={selectedStore
             ? <Button size="small" onClick={() => setSelectedStoreId(undefined)}>返回全平台</Button>
-            : <Tag color="blue">TOP {storeRankings.length}</Tag>}
+            : <Tag color="blue">共 {storeRankings.length} 家</Tag>}
         >
           <Table
             rowKey="storeId"
             size="small"
             loading={loading}
             dataSource={storeRankings}
-            pagination={false}
+            pagination={{ pageSize: 10, showSizeChanger: false }}
             locale={{ emptyText: <Empty description="暂无门店经营数据" /> }}
             columns={[
               { title: '排名', width: 58, render: (_, __, index) => <span className={`cockpit-rank rank-${index + 1}`}>{index + 1}</span> },
               { title: '门店', dataIndex: 'storeName', ellipsis: true },
-              { title: '期间实收', dataIndex: 'collected', width: 130, render: (value) => <strong className="amount-positive">{fullMoney(value)}</strong> },
+              { title: '门店收益', dataIndex: 'revenue', width: 130, render: (value) => <strong className="amount-positive">{fullMoney(value)}</strong> },
+              { title: '期间实收', dataIndex: 'collected', width: 130, render: (value) => fullMoney(value) },
               { title: '当前投放', dataIndex: 'deploymentRate', width: 150, render: (value) => <div className="cockpit-table-progress"><Progress percent={Math.round(value)} size="small" showInfo={false} /><span>{percent(value, 0)}</span></div> },
               { title: '逾期未收', dataIndex: 'overdueAmount', width: 120, render: (value) => value ? <Typography.Text type="danger">{fullMoney(value)}</Typography.Text> : '-' },
               {
