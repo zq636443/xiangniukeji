@@ -17,6 +17,7 @@ public record SettlementIncomeEntryResponse(
     Long beneficiaryId,
     String lineType,
     BigDecimal amount,
+    BigDecimal storeRevenueAmount,
     String entryStatus,
     String remark,
     LocalDateTime occurredAt,

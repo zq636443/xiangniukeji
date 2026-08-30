@@ -35,7 +35,10 @@ public class ExternalOrderRenewalRepository {
               AND renewal_value IS NOT NULL
               AND renewal_value > 0
               AND settlement_snapshot_id IS NOT NULL
-            ORDER BY expected_return_at, id
+            /* All renewal/month-rebuild paths lock orders in id order.  Keep
+             * the scheduler's acquisition order aligned to avoid a two-order
+             * cycle when a month generator runs concurrently. */
+            ORDER BY id
             LIMIT ?
             """, Long.class, dueAt, limit);
     }
@@ -55,6 +58,7 @@ public class ExternalOrderRenewalRepository {
         LocalDateTime periodStartAt,
         LocalDateTime periodEndAt,
         java.math.BigDecimal renewalAmount,
+        java.math.BigDecimal systemRenewalAmount,
         java.math.BigDecimal batteryCostAmount
     ) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
@@ -62,8 +66,8 @@ public class ExternalOrderRenewalRepository {
             var statement = connection.prepareStatement("""
                 INSERT INTO external_order_renewal_event
                 (external_order_id, event_no, period_no, period_start_at, period_end_at,
-                 renewal_amount, battery_cost_amount, event_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'ACCRUED')
+                 renewal_amount, system_renewal_amount, battery_cost_amount, event_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACCRUED')
                 """, new String[] {"id"});
             statement.setLong(1, externalOrderId);
             statement.setString(2, eventNo);
@@ -71,7 +75,8 @@ public class ExternalOrderRenewalRepository {
             statement.setObject(4, periodStartAt);
             statement.setObject(5, periodEndAt);
             statement.setBigDecimal(6, renewalAmount);
-            statement.setBigDecimal(7, batteryCostAmount);
+            statement.setBigDecimal(7, systemRenewalAmount);
+            statement.setBigDecimal(8, batteryCostAmount);
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
@@ -94,6 +99,15 @@ public class ExternalOrderRenewalRepository {
         return findById(id).orElseThrow();
     }
 
+    public ExternalOrderRenewalEvent updateAmount(Long id, java.math.BigDecimal renewalAmount) {
+        jdbcTemplate.update(
+            "UPDATE external_order_renewal_event SET renewal_amount = ? WHERE id = ?",
+            renewalAmount,
+            id
+        );
+        return findById(id).orElseThrow();
+    }
+
     public List<ExternalOrderRenewalEvent> listByExternalOrder(Long externalOrderId) {
         return jdbcTemplate.query("""
             SELECT *
@@ -101,6 +115,30 @@ public class ExternalOrderRenewalRepository {
             WHERE external_order_id = ?
             ORDER BY period_no
             """, mapper, externalOrderId);
+    }
+
+    /** Only unreversed accrued periods make the order's future schedule
+     * immutable. Terminated orders retain reversed events for audit, but those
+     * rows must not block a later correction of the order record. */
+    public boolean hasAccruedEvents(Long externalOrderId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM external_order_renewal_event
+            WHERE external_order_id = ?
+              AND event_status = 'ACCRUED'
+            """, Integer.class, externalOrderId);
+        return count != null && count > 0;
+    }
+
+    /** Returns every supplemental order that already has at least one renewal event. */
+    public List<Long> listExternalOrderIdsWithRenewals() {
+        return jdbcTemplate.queryForList("""
+            SELECT DISTINCT r.external_order_id
+            FROM external_order_renewal_event r
+            JOIN external_rental_order o ON o.id = r.external_order_id
+            WHERE o.order_status <> 'TERMINATED'
+            ORDER BY r.external_order_id
+            """, Long.class);
     }
 
     public List<RenewalView> listAccrued(Long storeId) {
@@ -118,6 +156,7 @@ public class ExternalOrderRenewalRepository {
             FROM external_order_renewal_event r
             JOIN external_rental_order o ON o.id = r.external_order_id
             WHERE r.event_status = 'ACCRUED'
+              AND o.order_status <> 'TERMINATED'
             """);
         var params = new java.util.ArrayList<Object>();
         if (storeId != null) {
@@ -146,6 +185,70 @@ public class ExternalOrderRenewalRepository {
         return count != null && count > 0;
     }
 
+    /** Lock renewal income rows before reversing/deleting an order. */
+    public boolean hasNonPendingIncomeByExternalOrderForUpdate(Long externalOrderId) {
+        var statuses = jdbcTemplate.queryForList("""
+            SELECT e.entry_status
+            FROM settlement_income_entry e
+            JOIN external_order_renewal_event r ON r.id = e.source_id
+            WHERE e.source_type = 'EXTERNAL_RENEWAL'
+              AND r.external_order_id = ?
+            FOR UPDATE
+            """, String.class, externalOrderId);
+        return statuses.stream().anyMatch(status -> !"PENDING".equals(status));
+    }
+
+    public boolean hasNonPendingIncomeByEvent(Long eventId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL'
+              AND source_id = ?
+              AND entry_status <> 'PENDING'
+            """, Integer.class, eventId);
+        return count != null && count > 0;
+    }
+
+    /** Lock every income row for an event before a renewal is rebuilt. */
+    public boolean hasNonPendingIncomeByEventForUpdate(Long eventId) {
+        var statuses = jdbcTemplate.queryForList("""
+            SELECT entry_status
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_RENEWAL'
+              AND source_id = ?
+            FOR UPDATE
+            """, String.class, eventId);
+        return statuses.stream().anyMatch(status -> !"PENDING".equals(status));
+    }
+
+    public boolean hasLockedStatementLinesByEvent(Long eventId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement_line l
+            JOIN settlement_statement s ON s.id = l.statement_id
+            WHERE l.source_type = 'EXTERNAL_RENEWAL'
+              AND l.source_id = ?
+              AND s.status IN ('CONFIRMED', 'PAYABLE', 'PAID', 'CLOSED')
+            """, Integer.class, eventId);
+        return count != null && count > 0;
+    }
+
+    /** Lock every statement line/parent for an event before a renewal is rebuilt. */
+    public boolean hasLockedStatementLinesByEventForUpdate(Long eventId) {
+        var statuses = jdbcTemplate.queryForList("""
+            SELECT s.status
+            FROM settlement_statement_line l
+            JOIN settlement_statement s ON s.id = l.statement_id
+            WHERE l.source_type = 'EXTERNAL_RENEWAL'
+              AND l.source_id = ?
+            FOR UPDATE
+            """, String.class, eventId);
+        return statuses.stream().anyMatch(status -> switch (status) {
+            case "CONFIRMED", "PAYABLE", "PAID", "CLOSED" -> true;
+            default -> false;
+        });
+    }
+
     public boolean hasLockedStatementLinesByExternalOrder(Long externalOrderId) {
         var count = jdbcTemplate.queryForObject("""
             SELECT COUNT(1)
@@ -157,6 +260,23 @@ public class ExternalOrderRenewalRepository {
               AND s.status IN ('CONFIRMED', 'PAYABLE', 'PAID', 'CLOSED')
             """, Integer.class, externalOrderId);
         return count != null && count > 0;
+    }
+
+    /** Lock renewal statement lines while checking whether they are settled. */
+    public boolean hasLockedStatementLinesByExternalOrderForUpdate(Long externalOrderId) {
+        var statuses = jdbcTemplate.queryForList("""
+            SELECT s.status
+            FROM settlement_statement_line l
+            JOIN settlement_statement s ON s.id = l.statement_id
+            JOIN external_order_renewal_event r ON r.id = l.source_id
+            WHERE l.source_type = 'EXTERNAL_RENEWAL'
+              AND r.external_order_id = ?
+            FOR UPDATE
+            """, String.class, externalOrderId);
+        return statuses.stream().anyMatch(status -> switch (status) {
+            case "CONFIRMED", "PAYABLE", "PAID", "CLOSED" -> true;
+            default -> false;
+        });
     }
 
     public List<String> listDraftStatementMonthsByExternalOrder(Long externalOrderId) {
@@ -227,6 +347,7 @@ public class ExternalOrderRenewalRepository {
                 rs.getObject("period_start_at", LocalDateTime.class),
                 rs.getObject("period_end_at", LocalDateTime.class),
                 rs.getBigDecimal("renewal_amount"),
+                rs.getBigDecimal("system_renewal_amount"),
                 rs.getBigDecimal("battery_cost_amount"),
                 nullableLong(rs, "settlement_snapshot_id"),
                 rs.getString("event_status"),

@@ -70,4 +70,15 @@ class BatteryCostCalculatorTests {
 
         assertThat(cost).isEqualByComparingTo("200.00");
     }
+
+    @Test
+    void proratingShouldUseTheGrossFrozenRentalAsDenominator() {
+        var cost = BatteryCostCalculator.prorate(
+            new BigDecimal("6.60"),
+            new BigDecimal("96.00"),
+            new BigDecimal("129.00")
+        );
+
+        assertThat(cost).isEqualByComparingTo("4.91");
+    }
 }

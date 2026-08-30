@@ -32,7 +32,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class SettlementService {
 
     private static final BigDecimal ONE = new BigDecimal("1.0000");
-    private static final BigDecimal ORDER_FEE_SERVICE_RATE = new BigDecimal("0.03");
 
     private final SettlementRepository settlementRepository;
     private final ProductRepository productRepository;
@@ -227,6 +226,43 @@ public class SettlementService {
         if (original.sourceType() != SnapshotSourceType.EXTERNAL_ORDER) {
             throw BusinessException.badRequest("补录订单原始分润快照类型不匹配");
         }
+        return createExternalRenewalSnapshotFromTemplate(eventId, original, renewalAmount, batteryCostAmount);
+    }
+
+    /**
+     * Rebuild an unlocked renewal snapshot while retaining the rates/assets
+     * frozen on the original renewal event.  This is used when a manual
+     * verification edit falls inside a still-pending renewal period.
+     */
+    @Transactional
+    public SettlementSnapshotResponse rebuildExternalRenewalSnapshot(
+        Long eventId,
+        Long previousSnapshotId,
+        BigDecimal renewalAmount,
+        BigDecimal batteryCostAmount
+    ) {
+        var previous = settlementRepository.findSnapshot(previousSnapshotId)
+            .orElseThrow(() -> BusinessException.badRequest("补录续租原分润快照不存在"));
+        if (previous.sourceType() != SnapshotSourceType.EXTERNAL_RENEWAL) {
+            throw BusinessException.badRequest("补录续租原分润快照类型不匹配");
+        }
+        return createExternalRenewalSnapshotFromTemplate(eventId, previous, renewalAmount, batteryCostAmount);
+    }
+
+    private SettlementSnapshotResponse createExternalRenewalSnapshotFromTemplate(
+        Long eventId,
+        SettlementRuleSnapshot original,
+        BigDecimal renewalAmount,
+        BigDecimal batteryCostAmount
+    ) {
+        if (original.calculationVersion() == SettlementCalculationVersion.LEGACY_V1) {
+            return toResponse(createLegacyExternalRenewalSnapshot(
+                eventId,
+                original,
+                renewalAmount,
+                batteryCostAmount
+            ));
+        }
         var allocation = ProfitSharingCalculator.calculate(
             renewalAmount,
             original.channelFeeRate(),
@@ -283,6 +319,72 @@ public class SettlementService {
             null
         ));
         return toResponse(snapshot);
+    }
+
+    /** Keep a legacy event on its original calculation model when its mutable
+     * amount is rebuilt; migrating a historical event to PROFIT_V2 would change
+     * its contractual split in addition to the requested amount correction. */
+    private SettlementRuleSnapshot createLegacyExternalRenewalSnapshot(
+        Long eventId,
+        SettlementRuleSnapshot original,
+        BigDecimal renewalAmount,
+        BigDecimal batteryCostAmount
+    ) {
+        var base = money(renewalAmount);
+        var merchantShare = amountByRate(base, original.merchantRentShareRate());
+        var platformShare = amountByRate(base, original.platformRentShareRate());
+        var investorGross = amountByRate(base, original.investorRentShareRate());
+        var investorNet = investorGross
+            .subtract(money(original.investorOperationFeeAmount()))
+            .subtract(money(original.maintenanceFeeAmount()))
+            .max(BigDecimal.ZERO)
+            .setScale(2, RoundingMode.HALF_UP);
+        var zero = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        return settlementRepository.createSnapshot(new SettlementRuleSnapshot(
+            null,
+            nextCode("SNP"),
+            SnapshotSourceType.EXTERNAL_RENEWAL,
+            eventId,
+            SettlementCalculationVersion.LEGACY_V1,
+            original.sourceChannel(),
+            original.storeSkuId(),
+            original.skuId(),
+            original.merchantId(),
+            original.storeId(),
+            original.frameAssetId(),
+            original.batteryAssetId(),
+            original.matchedRuleId(),
+            original.matchedRuleScope(),
+            base,
+            base,
+            zero,
+            zero,
+            original.merchantRentShareRate(),
+            merchantShare,
+            original.platformRentShareRate(),
+            platformShare,
+            original.investorRentShareRate(),
+            investorGross,
+            money(original.investorOperationFeeAmount()),
+            money(original.maintenanceFeeAmount()),
+            investorNet,
+            original.channelFeeRate(),
+            zero,
+            original.platformFeeRate(),
+            zero,
+            money(batteryCostAmount),
+            zero,
+            original.storeOperationRate(),
+            zero,
+            original.maintenanceFundRate(),
+            zero,
+            original.channelReferralRate(),
+            zero,
+            original.investorShareRate(),
+            zero,
+            original.ruleSummary() + ";externalRenewal=true;calculationVersion=LEGACY_V1",
+            null
+        ));
     }
 
     private SettlementSnapshotResponse createSnapshotInternal(SnapshotCreateRequest request) {
@@ -659,8 +761,13 @@ public class SettlementService {
         return (value == null ? BigDecimal.ZERO : value).setScale(2, RoundingMode.HALF_UP);
     }
 
+    private BigDecimal amountByRate(BigDecimal amount, BigDecimal value) {
+        return money(amount).multiply(value == null ? BigDecimal.ZERO : value)
+            .setScale(2, RoundingMode.HALF_UP);
+    }
+
     private BigDecimal netOrderFee(BigDecimal amount) {
-        return money(amount).multiply(BigDecimal.ONE.subtract(ORDER_FEE_SERVICE_RATE)).setScale(2, RoundingMode.HALF_UP);
+        return ProfitSharingCalculator.calculateOrderFee(amount).merchantNetAmount();
     }
 
     private BigDecimal rate(BigDecimal value) {

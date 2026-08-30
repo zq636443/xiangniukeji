@@ -39,6 +39,16 @@ public class SettlementStatementRepository {
         return count != null && count > 0;
     }
 
+    public boolean hasDraftStatements(String statementMonth) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_statement
+            WHERE statement_month = ?
+              AND status IN ('DRAFT', 'RECONCILING')
+            """, Integer.class, statementMonth);
+        return count != null && count > 0;
+    }
+
     public void deleteDraftStatements(String statementMonth) {
         jdbcTemplate.update("""
             DELETE l
@@ -232,6 +242,15 @@ public class SettlementStatementRepository {
         return jdbcTemplate.query("SELECT * FROM settlement_statement WHERE id = ?", statementMapper, id).stream().findFirst();
     }
 
+    /** Lock a statement row for status transitions that settle its income. */
+    public Optional<SettlementStatement> findStatementForUpdate(Long id) {
+        return jdbcTemplate.query(
+            "SELECT * FROM settlement_statement WHERE id = ? FOR UPDATE",
+            statementMapper,
+            id
+        ).stream().findFirst();
+    }
+
     public Optional<SettlementStatementLine> findLine(Long id) {
         return jdbcTemplate.query("SELECT * FROM settlement_statement_line WHERE id = ?", lineMapper, id).stream().findFirst();
     }
@@ -255,6 +274,81 @@ public class SettlementStatementRepository {
               AND s.status IN ('CONFIRMED', 'PAYABLE', 'PAID', 'CLOSED')
             """, Integer.class, sourceType, sourceId);
         return count != null && count > 0;
+    }
+
+    /**
+     * Lock matching statement/line rows before an order is removed or
+     * terminated.  This serializes a concurrent draft -> confirmed transition
+     * with the destructive cleanup operation.
+     */
+    public boolean hasLockedLinesBySourceForUpdate(String sourceType, Long sourceId) {
+        var statuses = jdbcTemplate.queryForList("""
+            SELECT s.status
+            FROM settlement_statement_line l
+            JOIN settlement_statement s ON s.id = l.statement_id
+            WHERE l.source_type = ?
+              AND l.source_id = ?
+            FOR UPDATE
+            """, String.class, sourceType, sourceId);
+        return statuses.stream().anyMatch(status -> switch (status) {
+            case "CONFIRMED", "PAYABLE", "PAID", "CLOSED" -> true;
+            default -> false;
+        });
+    }
+
+    /** Lock every statement row in a month before deleting/rebuilding drafts. */
+    public void lockStatementsByMonthForUpdate(String statementMonth) {
+        jdbcTemplate.queryForList("""
+            SELECT id
+            FROM settlement_statement
+            WHERE statement_month = ?
+            FOR UPDATE
+            """, Long.class, statementMonth);
+    }
+
+    /**
+     * Lock every supplemental order that can contribute a line to a month.
+     *
+     * Order mutations (edit/terminate/delete and auto-renew accrual) acquire
+     * the order row before they touch statement rows.  Month generation must
+     * use the same order -> statement order; otherwise a generator can read an
+     * active order, wait behind its termination, and insert a stale draft line
+     * after the termination commits.  The EXISTS branch covers renewal events
+     * whose period starts in the month even when the parent order was created
+     * in an earlier month.  Overdue auto-renew orders (expected return before
+     * the month end) are included as well because the catch-up worker can
+     * create a missing event for this month while generation is running.  The
+     * outer query deliberately includes orders with no snapshot yet so the
+     * settlement backfill and snapshot attachment are serialized as well; the
+     * subsequent source queries still filter rows that are actually billable.
+     */
+    public void lockExternalOrdersForMonthForUpdate(
+        LocalDateTime startAt,
+        LocalDateTime endAt
+    ) {
+        jdbcTemplate.queryForList("""
+            SELECT eo.id
+            FROM external_rental_order eo
+            WHERE eo.order_status <> 'TERMINATED'
+              AND (
+                (eo.created_at >= ? AND eo.created_at < ?)
+                OR (
+                    eo.auto_renew_enabled = 1
+                    AND eo.expected_return_at IS NOT NULL
+                    AND eo.expected_return_at < ?
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM external_order_renewal_event r
+                    WHERE r.external_order_id = eo.id
+                      AND r.event_status = 'ACCRUED'
+                      AND r.period_start_at >= ?
+                      AND r.period_start_at < ?
+                )
+              )
+            ORDER BY eo.id
+            FOR UPDATE
+            """, Long.class, startAt, endAt, endAt, startAt, endAt);
     }
 
     public List<String> listDraftStatementMonthsBySource(String sourceType, Long sourceId) {

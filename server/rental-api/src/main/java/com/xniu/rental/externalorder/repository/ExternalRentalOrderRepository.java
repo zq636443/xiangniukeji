@@ -12,7 +12,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -212,6 +214,30 @@ public class ExternalRentalOrderRepository {
     public Optional<ExternalRentalOrder> findByIdForUpdate(Long id) {
         var list = jdbcTemplate.query("SELECT * FROM external_rental_order WHERE id = ? FOR UPDATE", orderMapper, id);
         return list.stream().findFirst();
+    }
+
+    /** Batch-load the recorded handling fee for read-only ledger projections.
+     * Older settlement snapshots did not always freeze custom supplemental
+     * order fees, so the order row is the authoritative gross amount. */
+    public Map<Long, BigDecimal> findSignFeeAmounts(List<Long> orderIds) {
+        var ids = orderIds == null ? List.<Long>of() : orderIds.stream()
+            .filter(java.util.Objects::nonNull)
+            .distinct()
+            .toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        var placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        return jdbcTemplate.query(
+            "SELECT id, sign_fee_amount FROM external_rental_order WHERE id IN (" + placeholders + ")",
+            (rs, rowNum) -> Map.entry(rs.getLong("id"), rs.getBigDecimal("sign_fee_amount")),
+            ids.toArray()
+        ).stream().collect(java.util.stream.Collectors.toMap(
+            Map.Entry::getKey,
+            Map.Entry::getValue,
+            (left, right) -> left,
+            LinkedHashMap::new
+        ));
     }
 
     public ExternalRentalOrder advanceExpectedReturnAt(Long id, LocalDateTime expectedReturnAt) {

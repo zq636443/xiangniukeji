@@ -19,11 +19,13 @@ import com.xniu.rental.externalorder.dto.ExternalRentalOrderUpdateRequest;
 import com.xniu.rental.externalorder.dto.ExternalOrderRenewalResponse;
 import com.xniu.rental.externalorder.model.ExternalOrderOperationType;
 import com.xniu.rental.externalorder.model.ExternalOrderSourcePlatform;
+import com.xniu.rental.externalorder.model.ExternalOrderVerificationRevisionType;
 import com.xniu.rental.externalorder.model.ExternalRentalOrder;
 import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
 import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
 import com.xniu.rental.externalorder.repository.ExternalOrderPricingRevisionRepository;
 import com.xniu.rental.externalorder.repository.ExternalOrderRenewalRepository;
+import com.xniu.rental.externalorder.repository.ExternalOrderVerificationRevisionRepository;
 import com.xniu.rental.merchant.model.MerchantStore;
 import com.xniu.rental.merchant.model.MerchantStatus;
 import com.xniu.rental.merchant.model.StoreStatus;
@@ -40,13 +42,16 @@ import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
 import com.xniu.rental.settlement.model.IncomeSourceType;
+import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.model.SnapshotSourceType;
 import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
 import com.xniu.rental.settlement.repository.SettlementStatementRepository;
 import com.xniu.rental.settlement.service.SettlementIncomeService;
 import com.xniu.rental.settlement.service.SettlementService;
+import com.xniu.rental.settlement.service.SettlementStatementService;
 import com.xniu.rental.settlement.service.BatteryCostCalculator;
+import com.xniu.rental.settlement.service.ProfitSharingCalculator;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -66,6 +71,8 @@ public class ExternalRentalOrderService {
     private final ExternalRentalOrderRepository externalRentalOrderRepository;
     private final ExternalOrderPricingRevisionRepository pricingRevisionRepository;
     private final ExternalOrderRenewalRepository renewalRepository;
+    private final ExternalOrderVerificationRevisionRepository verificationRevisionRepository;
+    private final ExternalOrderAutoRenewalService autoRenewalService;
     private final ProductRepository productRepository;
     private final AssetRepository assetRepository;
     private final OrderRepository orderRepository;
@@ -77,12 +84,15 @@ public class ExternalRentalOrderService {
     private final SettlementIncomeRepository settlementIncomeRepository;
     private final SettlementRepository settlementRepository;
     private final SettlementStatementRepository settlementStatementRepository;
+    private final SettlementStatementService settlementStatementService;
     private final TransactionTemplate transactionTemplate;
 
     public ExternalRentalOrderService(
         ExternalRentalOrderRepository externalRentalOrderRepository,
         ExternalOrderPricingRevisionRepository pricingRevisionRepository,
         ExternalOrderRenewalRepository renewalRepository,
+        ExternalOrderVerificationRevisionRepository verificationRevisionRepository,
+        ExternalOrderAutoRenewalService autoRenewalService,
         ProductRepository productRepository,
         AssetRepository assetRepository,
         OrderRepository orderRepository,
@@ -94,11 +104,14 @@ public class ExternalRentalOrderService {
         SettlementIncomeRepository settlementIncomeRepository,
         SettlementRepository settlementRepository,
         SettlementStatementRepository settlementStatementRepository,
+        SettlementStatementService settlementStatementService,
         TransactionTemplate transactionTemplate
     ) {
         this.externalRentalOrderRepository = externalRentalOrderRepository;
         this.pricingRevisionRepository = pricingRevisionRepository;
         this.renewalRepository = renewalRepository;
+        this.verificationRevisionRepository = verificationRevisionRepository;
+        this.autoRenewalService = autoRenewalService;
         this.productRepository = productRepository;
         this.assetRepository = assetRepository;
         this.orderRepository = orderRepository;
@@ -110,6 +123,7 @@ public class ExternalRentalOrderService {
         this.settlementIncomeRepository = settlementIncomeRepository;
         this.settlementRepository = settlementRepository;
         this.settlementStatementRepository = settlementStatementRepository;
+        this.settlementStatementService = settlementStatementService;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -212,6 +226,16 @@ public class ExternalRentalOrderService {
         var order = externalRentalOrderRepository.findByIdForUpdate(id)
             .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
+        /* A terminal order is historical data.  Do not resolve its SKU/package
+         * through today's enabled catalog: a discontinued product must not
+         * make a harmless customer correction fail, and a missing snapshot
+         * must never be recreated by an ordinary edit.  The terminal branch
+         * below accepts only descriptive fields plus the current verification
+         * amount, preserving every settlement-attribution field byte-for-byte.
+         */
+        if (order.orderStatus() != ExternalRentalOrderStatus.ACTIVE) {
+            return updateTerminalOrderMetadata(order, request);
+        }
 
         var storeSku = ensureStoreSku(request.storeSkuId());
         authorizationService.requireStoreAccess(storeSku.merchantId(), storeSku.storeId());
@@ -222,11 +246,30 @@ public class ExternalRentalOrderService {
             ? normalizeLeaseMultiplier(order.leaseMultiplier())
             : normalizeLeaseMultiplier(request.leaseMultiplier());
         validateRequestAssets(request.frameAssetId(), request.batteryAssetId(), sku);
+        /* For a terminal order, omitted optional date/amount fields mean
+         * "keep the historical value".  Recomputing them from today's SKU
+         * would otherwise turn a harmless customer-info edit into a free
+         * lease extension or a silent price rewrite. */
         var expectedReturnAt = request.expectedReturnAt() == null
-            ? calculateExpectedReturnAt(request.rentStartedAt(), packageTemplate, leaseMultiplier)
+            ? (order.orderStatus() == ExternalRentalOrderStatus.ACTIVE
+                ? calculateExpectedReturnAt(request.rentStartedAt(), packageTemplate, leaseMultiplier)
+                : order.expectedReturnAt())
             : request.expectedReturnAt();
         if (expectedReturnAt != null && expectedReturnAt.isBefore(request.rentStartedAt())) {
             throw BusinessException.badRequest("预计归还时间不能早于起租时间");
+        }
+        var renewalScheduleChanged = !java.util.Objects.equals(order.rentStartedAt(), request.rentStartedAt())
+            || !java.util.Objects.equals(order.expectedReturnAt(), expectedReturnAt);
+        var hasRenewalEvents = renewalRepository.hasAccruedEvents(order.id());
+        if (renewalScheduleChanged && hasRenewalEvents) {
+            throw BusinessException.badRequest("补录订单已生成续租周期，不能再修改起租或预计归还时间");
+        }
+        var now = LocalDateTime.now();
+        if (renewalScheduleChanged
+            && !hasRenewalEvents
+            && order.expectedReturnAt() != null
+            && !order.expectedReturnAt().isAfter(now)) {
+            throw BusinessException.badRequest("补录订单已到期，不能直接修改起租或预计归还时间；请先生成续租收益或使用专用续租流程");
         }
 
         if (order.orderStatus() == ExternalRentalOrderStatus.ACTIVE) {
@@ -255,13 +298,156 @@ public class ExternalRentalOrderService {
 
         var externalRentalAmount = normalizeMoney(
             request.externalRentalAmount(),
-            packagePricing.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier))
+            order.orderStatus() == ExternalRentalOrderStatus.ACTIVE
+                ? packagePricing.rentalAmount().multiply(BigDecimal.valueOf(leaseMultiplier))
+                : order.externalRentalAmount()
         );
         var verificationAmount = normalizeVerificationAmount(request.verificationAmount());
+        var verificationEdited = !sameMoney(order.verificationAmount(), verificationAmount);
         var defaultSignFeeAmount = effectiveSignFeeAmount(packageTemplate, storeSku);
+        var signFeeAmount = normalizeMoney(
+            request.signFeeAmount(),
+            order.orderStatus() == ExternalRentalOrderStatus.ACTIVE ? defaultSignFeeAmount : order.signFeeAmount()
+        );
+        var depositAmount = normalizeMoney(
+            request.depositAmount(),
+            order.orderStatus() == ExternalRentalOrderStatus.ACTIVE ? packagePricing.depositAmount() : order.depositAmount()
+        );
+        var nextSourcePlatform = parseSource(request.sourcePlatform());
+        var nextLeaseUnit = packageTemplate.leaseUnit().name();
+        var nextLeaseValue = packageTemplate.leaseValue() * leaseMultiplier;
+        var nextTotalPeriods = packageTemplate.totalPeriods() * leaseMultiplier;
+        /* Extending an already-started active order by changing the multiplier
+         * or expected return date would skip the original renewal boundary
+         * without creating a billable extension event.  Until a dedicated
+         * extension workflow exists, fail closed; ordinary customer/amount
+         * edits remain available and are handled by the revision timeline. */
+        var orderHasStarted = order.rentStartedAt() != null && !order.rentStartedAt().isAfter(now);
+        var scheduleExtended = (order.expectedReturnAt() == null && expectedReturnAt != null)
+            || (order.expectedReturnAt() != null && expectedReturnAt != null
+                && expectedReturnAt.isAfter(order.expectedReturnAt()))
+            || nextTotalPeriods > order.totalPeriods()
+            || leaseMultiplier > normalizeLeaseMultiplier(order.leaseMultiplier());
+        if (orderHasStarted && scheduleExtended) {
+            throw BusinessException.badRequest("已开始的补录订单不能直接增加租期或延后归还时间；请使用续租流程生成对应收益");
+        }
+        /* These fields determine the financial owner/rate basis of the
+         * snapshot. A terminal order may still correct descriptive metadata
+         * such as source platform, but changing any of these fields would make
+         * the order row point at a different store/asset/fee while its frozen
+         * income still belongs to the original snapshot. */
+        var terminalSettlementAttributionChanged = !sameMoney(order.signFeeAmount(), signFeeAmount)
+            || !sameMoney(order.externalRentalAmount(), externalRentalAmount)
+            || !sameMoney(order.depositAmount(), depositAmount)
+            || !java.util.Objects.equals(order.frameAssetId(), request.frameAssetId())
+            || !java.util.Objects.equals(order.batteryAssetId(), request.batteryAssetId())
+            || !java.util.Objects.equals(order.storeSkuId(), storeSku.id())
+            || !java.util.Objects.equals(order.skuId(), storeSku.skuId())
+            || !java.util.Objects.equals(order.packageId(), packageTemplate.id())
+            || !java.util.Objects.equals(order.leaseMultiplier(), leaseMultiplier)
+            || !java.util.Objects.equals(order.leaseUnit(), nextLeaseUnit)
+            || !java.util.Objects.equals(order.leaseValue(), nextLeaseValue)
+            || !java.util.Objects.equals(order.totalPeriods(), nextTotalPeriods)
+            || !java.util.Objects.equals(order.rentStartedAt(), request.rentStartedAt())
+            || !java.util.Objects.equals(order.expectedReturnAt(), expectedReturnAt);
+        if (order.orderStatus() != ExternalRentalOrderStatus.ACTIVE && terminalSettlementAttributionChanged) {
+            throw BusinessException.badRequest("已结束补录订单只能修改客户资料、来源平台、核销金额和备注，不能修改门店、资产、办单费或租期结构");
+        }
+        /* A settlement-affecting edit must never replace a settled snapshot.
+         * Metadata-only edits (customer name/phone, remark, return date) keep
+         * the existing snapshot and income rows intact. */
+        var structuralSettlementChanged = !sameMoney(order.signFeeAmount(), signFeeAmount)
+            || !java.util.Objects.equals(order.sourcePlatform(), nextSourcePlatform)
+            || !java.util.Objects.equals(order.frameAssetId(), request.frameAssetId())
+            || !java.util.Objects.equals(order.batteryAssetId(), request.batteryAssetId())
+            || !java.util.Objects.equals(order.storeSkuId(), storeSku.id())
+            || !java.util.Objects.equals(order.skuId(), storeSku.skuId())
+            || !java.util.Objects.equals(order.packageId(), packageTemplate.id())
+            || !java.util.Objects.equals(order.leaseMultiplier(), leaseMultiplier)
+            || !java.util.Objects.equals(order.leaseUnit(), nextLeaseUnit)
+            || !java.util.Objects.equals(order.leaseValue(), nextLeaseValue)
+            || !java.util.Objects.equals(order.totalPeriods(), nextTotalPeriods);
+        var settlementStructureChanged = order.orderStatus() == ExternalRentalOrderStatus.ACTIVE
+            ? structuralSettlementChanged
+            : terminalSettlementAttributionChanged;
+        var settlementChanged = verificationEdited || structuralSettlementChanged;
+        /* The first snapshot is the immutable first-period fact for every
+         * supplemental order. A verification-only edit records an
+         * effective-dated renewal override; it must not rewrite the initial
+         * snapshot, regardless of whether the order is active, completed, or
+         * terminated. Once an order is completed/terminated, all settlement-
+         * affecting fields are historical metadata as well: rebuilding the
+         * snapshot there could move completed income to another store or
+         * resurrect income that termination intentionally removed. */
+        var preserveInitialSettlement = order.settlementSnapshotId() != null
+            && (order.orderStatus() != ExternalRentalOrderStatus.ACTIVE
+                || (verificationEdited && !structuralSettlementChanged));
+
+        /* A verification edit on an order that has no immutable first-period
+         * snapshot rebuilds the initial settlement. Any existing
+         * DRAFT/RECONCILING line for that source is derived from the old
+         * snapshot and must be rebuilt in the same transaction; otherwise the
+         * order/income rows would show the new amount while the month-end
+         * draft still shows the old one. For a terminal order the existing
+         * snapshot is always preserved, so this rebuild path is limited to
+         * active orders and legacy rows that genuinely lack a snapshot.
+         *
+         * The order row is already locked above.  Lock the affected months
+         * only after that order lock, matching delete/terminate/reconcile and
+         * avoiding the order -> month / month -> order deadlock.  Only months
+         * with an existing source-linked draft line are returned; the public
+         * generator locks all external-order rows in id order before reading
+         * them, so a missing candidate month cannot race this edit.
+         */
+        var rebuiltInitialDraftMonths = new java.util.LinkedHashSet<String>();
+        if (verificationEdited) {
+            if (!preserveInitialSettlement) {
+                rebuiltInitialDraftMonths.addAll(settlementStatementRepository.listDraftStatementMonthsBySource(
+                    SnapshotSourceType.EXTERNAL_ORDER.name(), order.id()
+                ));
+            }
+            /* Lock the complete affected-month set up front, not just the
+             * initial line's month. reconcilePendingEvents below may need to
+             * lock accrued-renewal months too; taking them here in one sorted
+             * pass prevents a historical event month from inverting the
+             * global month-lock order. This pre-lock is required even when
+             * the initial snapshot is preserved: reconcilePendingEvents may
+             * still replace pending renewal rows. */
+            var monthsToLock = new java.util.LinkedHashSet<String>(collectDraftStatementMonths(order));
+            lockDraftStatementMonths(monthsToLock);
+        }
+        /* Keep the lock order explicit: order row -> statement rows -> income
+         * rows.  In particular, do not acquire income locks and then lock a
+         * statement month; status transitions use statement -> income and
+         * could otherwise form a cycle. */
+        var initialSettlementLocked = hasLockedInitialSettlement(order.id());
+        var anySettlementLocked = initialSettlementLocked
+            || renewalRepository.hasLockedStatementLinesByExternalOrderForUpdate(order.id())
+            || renewalRepository.hasNonPendingIncomeByExternalOrderForUpdate(order.id());
+        if (settlementStructureChanged && hasRenewalEvents) {
+            throw BusinessException.badRequest("补录订单已生成续租周期，不能再修改办单费、分润资产、渠道或套餐等结构字段");
+        }
+        if (settlementStructureChanged && settlementStatementRepository.hasLinesBySource(
+            SnapshotSourceType.EXTERNAL_ORDER.name(), order.id())) {
+            throw BusinessException.badRequest("补录订单首期收益已进入月结单，不能修改办单费、分润资产、渠道或套餐等结构字段");
+        }
+        if (anySettlementLocked && settlementStructureChanged) {
+            throw BusinessException.badRequest("补录订单收益已锁定，不能修改办单费、分润资产、渠道或套餐等结构字段");
+        }
+        if (verificationEdited && anySettlementLocked && !preserveInitialSettlement) {
+            throw BusinessException.badRequest("补录订单收益已锁定，不能改写首期核销金额");
+        }
+        /* Read the database clock immediately before the order write.  This is
+         * the effective boundary used by the renewal timeline, so validation
+         * and lock acquisition time cannot make a manual edit appear earlier
+         * than the actual persisted change.  Metadata-only edits do not create
+         * a verification revision or need a clock read. */
+        var editedAt = verificationEdited
+            ? verificationRevisionRepository.currentDatabaseTime()
+            : null;
         var updated = externalRentalOrderRepository.update(new ExternalRentalOrderRepository.UpdateRow(
             order.id(),
-            parseSource(request.sourcePlatform()),
+            nextSourcePlatform,
             blankToNull(request.externalOrderNo()),
             storeSku.merchantId(),
             storeSku.storeId(),
@@ -274,11 +460,11 @@ public class ExternalRentalOrderService {
             request.batteryAssetId(),
             externalRentalAmount,
             verificationAmount,
-            normalizeMoney(request.signFeeAmount(), defaultSignFeeAmount),
-            normalizeMoney(request.depositAmount(), packagePricing.depositAmount()),
-            packageTemplate.leaseUnit().name(),
-            packageTemplate.leaseValue() * leaseMultiplier,
-            packageTemplate.totalPeriods() * leaseMultiplier,
+            signFeeAmount,
+            depositAmount,
+            nextLeaseUnit,
+            nextLeaseValue,
+            nextTotalPeriods,
             leaseMultiplier,
             order.autoRenewEnabled(),
             order.renewalUnit(),
@@ -294,7 +480,58 @@ public class ExternalRentalOrderService {
             blankToNull(request.remark()),
             currentAccountId()
         ));
-        updated = createAndSyncSettlement(updated);
+        /* Only an active order may create or replace a settlement snapshot
+         * during an edit.  A completed order with a missing legacy snapshot is
+         * repaired by the dedicated backfill runner; allowing an ordinary
+         * metadata edit to create it here would resurrect historical income.
+         * A terminated order must never recreate income after its cleanup. */
+        if (order.orderStatus() == ExternalRentalOrderStatus.ACTIVE
+            && ((settlementChanged && !preserveInitialSettlement) || updated.settlementSnapshotId() == null)) {
+            var batteryCostBasisChanged = !java.util.Objects.equals(order.storeSkuId(), storeSku.id())
+                || !java.util.Objects.equals(order.skuId(), storeSku.skuId())
+                || !java.util.Objects.equals(order.packageId(), packageTemplate.id())
+                || !java.util.Objects.equals(order.frameAssetId(), request.frameAssetId())
+                || !java.util.Objects.equals(order.batteryAssetId(), request.batteryAssetId())
+                || !java.util.Objects.equals(order.leaseMultiplier(), leaseMultiplier)
+                || !java.util.Objects.equals(order.leaseUnit(), nextLeaseUnit)
+                || !java.util.Objects.equals(order.leaseValue(), nextLeaseValue);
+            // A newly rebuilt snapshot must use the current verification
+            // amount. The old first-period base is preserved only by the
+            // verification-only path above; structural edits (including
+            // structural + verification edits) are a new settlement fact and
+            // must not accidentally retain the old amount.
+            updated = createAndSyncSettlement(updated, !batteryCostBasisChanged, null);
+        }
+        if (verificationEdited) {
+            verificationRevisionRepository.create(
+                updated.id(),
+                updated.verificationAmount(),
+                editedAt,
+                ExternalOrderVerificationRevisionType.ORDER_EDIT,
+                preserveInitialSettlement ? null : updated.settlementSnapshotId(),
+                currentAccountId()
+            );
+            // Rebuild only accrued renewal events whose income is still
+            // pending. Locked/settled statements remain immutable.
+            autoRenewalService.reconcilePendingEvents(updated.id());
+            // A non-preserved verification edit replaced the initial
+            // snapshot/income rows above. Rebuild any pre-existing draft
+            // statement lines from the new snapshot while the month locks
+            // acquired before the update are still held.
+            regenerateDraftMonths(rebuiltInitialDraftMonths);
+        } else if (!java.util.Objects.equals(order.rentStartedAt(), request.rentStartedAt())
+            && updated.settlementSnapshotId() != null) {
+            // A date-only correction changes the initial period boundary but
+            // must not become a renewal-price override for later periods.
+            verificationRevisionRepository.createIfMissingSnapshot(
+                updated.id(),
+                updated.verificationAmount(),
+                updated.rentStartedAt(),
+                ExternalOrderVerificationRevisionType.INITIAL,
+                updated.settlementSnapshotId(),
+                currentAccountId()
+            );
+        }
         externalRentalOrderRepository.addLog(
             updated.id(),
             updated.orderStatus(),
@@ -306,6 +543,104 @@ public class ExternalRentalOrderService {
         return toResponse(ensureView(updated.id()));
     }
 
+    /**
+     * Edit only historical/descriptive fields on a completed or terminated
+     * supplemental order.  This deliberately bypasses the live product
+     * catalog: products may be off-shelf or deleted by the time an operator
+     * corrects a customer's name or a manual verification amount.  Every
+     * settlement-attribution field is compared with the persisted order and
+     * then written back unchanged, so this path cannot move a frozen income to
+     * another store or recreate a missing terminal snapshot.
+     */
+    private ExternalRentalOrderResponse updateTerminalOrderMetadata(
+        ExternalRentalOrder order,
+        ExternalRentalOrderUpdateRequest request
+    ) {
+        if (!java.util.Objects.equals(order.storeSkuId(), request.storeSkuId())
+            || !java.util.Objects.equals(order.packageId(), request.packageId())
+            || (request.leaseMultiplier() != null
+                && !java.util.Objects.equals(order.leaseMultiplier(), normalizeLeaseMultiplier(request.leaseMultiplier())))
+            || !java.util.Objects.equals(order.rentStartedAt(), request.rentStartedAt())
+            || (request.expectedReturnAt() != null
+                && !java.util.Objects.equals(order.expectedReturnAt(), request.expectedReturnAt()))
+            || !java.util.Objects.equals(order.frameAssetId(), request.frameAssetId())
+            || !java.util.Objects.equals(order.batteryAssetId(), request.batteryAssetId())
+            || (request.externalRentalAmount() != null
+                && !sameMoney(order.externalRentalAmount(), normalizeMoney(request.externalRentalAmount(), null)))
+            || (request.signFeeAmount() != null
+                && !sameMoney(order.signFeeAmount(), normalizeMoney(request.signFeeAmount(), null)))
+            || (request.depositAmount() != null
+                && !sameMoney(order.depositAmount(), normalizeMoney(request.depositAmount(), null)))) {
+            throw BusinessException.badRequest("已结束补录订单只能修改客户资料、来源平台、核销金额和备注，不能修改门店、资产、办单费或租期结构");
+        }
+
+        var nextSourcePlatform = parseSource(request.sourcePlatform());
+        var verificationAmount = normalizeVerificationAmount(request.verificationAmount());
+        var verificationEdited = !sameMoney(order.verificationAmount(), verificationAmount);
+        var editedAt = verificationEdited ? verificationRevisionRepository.currentDatabaseTime() : null;
+        var updated = externalRentalOrderRepository.update(new ExternalRentalOrderRepository.UpdateRow(
+            order.id(),
+            nextSourcePlatform,
+            blankToNull(request.externalOrderNo()),
+            order.merchantId(),
+            order.storeId(),
+            order.storeSkuId(),
+            order.skuId(),
+            order.packageId(),
+            request.customerName().trim(),
+            request.customerPhone().trim(),
+            order.frameAssetId(),
+            order.batteryAssetId(),
+            order.externalRentalAmount(),
+            verificationAmount,
+            order.signFeeAmount(),
+            order.depositAmount(),
+            order.leaseUnit(),
+            order.leaseValue(),
+            order.totalPeriods(),
+            order.leaseMultiplier(),
+            order.autoRenewEnabled(),
+            order.renewalUnit(),
+            order.renewalValue(),
+            order.renewalAmount(),
+            order.renewalBillingMode(),
+            order.renewalDailyAmount(),
+            order.renewalDailyCapEnabled(),
+            order.renewalGraceHours(),
+            order.overdueDailyAmount(),
+            order.rentStartedAt(),
+            order.expectedReturnAt(),
+            blankToNull(request.remark()),
+            currentAccountId()
+        ));
+        if (verificationEdited) {
+            verificationRevisionRepository.create(
+                updated.id(),
+                updated.verificationAmount(),
+                editedAt,
+                ExternalOrderVerificationRevisionType.ORDER_EDIT,
+                null,
+                currentAccountId()
+            );
+            /* COMPLETED orders may retain accrued, still-mutable renewal
+             * periods.  They use the same exact edit-time rule as ACTIVE
+             * orders; TERMINATED events were reversed during termination and
+             * must never be resurrected. */
+            if (updated.orderStatus() == ExternalRentalOrderStatus.COMPLETED) {
+                autoRenewalService.reconcilePendingEvents(updated.id());
+            }
+        }
+        externalRentalOrderRepository.addLog(
+            updated.id(),
+            updated.orderStatus(),
+            updated.orderStatus(),
+            ExternalOrderOperationType.EDIT,
+            currentAccountId(),
+            "编辑已结束补录订单资料"
+        );
+        return toResponse(ensureView(updated.id()));
+    }
+
     @Transactional
     public void deleteOrder(Long id) {
         authorizationService.requirePermission("order.operate");
@@ -313,16 +648,18 @@ public class ExternalRentalOrderService {
             .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
 
-        if (settlementStatementRepository.hasLockedLinesBySource(SnapshotSourceType.EXTERNAL_ORDER.name(), order.id())) {
+        var draftMonths = collectDraftStatementMonths(order);
+        lockDraftStatementMonths(draftMonths);
+        if (settlementStatementRepository.hasLockedLinesBySourceForUpdate(SnapshotSourceType.EXTERNAL_ORDER.name(), order.id())) {
             throw BusinessException.badRequest("补录订单已进入已确认或已支付月结单，不能删除");
         }
+        ensureDraftMonthsRegenerable(draftMonths);
         if (settlementStatementRepository.hasLinesBySource(SnapshotSourceType.EXTERNAL_ORDER.name(), order.id())) {
             if (order.orderStatus() != ExternalRentalOrderStatus.TERMINATED) {
                 throw BusinessException.badRequest("补录订单已进入月结单，不能删除");
             }
-            deleteDraftStatementsByExternalOrder(order.id());
         }
-        if (settlementIncomeRepository.hasNonPendingBySource(IncomeSourceType.EXTERNAL_ORDER, order.id())) {
+        if (settlementIncomeRepository.hasNonPendingBySourceForUpdate(IncomeSourceType.EXTERNAL_ORDER, order.id())) {
             throw BusinessException.badRequest("补录订单收益已结算或冻结，不能删除");
         }
         ensureRenewalsReversible(order.id(), "删除");
@@ -334,9 +671,11 @@ public class ExternalRentalOrderService {
 
         settlementIncomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, order.id());
         reverseRenewals(order.id(), true);
+        verificationRevisionRepository.deleteByOrder(order.id());
         externalRentalOrderRepository.deleteLogs(order.id());
         externalRentalOrderRepository.delete(order.id());
         settlementRepository.deleteSnapshotsBySource(SnapshotSourceType.EXTERNAL_ORDER, order.id());
+        regenerateDraftMonths(draftMonths);
     }
 
     public ExternalRentalOrderBatchImportResponse batchImport(ExternalRentalOrderBatchImportRequest request) {
@@ -382,6 +721,11 @@ public class ExternalRentalOrderService {
         var packageTemplate = ensureStoreSkuPackage(storeSku, request.packageId());
         var packagePricing = storeSkuPackageAmount(storeSku.id(), request.packageId());
         var leaseMultiplier = normalizeLeaseMultiplier(request.leaseMultiplier());
+        // Older store-SKU rows may have a null renewal amount; the product
+        // service treats the period amount as the compatible system fallback.
+        var systemRenewalAmount = packagePricing.renewalAmount() == null
+            ? packagePricing.periodAmount()
+            : packagePricing.renewalAmount();
         validateRequestAssets(request.frameAssetId(), request.batteryAssetId(), sku);
         var expectedReturnAt = request.expectedReturnAt() == null
             ? calculateExpectedReturnAt(request.rentStartedAt(), packageTemplate, leaseMultiplier)
@@ -422,7 +766,7 @@ public class ExternalRentalOrderService {
             packagePricing.autoRenewEnabled(),
             packagePricing.renewalUnit() == null ? null : packagePricing.renewalUnit().name(),
             packagePricing.renewalValue(),
-            Boolean.TRUE.equals(packagePricing.autoRenewEnabled()) ? packagePricing.rentalAmount() : null,
+            Boolean.TRUE.equals(packagePricing.autoRenewEnabled()) ? systemRenewalAmount : null,
             packagePricing.renewalBillingMode().name(),
             packagePricing.renewalDailyAmount(),
             packagePricing.renewalDailyCapEnabled(),
@@ -435,6 +779,14 @@ public class ExternalRentalOrderService {
             currentAccountId()
         ));
         order = createAndSyncSettlement(order);
+        verificationRevisionRepository.createIfMissingSnapshot(
+            order.id(),
+            order.verificationAmount(),
+            order.rentStartedAt(),
+            ExternalOrderVerificationRevisionType.INITIAL,
+            order.settlementSnapshotId(),
+            currentAccountId()
+        );
         externalRentalOrderRepository.addLog(
             order.id(),
             null,
@@ -450,9 +802,22 @@ public class ExternalRentalOrderService {
     public ExternalRentalOrderResponse complete(Long id, ExternalRentalOrderCompleteRequest request) {
         authorizationService.requirePermission("order.operate");
         request = request == null ? new ExternalRentalOrderCompleteRequest(null, null, null, null) : request;
-        var order = ensureOrder(id);
+        var order = externalRentalOrderRepository.findByIdForUpdate(id)
+            .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
         ensureActive(order);
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
+        /* The background job runs hourly, so an operator may complete an
+         * order after its renewal boundary but before the next scan.  Accrue
+         * all due periods while the order is still ACTIVE; once COMPLETED, the
+         * scheduler deliberately stops touching it. */
+        var completeAt = LocalDateTime.now();
+        if (Boolean.TRUE.equals(order.autoRenewEnabled())
+            && order.expectedReturnAt() != null
+            && !order.expectedReturnAt().isAfter(completeAt)) {
+            autoRenewalService.accrueDueOrder(order.id(), completeAt);
+            order = externalRentalOrderRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
+        }
         var returnStore = resolveReturnStore(order, request.returnStoreId());
         if (order.frameAssetId() != null) {
             returnAssetToStore(order.frameAssetId(), parseReturnStatus(request.frameResultStatus(), AssetStatus.IDLE), order.merchantId(), returnStore.id(), defaultRemark(request.remark(), "外部补录订单归还主资产"));
@@ -484,7 +849,8 @@ public class ExternalRentalOrderService {
     @Transactional
     public ExternalRentalOrderResponse terminate(Long id, ExternalRentalOrderTerminateRequest request) {
         authorizationService.requirePermission("order.operate");
-        var order = ensureOrder(id);
+        var order = externalRentalOrderRepository.findByIdForUpdate(id)
+            .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
         ensureActive(order);
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         var returnStore = resolveReturnStore(order, request.returnStoreId());
@@ -503,7 +869,7 @@ public class ExternalRentalOrderService {
             blankToNull(request.remark()) == null ? order.remark() : request.remark().trim(),
             currentAccountId()
         );
-        removeTerminatedSettlementData(id);
+        removeTerminatedSettlementData(order);
         pricingRevisionRepository.cancelPendingByOrder(id);
         externalRentalOrderRepository.addLog(
             id,
@@ -604,24 +970,47 @@ public class ExternalRentalOrderService {
     }
 
     private ExternalRentalOrder createAndSyncSettlement(ExternalRentalOrder order) {
+        return createAndSyncSettlement(order, false);
+    }
+
+    private ExternalRentalOrder createAndSyncSettlement(ExternalRentalOrder order, boolean preserveBatteryCost) {
+        return createAndSyncSettlement(order, preserveBatteryCost, null);
+    }
+
+    private ExternalRentalOrder createAndSyncSettlement(
+        ExternalRentalOrder order,
+        boolean preserveBatteryCost,
+        BigDecimal initialSettlementBase
+    ) {
         var sku = productRepository.findSku(order.skuId())
             .orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
         var packageTemplate = productRepository.findPackage(order.packageId())
             .orElseThrow(() -> BusinessException.badRequest("SKU 不存在"));
-        var batteryCostAmount = BatteryCostCalculator.calculate(
-            sku.batteryCostDailyAmount(),
-            sku.batteryCostMonthlyAmount(),
-            packageTemplate.leaseUnit(),
-            packageTemplate.leaseValue(),
-            order.leaseMultiplier()
-        );
+        // Keep the original battery-cost basis when an existing supplemental
+        // order is edited. Product-cost changes must not silently rewrite a
+        // historical settlement snapshot; a new order has no snapshot and is
+        // calculated from the current SKU configuration.
+        var previousSnapshot = order.settlementSnapshotId() == null
+            ? null
+            : settlementRepository.findSnapshot(order.settlementSnapshotId()).orElse(null);
+        var batteryCostAmount = preserveBatteryCost && previousSnapshot != null
+            && previousSnapshot.sourceType() == SnapshotSourceType.EXTERNAL_ORDER
+            && order.id().equals(previousSnapshot.sourceId())
+            ? previousSnapshot.batteryCostAmount()
+            : BatteryCostCalculator.calculate(
+                sku.batteryCostDailyAmount(),
+                sku.batteryCostMonthlyAmount(),
+                packageTemplate.leaseUnit(),
+                packageTemplate.leaseValue(),
+                order.leaseMultiplier()
+            );
         var snapshot = settlementService.createOrderSnapshot(new SnapshotCreateRequest(
             "EXTERNAL_ORDER",
             order.id(),
             order.storeSkuId(),
             order.frameAssetId(),
             order.batteryAssetId(),
-            order.verificationAmount(),
+            initialSettlementBase == null ? order.verificationAmount() : initialSettlementBase,
             order.sourcePlatform().name(),
             order.signFeeAmount(),
             batteryCostAmount
@@ -631,38 +1020,81 @@ public class ExternalRentalOrderService {
         return updated;
     }
 
-    private void removeTerminatedSettlementData(Long orderId) {
-        if (settlementStatementRepository.hasLockedLinesBySource(SnapshotSourceType.EXTERNAL_ORDER.name(), orderId)) {
+    private void removeTerminatedSettlementData(ExternalRentalOrder order) {
+        var orderId = order.id();
+        var draftMonths = collectDraftStatementMonths(order);
+        lockDraftStatementMonths(draftMonths);
+        if (settlementStatementRepository.hasLockedLinesBySourceForUpdate(SnapshotSourceType.EXTERNAL_ORDER.name(), orderId)) {
             throw BusinessException.badRequest("补录订单已进入已确认或已支付月结单，不能终止");
         }
-        deleteDraftStatementsByExternalOrder(orderId);
-        settlementIncomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, orderId);
+        if (settlementIncomeRepository.hasNonPendingBySourceForUpdate(IncomeSourceType.EXTERNAL_ORDER, orderId)) {
+            throw BusinessException.badRequest("补录订单首期收益已结算或冻结，不能终止");
+        }
+        ensureDraftMonthsRegenerable(draftMonths);
         ensureRenewalsReversible(orderId, "终止");
+        settlementIncomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, orderId);
         reverseRenewals(orderId, false);
+        regenerateDraftMonths(draftMonths);
     }
 
     private void ensureRenewalsReversible(Long orderId, String action) {
-        if (renewalRepository.hasLockedStatementLinesByExternalOrder(orderId)) {
+        if (renewalRepository.hasLockedStatementLinesByExternalOrderForUpdate(orderId)) {
             throw BusinessException.badRequest("补录订单续租收益已进入已确认或已支付月结单，不能" + action);
         }
-        if (renewalRepository.hasNonPendingIncomeByExternalOrder(orderId)) {
+        if (renewalRepository.hasNonPendingIncomeByExternalOrderForUpdate(orderId)) {
             throw BusinessException.badRequest("补录订单续租收益已结算或冻结，不能" + action);
         }
     }
 
     private void reverseRenewals(Long orderId, boolean deleteEvents) {
-        for (var statementMonth : renewalRepository.listDraftStatementMonthsByExternalOrder(orderId)) {
-            settlementStatementRepository.deleteDraftStatements(statementMonth);
-        }
         renewalRepository.reversePendingByExternalOrder(orderId);
         if (deleteEvents) {
             renewalRepository.deleteByExternalOrder(orderId);
         }
     }
 
-    private void deleteDraftStatementsByExternalOrder(Long orderId) {
-        for (var statementMonth : settlementStatementRepository.listDraftStatementMonthsBySource(SnapshotSourceType.EXTERNAL_ORDER.name(), orderId)) {
-            settlementStatementRepository.deleteDraftStatements(statementMonth);
+    /**
+     * Return the draft-statement months that currently contain a derived line
+     * for this order.  Do not add the order creation month or every accrued
+     * event's period month here: those are only candidate months and may
+     * belong to an unrelated statement.  Including them made delete/terminate
+     * reject an order when another order had already locked that month.
+     *
+     * The caller holds the order row lock before invoking this method.  The
+     * public month generator acquires all external-order locks in id order,
+     * so a newly-created line cannot race this operation while the order is
+     * being deleted or terminated.
+     */
+    private java.util.Set<String> collectDraftStatementMonths(ExternalRentalOrder order) {
+        var orderId = order.id();
+        var months = new java.util.LinkedHashSet<String>();
+        months.addAll(settlementStatementRepository.listDraftStatementMonthsBySource(
+            SnapshotSourceType.EXTERNAL_ORDER.name(), orderId));
+        months.addAll(renewalRepository.listDraftStatementMonthsByExternalOrder(orderId));
+        return months;
+    }
+
+    /** Rebuild only affected unlocked months; never delete another order's
+     * draft lines as a side effect of terminating/deleting this order. */
+    private void regenerateDraftMonths(java.util.Set<String> months) {
+        for (var month : months) {
+            settlementStatementService.regenerateUnlockedMonthAlreadyLocked(month);
+        }
+    }
+
+    private void lockDraftStatementMonths(java.util.Set<String> months) {
+        months.stream()
+            .sorted()
+            .forEach(settlementStatementRepository::lockStatementsByMonthForUpdate);
+    }
+
+    private void ensureDraftMonthsRegenerable(java.util.Set<String> months) {
+        for (var month : months) {
+            if (settlementStatementRepository.hasLockedStatements(month)) {
+                throw BusinessException.badRequest(
+                    "补录订单关联月份含已锁定月结单，不能自动清理草稿，请先人工核对 " + month
+                );
+            }
         }
     }
 
@@ -672,10 +1104,24 @@ public class ExternalRentalOrderService {
             try {
                 var updated = transactionTemplate.execute(status -> {
                     var order = externalRentalOrderRepository.findByIdForUpdate(id).orElse(null);
-                    if (order == null || order.settlementSnapshotId() != null) {
+                    /* A terminated order intentionally has no live income
+                     * after cleanup.  Do not let the generic historical
+                     * backfill recreate a snapshot (and therefore income)
+                     * for a legacy terminated row that is missing its link. */
+                    if (order == null
+                        || order.settlementSnapshotId() != null
+                        || order.orderStatus() == ExternalRentalOrderStatus.TERMINATED) {
                         return false;
                     }
-                    createAndSyncSettlement(order);
+                    var settled = createAndSyncSettlement(order);
+                    verificationRevisionRepository.createIfMissingSnapshot(
+                        settled.id(),
+                        settled.verificationAmount(),
+                        settled.rentStartedAt(),
+                        ExternalOrderVerificationRevisionType.INITIAL,
+                        settled.settlementSnapshotId(),
+                        settled.createdByAccountId()
+                    );
                     return true;
                 });
                 if (Boolean.TRUE.equals(updated)) {
@@ -856,10 +1302,13 @@ public class ExternalRentalOrderService {
             order.settlementSnapshotId(),
             snapshot == null ? null : snapshot.snapshotNo(),
             snapshot == null ? null : snapshot.settlementBaseAmount(),
+            snapshot == null ? null : snapshot.rentalAmount(),
             snapshot == null ? null : snapshot.channelFeeAmount(),
             snapshot == null ? null : snapshot.platformFeeAmount(),
             snapshot == null ? null : snapshot.storeOperationAmount(),
             snapshot == null ? null : snapshot.maintenanceFundAmount(),
+            storeOrderFeeAmount(order, snapshot),
+            storeRevenueAmount(order, snapshot),
             snapshot == null ? null : snapshot.channelReferralAmount(),
             snapshot == null ? null : snapshot.investorShareAmount(),
             order.signFeeAmount(),
@@ -914,6 +1363,45 @@ public class ExternalRentalOrderService {
 
     private ExternalRentalOrderResponse toResponse(ExternalRentalOrder order) {
         return toResponse(ensureView(order.id()));
+    }
+
+    /** Store-facing fee projection shared by order lists and details. */
+    private BigDecimal storeOrderFeeAmount(
+        ExternalRentalOrder order,
+        com.xniu.rental.settlement.model.SettlementRuleSnapshot snapshot
+    ) {
+        if (snapshot == null) {
+            return ProfitSharingCalculator.calculateOrderFee(order.signFeeAmount()).merchantNetAmount();
+        }
+        if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2) {
+            var snapshotFee = money(snapshot.merchantOrderFeeAmount());
+            var orderFee = money(order.signFeeAmount());
+            /* Before the fee was frozen into V2 snapshots, old supplemental
+             * snapshots either stored zero or the gross fee.  The order row is
+             * the authoritative actual fee for those records; never display
+             * zero or 100% as the store entitlement. */
+            if (snapshotFee.signum() <= 0 || snapshotFee.compareTo(orderFee) == 0) {
+                return ProfitSharingCalculator.calculateOrderFee(orderFee).merchantNetAmount();
+            }
+            return snapshotFee;
+        }
+        return ProfitSharingCalculator.calculateOrderFee(order.signFeeAmount()).merchantNetAmount();
+    }
+
+    private BigDecimal storeRevenueAmount(
+        ExternalRentalOrder order,
+        com.xniu.rental.settlement.model.SettlementRuleSnapshot snapshot
+    ) {
+        var operation = snapshot == null ? BigDecimal.ZERO : snapshot.storeOperationAmount();
+        var maintenance = snapshot == null ? BigDecimal.ZERO : snapshot.maintenanceFundAmount();
+        if (snapshot != null && snapshot.calculationVersion() != SettlementCalculationVersion.PROFIT_V2) {
+            operation = snapshot.merchantRentShareAmount();
+            maintenance = BigDecimal.ZERO;
+        }
+        return money(operation)
+            .add(money(maintenance))
+            .add(storeOrderFeeAmount(order, snapshot))
+            .setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     public List<com.xniu.rental.asset.dto.AssetRentalRecordResponse> listAssetRentalRecords(Long assetId) {
@@ -1101,12 +1589,35 @@ public class ExternalRentalOrderService {
         return amount;
     }
 
+    private BigDecimal money(BigDecimal value) {
+        return (value == null ? BigDecimal.ZERO : value).setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
     private BigDecimal normalizeVerificationAmount(BigDecimal value) {
         if (value == null) {
             throw BusinessException.badRequest("请输入实际核销金额");
         }
         var amount = normalizeMoney(value, null);
         return amount.setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private boolean sameMoney(BigDecimal left, BigDecimal right) {
+        if (left == null || right == null) {
+            return left == right;
+        }
+        return left.compareTo(right) == 0;
+    }
+
+    private boolean hasLockedInitialSettlement(Long externalOrderId) {
+        // Keep the global lock order (statement rows before income rows), the
+        // same order used by month-end status transitions and termination.
+        var statementLocked = settlementStatementRepository.hasLockedLinesBySourceForUpdate(
+            SnapshotSourceType.EXTERNAL_ORDER.name(), externalOrderId
+        );
+        var incomeLocked = settlementIncomeRepository.hasNonPendingBySourceForUpdate(
+            IncomeSourceType.EXTERNAL_ORDER, externalOrderId
+        );
+        return incomeLocked || statementLocked;
     }
 
     private LocalDateTime calculateExpectedReturnAt(LocalDateTime startedAt, ProductPackage productPackage, Integer leaseMultiplier) {

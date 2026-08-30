@@ -45,6 +45,16 @@ class ProfitSharingCalculatorTests {
     }
 
     @Test
+    void orderFeeShouldRoundTheConfirmedNinetySevenPercentMerchantAmountFirst() {
+        var allocation = ProfitSharingCalculator.calculateOrderFee(new BigDecimal("1.50"));
+
+        assertThat(allocation.merchantNetAmount()).isEqualByComparingTo("1.46");
+        assertThat(allocation.serviceFeeAmount()).isEqualByComparingTo("0.04");
+        assertThat(allocation.merchantNetAmount().add(allocation.serviceFeeAmount()))
+            .isEqualByComparingTo("1.50");
+    }
+
+    @Test
     void takeawayRentalShouldDeductBatteryCostBeforeSharingRemainder() {
         var allocation = ProfitSharingCalculator.calculate(
             new BigDecimal("399.00"),

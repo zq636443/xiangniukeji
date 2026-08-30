@@ -185,6 +185,14 @@
               <text>{{ money(settlement.maintenanceFundAmount) }}</text>
             </view>
             <view>
+              <text>门店办单费（97%净额）</text>
+              <text>{{ money(storeOrderFeeDisplay(settlement)) }}</text>
+            </view>
+            <view>
+              <text>门店收益合计</text>
+              <text>{{ money(Number(settlement.storeOperationAmount || 0) + Number(settlement.maintenanceFundAmount || 0) + storeOrderFeeDisplay(settlement)) }}</text>
+            </view>
+            <view>
               <text>渠道引流分润</text>
               <text>{{ money(settlement.channelReferralAmount) }}</text>
             </view>
@@ -195,12 +203,16 @@
           </template>
           <template v-else>
             <view>
-              <text>办单费</text>
-              <text>{{ money(settlement.merchantOrderFeeAmount) }}</text>
+              <text>办单费（97%净额）</text>
+              <text>{{ money(storeOrderFeeDisplay(settlement)) }}</text>
             </view>
             <view>
               <text>门店租金分成</text>
               <text>{{ money(settlement.merchantRentShareAmount) }}</text>
+            </view>
+            <view>
+              <text>门店收益合计</text>
+              <text>{{ money(Number(settlement.merchantRentShareAmount || 0) + storeOrderFeeDisplay(settlement)) }}</text>
             </view>
             <view>
               <text>平台租金分成</text>
@@ -407,7 +419,7 @@
             <text class="asset-status">{{ incomeStatusText(item.entryStatus) }}</text>
           </view>
           <view class="asset-sub">{{ incomeSourceText(item.sourceType) }} {{ item.sourceNo || item.sourceId }} / {{ item.entryNo }}</view>
-          <view class="asset-sub">金额：{{ money(item.amount) }} / {{ item.remark || '-' }}</view>
+          <view class="asset-sub">金额（收益口径）：{{ money(item.storeRevenueAmount ?? item.amount) }} / {{ item.remark || '-' }}</view>
           <view class="asset-sub">计入时间：{{ dateText(item.occurredAt) }} / 结算时间：{{ dateText(item.settledAt) }}</view>
         </view>
       </view>
@@ -778,7 +790,10 @@ async function loadIncomeEntries() {
     const status = incomeStatusValues[incomeStatusIndex.value];
     const query = status ? `&status=${status}` : '';
     const loadedEntries = await request<SettlementIncomeEntry[]>(`/api/merchant/settlement/income/entries?storeId=${currentStoreId.value}${query}`);
-    incomeEntries.value = loadedEntries.filter((item) => item.sourceType !== 'ORDER');
+    incomeEntries.value = loadedEntries.filter((item) => item.sourceType !== 'ORDER'
+      && item.beneficiaryType === 'MERCHANT'
+      && item.entryStatus !== 'FROZEN'
+      && ['STORE_OPERATION_SHARE', 'MAINTENANCE_FUND_SHARE', 'MERCHANT_ORDER_FEE', 'MERCHANT_RENT_SHARE'].includes(item.lineType));
   } catch (error) {
     uni.showToast({ title: error instanceof Error ? error.message : '收益加载失败', icon: 'none' });
   } finally {
@@ -1415,6 +1430,7 @@ function incomeSourceText(value: SettlementIncomeEntry['sourceType']) {
   const map: Record<SettlementIncomeEntry['sourceType'], string> = {
     BILL: '实收账单',
     EXTERNAL_ORDER: '补录订单',
+    EXTERNAL_RENEWAL: '补录续租',
     ORDER: '历史整单预计'
   };
   return map[value] || value;
@@ -1502,6 +1518,25 @@ function dateText(value?: string | null) {
 
 function money(value: number | string | null | undefined) {
   return `¥${Number(value || 0).toFixed(2)}`;
+}
+
+function storeOrderFeeDisplay(settlement: SettlementSnapshot) {
+  const recorded = Number(settlement.merchantOrderFeeAmount || 0);
+  const gross = Number(settlement.signFeeAmount || 0);
+  const netGross = Math.round(gross * 97) / 100;
+  /* Early snapshots may have stored zero or the gross fee. This is a
+   * read-only 97% projection; immutable ledger/monthly statement amounts are
+   * still the source of truth for historical locked records. */
+  if (gross > 0 && (recorded === 0 || Math.abs(recorded - gross) < 0.005)) {
+    return netGross;
+  }
+  if (gross > 0 && Math.abs(recorded - netGross) < 0.005) {
+    return recorded;
+  }
+  if (settlement.calculationVersion === 'LEGACY_V1' && recorded > 0) {
+    return Math.round(recorded * 97) / 100;
+  }
+  return recorded;
 }
 </script>
 

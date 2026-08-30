@@ -63,6 +63,7 @@ import type {
   StoreSku
 } from '../types/api';
 import { downloadCsv } from '../utils/csv';
+import { snapshotStoreOrderFeeAmount, storeRevenueEntryAmount } from '../utils/storeRevenue';
 
 type RuleForm = {
   ruleName: string;
@@ -362,7 +363,10 @@ export function SettlementManagement() {
   const snapshotTotals = useMemo(() => filteredSnapshots.reduce((result, snapshot) => ({
     base: result.base + Number(snapshot.settlementBaseAmount || 0),
     platform: result.platform + Number(snapshot.platformFeeAmount || 0),
-    store: result.store + Number(snapshot.storeOperationAmount || 0) + Number(snapshot.maintenanceFundAmount || 0),
+    store: result.store
+      + Number(snapshot.storeOperationAmount || 0)
+      + Number(snapshot.maintenanceFundAmount || 0)
+      + snapshotStoreOrderFeeAmount(snapshot),
     channel: result.channel + Number(snapshot.channelFeeAmount || 0) + Number(snapshot.channelReferralAmount || 0),
     investor: result.investor + Number(snapshot.investorShareAmount || 0)
   }), { base: 0, platform: 0, store: 0, channel: 0, investor: 0 }), [filteredSnapshots]);
@@ -403,7 +407,7 @@ export function SettlementManagement() {
     [filteredEntries]
   );
   const incomeTotals = useMemo(() => settlementPayableEntries.reduce((result, entry) => {
-    result[entry.entryStatus] += Number(entry.amount || 0);
+    result[entry.entryStatus] += storeRevenueEntryAmount(entry);
     return result;
   }, { PENDING: 0, SETTLED: 0, FROZEN: 0 }), [settlementPayableEntries]);
   const incomeBusinessCount = useMemo(
@@ -766,7 +770,7 @@ export function SettlementManagement() {
 
   function exportStoreProfits() {
     downloadCsv(`门店实际分润-${statementMonth}`, [
-      '月份', '商户', '门店', '门店编码', '实际核销/实收基数', '签单费', '门店运营分润', '门店维修分润',
+      '月份', '商户', '门店', '门店编码', '实际核销/实收基数', '办单费结算金额（新月结97%/历史锁定原额）', '门店运营分润', '门店维修分润', '门店收益合计',
       '门店应付电池公司', '维修补回', '维保扣减', '人工调整', '实际应结算', '已打款', '待结算', '订单数', '账单数', '状态', '月结单号'
     ], filteredStoreProfitRows.map((record) => [
       record.statementMonth,
@@ -777,6 +781,7 @@ export function SettlementManagement() {
       record.signFeeAmount,
       record.storeOperationAmount,
       record.storeMaintenanceAmount,
+      Number(record.signFeeAmount || 0) + Number(record.storeOperationAmount || 0) + Number(record.storeMaintenanceAmount || 0),
       record.batteryCostAmount,
       record.maintenanceReimburseAmount,
       record.maintenanceDeductAmount,
@@ -824,7 +829,7 @@ export function SettlementManagement() {
   function exportSnapshots() {
     downloadCsv('分润快照', [
       '快照号', '业务来源', '来源类型', '来源渠道', '门店', '门店商品', '命中规则', '规则范围', '结算基数', '渠道核销扣点',
-      '平台扣点', '门店运营', '门店维修', '渠道引流', '出资方', '计算版本', '生成时间'
+      '平台扣点', '门店运营', '门店维修', '办单费门店净额（97%展示）', '门店收益合计', '渠道引流', '出资方', '计算版本', '生成时间'
     ], filteredSnapshots.map((record) => [
       record.snapshotNo,
       snapshotSourceName(record),
@@ -839,6 +844,8 @@ export function SettlementManagement() {
       record.platformFeeAmount,
       record.storeOperationAmount,
       record.maintenanceFundAmount,
+      snapshotStoreOrderFeeAmount(record),
+      Number(record.storeOperationAmount || 0) + Number(record.maintenanceFundAmount || 0) + snapshotStoreOrderFeeAmount(record),
       record.channelReferralAmount,
       record.investorShareAmount,
       calculationVersionText(record.calculationVersion),
@@ -848,7 +855,7 @@ export function SettlementManagement() {
 
   function exportIncomeEntries() {
     downloadCsv('收益台账', [
-      '收益单号', '来源', '业务单号', '门店', '收益方', '收益类型', '金额', '状态', '备注', '计入时间', '结算时间'
+      '收益单号', '来源', '业务单号', '门店', '收益方', '收益类型', '收益口径金额', '原流水金额', '状态', '备注', '计入时间', '结算时间'
     ], filteredEntries.map((record) => [
       record.entryNo,
       incomeSourceText(record.sourceType),
@@ -856,6 +863,7 @@ export function SettlementManagement() {
       storeMap.get(record.storeId)?.storeName,
       incomeBeneficiaryName(record),
       lineTypeText(record.lineType),
+      storeRevenueEntryAmount(record),
       record.amount,
       incomeStatusText(record.entryStatus),
       record.remark,
@@ -940,7 +948,7 @@ export function SettlementManagement() {
                   <Col span={4}><SettlementMetric icon={<WalletOutlined />} tone="green" label="实际核销/实收基数" value={money(storeProfitTotals.base)} detail={`${storeProfits.length} 个门店已生成月结`} /></Col>
                   <Col span={4}><SettlementMetric icon={<ShopOutlined />} tone="blue" label="门店运营分润" value={money(storeProfitTotals.operation)} detail="按门店规则计算" /></Col>
                   <Col span={4}><SettlementMetric icon={<SafetyCertificateOutlined />} tone="violet" label="门店维修分润" value={money(storeProfitTotals.maintenance)} detail="用于门店日常维修" /></Col>
-                  <Col span={4}><SettlementMetric icon={<DollarOutlined />} tone="orange" label="实收签单费" value={money(storeProfitTotals.signFee)} detail="签单费全额归门店" /></Col>
+                  <Col span={4}><SettlementMetric icon={<DollarOutlined />} tone="orange" label="办单费结算金额" value={money(storeProfitTotals.signFee)} detail="新月结按97%；历史锁定金额保留" /></Col>
                   <Col span={4}><SettlementMetric icon={<FileDoneOutlined />} tone="green" label="门店实际应结算" value={money(storeProfitTotals.payable)} detail="已包含调整与扣减" /></Col>
                   <Col span={4}><SettlementMetric icon={<WarningOutlined />} tone="orange" label="应付电池公司" value={money(storeProfitTotals.batteryCost)} detail="不计入门店收益和平台收益" /></Col>
                 </Row>
@@ -949,7 +957,7 @@ export function SettlementManagement() {
                   <div className="section-head settlement-list-head">
                     <div>
                       <Typography.Title level={4}>各门店实际收益</Typography.Title>
-                      <Typography.Text type="secondary">门店运营、门店维修和签单费分别展示，最终应结算金额以月结单为准。</Typography.Text>
+                      <Typography.Text type="secondary">门店收益包含运营分润、维修分润和办单费；新生成月结按办单费97%计入，历史已锁定月结保留原结算金额。</Typography.Text>
                     </div>
                     <Space>
                       <Tag color="green">已生成 {storeProfits.length}</Tag>
@@ -1045,7 +1053,7 @@ export function SettlementManagement() {
                           </Space>
                         )
                       },
-                      { title: '签单费', dataIndex: 'signFeeAmount', width: 120, render: money },
+                      { title: '办单费结算金额', dataIndex: 'signFeeAmount', width: 145, render: money },
                       { title: '门店运营', dataIndex: 'storeOperationAmount', width: 125, render: (value) => <Typography.Text className="amount-positive">{money(value)}</Typography.Text> },
                       { title: '门店维修', dataIndex: 'storeMaintenanceAmount', width: 125, render: (value) => <Typography.Text className="amount-positive">{money(value)}</Typography.Text> },
                       { title: '应付电池公司', dataIndex: 'batteryCostAmount', width: 145, render: (value) => <Typography.Text type="warning" strong>{money(value)}</Typography.Text> },
@@ -1122,8 +1130,8 @@ export function SettlementManagement() {
                 <div className="section">
                   <div className="section-head settlement-action-head">
                     <div>
-                      <Typography.Title level={4}>{statementMonth} 月结工作台</Typography.Title>
-                      <Typography.Text type="secondary">月结以实际核销及实收数据为基础，已确认的月份会自动锁定。</Typography.Text>
+                      <Typography.Title level={4}>{statementMonth} 月结工作台（非实时）</Typography.Title>
+                      <Typography.Text type="secondary">月结以实际核销及实收数据为基础，已确认的月份会自动锁定；实时门店收益请查看经营工作台。</Typography.Text>
                     </div>
                     <Space wrap>
                       <DatePicker
@@ -1296,7 +1304,7 @@ export function SettlementManagement() {
                         width: 220,
                         render: (_, record) => (
                           <Space direction="vertical" size={0}>
-                            {record.signFeeIncomeAmount > 0 && <span>签单费 {money(record.signFeeIncomeAmount)}</span>}
+                            {record.signFeeIncomeAmount > 0 && <span>办单费结算金额 {money(record.signFeeIncomeAmount)}</span>}
                             <span>分润收益 {money(record.rentShareIncomeAmount)}</span>
                             {record.adjustmentAmount !== 0 && <Typography.Text type="secondary">调整 {signedMoney(record.adjustmentAmount)}</Typography.Text>}
                           </Space>
@@ -1374,12 +1382,18 @@ export function SettlementManagement() {
               <Space direction="vertical" size={16} className="page-stack settlement-tab-content">
                 <Row gutter={[12, 12]}>
                   <Col span={4}><SettlementMetric icon={<FileSearchOutlined />} tone="blue" label="快照数量" value={filteredSnapshots.length} detail="当前筛选结果" /></Col>
-                  <Col span={4}><SettlementMetric icon={<WalletOutlined />} tone="green" label="结算基数" value={money(snapshotTotals.base)} detail="实际核销金额汇总" /></Col>
-                  <Col span={4}><SettlementMetric icon={<DollarOutlined />} tone="orange" label="平台扣点" value={money(snapshotTotals.platform)} detail="租赁平台收入" /></Col>
-                  <Col span={4}><SettlementMetric icon={<ShopOutlined />} tone="blue" label="门店合计" value={money(snapshotTotals.store)} detail="运营分润 + 维修分润" /></Col>
-                  <Col span={4}><SettlementMetric icon={<SafetyCertificateOutlined />} tone="violet" label="渠道合计" value={money(snapshotTotals.channel)} detail="核销扣点 + 引流分润" /></Col>
-                  <Col span={4}><SettlementMetric icon={<TeamOutlined />} tone="green" label="出资方合计" value={money(snapshotTotals.investor)} detail="按订单独立归属" /></Col>
+                  <Col span={4}><SettlementMetric icon={<WalletOutlined />} tone="green" label="快照基数（非实时）" value={money(snapshotTotals.base)} detail="含历史替换快照" /></Col>
+                  <Col span={4}><SettlementMetric icon={<DollarOutlined />} tone="orange" label="平台扣点（快照）" value={money(snapshotTotals.platform)} detail="审计快照汇总" /></Col>
+                  <Col span={4}><SettlementMetric icon={<ShopOutlined />} tone="blue" label="门店收益（快照）" value={money(snapshotTotals.store)} detail="含历史替换；实时值请看工作台" /></Col>
+                  <Col span={4}><SettlementMetric icon={<SafetyCertificateOutlined />} tone="violet" label="渠道合计（快照）" value={money(snapshotTotals.channel)} detail="核销扣点 + 引流分润" /></Col>
+                  <Col span={4}><SettlementMetric icon={<TeamOutlined />} tone="green" label="出资方合计（快照）" value={money(snapshotTotals.investor)} detail="按订单独立归属" /></Col>
                 </Row>
+                <Alert
+                  type="info"
+                  showIcon
+                  message="分润快照页是非实时审计口径"
+                  description="重算产生的旧快照会保留用于追溯，因此这里可能包含历史替换记录；实时门店收益只统计当前收益流水中的运营分成、维修分成和办单费97%净额。"
+                />
                 <div className="section">
                   <div className="section-head settlement-list-head">
                     <div>
@@ -1507,6 +1521,8 @@ export function SettlementManagement() {
                           <Space direction="vertical" size={0}>
                             <span>运营 {money(record.storeOperationAmount)}</span>
                             <Typography.Text type="secondary">维修 {money(record.maintenanceFundAmount)}</Typography.Text>
+                            <Typography.Text type="secondary">办单费净额 {money(snapshotStoreOrderFeeAmount(record))}</Typography.Text>
+                            <Typography.Text strong>合计 {money(Number(record.storeOperationAmount || 0) + Number(record.maintenanceFundAmount || 0) + snapshotStoreOrderFeeAmount(record))}</Typography.Text>
                           </Space>
                         )
                       },
@@ -1616,7 +1632,7 @@ export function SettlementManagement() {
                         <Descriptions.Item label="渠道核销扣点">{money(preview.channelFeeAmount)} / {percent(preview.channelFeeRate)}</Descriptions.Item>
                         <Descriptions.Item label="租赁平台扣点">{money(preview.platformFeeAmount)} / {percent(preview.platformFeeRate)}</Descriptions.Item>
                         <Descriptions.Item label="剩余可分配">{money(preview.distributableAmount)}</Descriptions.Item>
-                        <Descriptions.Item label="门店合计">{money(Number(preview.storeOperationAmount || 0) + Number(preview.maintenanceFundAmount || 0))}</Descriptions.Item>
+                        <Descriptions.Item label="门店收益">{money(Number(preview.storeOperationAmount || 0) + Number(preview.maintenanceFundAmount || 0) + snapshotStoreOrderFeeAmount(preview))}</Descriptions.Item>
                       </Descriptions>
                       <SnapshotAllocation snapshot={preview} />
                     </div>
@@ -1831,7 +1847,19 @@ export function SettlementManagement() {
                         )
                       },
                       { title: '收益类型', dataIndex: 'lineType', width: 170, render: lineTypeText },
-                      { title: '金额', dataIndex: 'amount', width: 120, render: (value) => <Typography.Text strong>{money(value)}</Typography.Text> },
+                      {
+                        title: '收益口径金额',
+                        width: 145,
+                        render: (_, record) => {
+                          const normalized = storeRevenueEntryAmount(record);
+                          const adjusted = Math.abs(normalized - Number(record.amount || 0)) >= 0.005;
+                          return adjusted ? (
+                            <Tooltip title={`原不可变流水 ${money(record.amount)}；门店办单费按97%净收益展示`}>
+                              <Typography.Text strong>{money(normalized)}</Typography.Text>
+                            </Tooltip>
+                          ) : <Typography.Text strong>{money(normalized)}</Typography.Text>;
+                        }
+                      },
                       { title: '状态', dataIndex: 'entryStatus', width: 110, render: incomeStatusTag },
                       { title: '备注', dataIndex: 'remark', width: 220, ellipsis: true, render: (value) => value || '-' },
                       { title: '结算时间', dataIndex: 'settledAt', width: 170, render: (value) => value ? formatDateTime(value) : '-' },
@@ -2074,7 +2102,7 @@ export function SettlementManagement() {
 
             <div className="statement-detail-summary">
               <div><span>实际核销/实收基数</span><strong>{money(selectedStatement.rentBaseAmount)}</strong></div>
-              <div><span>签单费</span><strong>{money(selectedStatement.signFeeIncomeAmount)}</strong></div>
+              <div><span>办单费结算金额</span><strong>{money(selectedStatement.signFeeIncomeAmount)}</strong></div>
               <div><span>分润收益</span><strong>{money(selectedStatement.rentShareIncomeAmount)}</strong></div>
               <div><span>门店应付电池公司</span><strong>{money(selectedStatement.batteryCostAmount)}</strong></div>
               <div><span>调整与扣减</span><strong>{signedMoney(Number(selectedStatement.adjustmentAmount || 0) + Number(selectedStatement.maintenanceDeductAmount || 0) - Number(selectedStatement.operationFeeAmount || 0))}</strong></div>
@@ -2182,7 +2210,7 @@ export function SettlementManagement() {
                     </Space>
                   )
                 },
-                { title: '金额', dataIndex: 'amount', width: 125, render: (value) => <Typography.Text strong className={Number(value) < 0 ? 'amount-negative' : 'amount-positive'}>{signedMoney(value)}</Typography.Text> },
+                { title: '月结锁定金额', dataIndex: 'amount', width: 140, render: (value) => <Typography.Text strong className={Number(value) < 0 ? 'amount-negative' : 'amount-positive'}>{signedMoney(value)}</Typography.Text> },
                 { title: '备注', dataIndex: 'remark', width: 260, ellipsis: true, render: (value) => value || '-' }
               ]}
             />
@@ -2251,7 +2279,7 @@ function SnapshotAllocation({ snapshot }: { snapshot: SettlementSnapshot }) {
       className: 'investor'
     }
   ];
-  const storeAmount = Number(snapshot.storeOperationAmount || 0) + Number(snapshot.maintenanceFundAmount || 0);
+  const storeRentShareAmount = Number(snapshot.storeOperationAmount || 0) + Number(snapshot.maintenanceFundAmount || 0);
 
   return (
     <div className="snapshot-allocation">
@@ -2260,7 +2288,7 @@ function SnapshotAllocation({ snapshot }: { snapshot: SettlementSnapshot }) {
           <Typography.Text strong>剩余金额分配</Typography.Text>
           <Typography.Text type="secondary">{money(snapshot.distributableAmount)}</Typography.Text>
         </div>
-        <Typography.Text type="secondary">门店合计 {money(storeAmount)}</Typography.Text>
+        <Typography.Text type="secondary">门店租金分成 {money(storeRentShareAmount)} · 办单费净额 {money(snapshotStoreOrderFeeAmount(snapshot))}</Typography.Text>
       </div>
       <div className="snapshot-allocation-bar">
         {segments.map((segment) => (

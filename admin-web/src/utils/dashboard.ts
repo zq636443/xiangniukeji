@@ -110,6 +110,19 @@ export function sumNumbers(values: Array<number | string | null | undefined>) {
   return values.reduce<number>((total, value) => total + Number(value || 0), 0);
 }
 
+/**
+ * The mutable verification amount on a supplemental order is the latest
+ * effective-dated renewal override. Dashboard first-period collection must
+ * instead use the frozen initial settlement snapshot whenever it is present.
+ */
+export function externalOrderInitialCollectedAmount(order: {
+  settlementRentalAmount?: number | string | null;
+  settlementBaseAmount?: number | string | null;
+  verificationAmount?: number | string | null;
+}) {
+  return Number(order.settlementRentalAmount ?? order.verificationAmount ?? 0);
+}
+
 export function buildTimeBuckets(window: Pick<DateWindow, 'start' | 'end'>, maxBuckets = 14): TimeBucket[] {
   const totalDays = Math.max(1, differenceInCalendarDays(window.end, window.start) + 1);
   const bucketDays = Math.max(1, Math.ceil(totalDays / maxBuckets));

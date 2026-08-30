@@ -410,7 +410,7 @@ export type SettlementSnapshot = {
 export type SettlementIncomeEntry = {
   id: number;
   entryNo: string;
-  sourceType: 'ORDER' | 'BILL' | 'EXTERNAL_ORDER';
+  sourceType: 'ORDER' | 'BILL' | 'EXTERNAL_ORDER' | 'EXTERNAL_RENEWAL';
   sourceId: number;
   sourceNo?: string | null;
   orderId?: number | null;
@@ -422,6 +422,7 @@ export type SettlementIncomeEntry = {
   lineType:
     | 'CHANNEL_VERIFICATION_FEE'
     | 'PLATFORM_SERVICE_FEE'
+    | 'PLATFORM_ORDER_FEE_SERVICE_FEE'
     | 'STORE_OPERATION_SHARE'
     | 'MAINTENANCE_FUND_SHARE'
     | 'CHANNEL_REFERRAL_SHARE'
@@ -433,6 +434,12 @@ export type SettlementIncomeEntry = {
     | 'MAINTENANCE_FEE'
     | 'INVESTOR_NET_RENT';
   amount: number;
+  /**
+   * Net amount used by store-revenue views. The immutable ledger amount stays
+   * in `amount`; legacy order-fee rows may expose their 97% merchant amount
+   * here.
+   */
+  storeRevenueAmount?: number | null;
   entryStatus: 'PENDING' | 'SETTLED' | 'FROZEN';
   remark?: string | null;
   occurredAt: string;

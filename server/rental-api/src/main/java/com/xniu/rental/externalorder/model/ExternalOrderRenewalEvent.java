@@ -11,6 +11,7 @@ public record ExternalOrderRenewalEvent(
     LocalDateTime periodStartAt,
     LocalDateTime periodEndAt,
     BigDecimal renewalAmount,
+    BigDecimal systemRenewalAmount,
     BigDecimal batteryCostAmount,
     Long settlementSnapshotId,
     String eventStatus,

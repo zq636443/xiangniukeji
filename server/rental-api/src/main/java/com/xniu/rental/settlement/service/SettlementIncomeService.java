@@ -12,6 +12,7 @@ import com.xniu.rental.bill.repository.BillRepository;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.externalorder.model.ExternalRentalOrder;
 import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
+import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.order.repository.OrderRepository;
 import com.xniu.rental.settlement.dto.SettlementEntryGenerateResponse;
@@ -32,6 +33,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,6 +50,7 @@ public class SettlementIncomeService {
     private final AssetRepository assetRepository;
     private final AssetFulfillmentRepository assetFulfillmentRepository;
     private final StoreRepository storeRepository;
+    private final ExternalRentalOrderRepository externalRentalOrderRepository;
     private final AuthorizationService authorizationService;
 
     public SettlementIncomeService(
@@ -58,6 +61,7 @@ public class SettlementIncomeService {
         AssetRepository assetRepository,
         AssetFulfillmentRepository assetFulfillmentRepository,
         StoreRepository storeRepository,
+        ExternalRentalOrderRepository externalRentalOrderRepository,
         AuthorizationService authorizationService
     ) {
         this.incomeRepository = incomeRepository;
@@ -67,12 +71,13 @@ public class SettlementIncomeService {
         this.assetRepository = assetRepository;
         this.assetFulfillmentRepository = assetFulfillmentRepository;
         this.storeRepository = storeRepository;
+        this.externalRentalOrderRepository = externalRentalOrderRepository;
         this.authorizationService = authorizationService;
     }
 
     public List<SettlementIncomeEntryResponse> listAdmin(String beneficiaryType, Long beneficiaryId, String status, Long orderId, Long storeId) {
         authorizationService.requirePermission("settlement.read");
-        return incomeRepository.list(parseBeneficiaryNullable(beneficiaryType), beneficiaryId, parseStatusNullable(status), orderId, storeId).stream().map(this::toResponse).toList();
+        return toResponses(incomeRepository.list(parseBeneficiaryNullable(beneficiaryType), beneficiaryId, parseStatusNullable(status), orderId, storeId));
     }
 
     public List<SettlementIncomeEntryResponse> listMerchant(Long storeId, String status) {
@@ -83,7 +88,7 @@ public class SettlementIncomeService {
         var store = storeRepository.findById(storeId).orElseThrow(() -> BusinessException.badRequest("门店不存在"));
         authorizationService.requireStoreAccess(store.merchantId(), store.id());
         var entries = incomeRepository.list(IncomeBeneficiaryType.MERCHANT, null, parseStatusNullable(status), null, storeId);
-        return entries.stream().map(this::toResponse).toList();
+        return toResponses(entries);
     }
 
     public List<SettlementIncomeEntryResponse> listInvestor(String status) {
@@ -95,7 +100,7 @@ public class SettlementIncomeService {
         if (investorId == null) {
             throw BusinessException.forbidden("当前账号未绑定出资方");
         }
-        return incomeRepository.list(IncomeBeneficiaryType.INVESTOR, investorId, parseStatusNullable(status), null, null).stream().map(this::toResponse).toList();
+        return toResponses(incomeRepository.list(IncomeBeneficiaryType.INVESTOR, investorId, parseStatusNullable(status), null, null));
     }
 
     @Transactional
@@ -110,7 +115,7 @@ public class SettlementIncomeService {
             .mapToInt(this::syncPaidBill)
             .sum();
         var all = incomeRepository.list(null, null, null, orderId, null);
-        return new SettlementEntryGenerateResponse(orderId, snapshot.id(), createdCount, all.stream().map(this::toResponse).toList());
+        return new SettlementEntryGenerateResponse(orderId, snapshot.id(), createdCount, toResponses(all));
     }
 
     @Transactional
@@ -154,26 +159,50 @@ public class SettlementIncomeService {
 
     @Transactional
     public int syncExternalOrder(ExternalRentalOrder order) {
-        if (order.orderStatus() == ExternalRentalOrderStatus.TERMINATED) {
-            incomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, order.id());
+        /* This synchronizer is normally called while the external-order
+         * service already owns the order row lock.  Re-acquire it here as a
+         * defensive boundary because the method is public and could also be
+         * invoked by a repair/import path with a detached order object.  A
+         * delete/terminate operation takes the same order lock before touching
+         * income rows, so no stale entries can be recreated after it commits. */
+        var lockedOrder = externalRentalOrderRepository.findByIdForUpdate(order.id())
+            .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
+        /* Status transitions lock income rows independently of the order. Keep
+         * the source rows locked for the whole delete/recreate operation so a
+         * concurrent settlement cannot mark an entry settled between the
+         * caller's mutability check and this replacement.  A synchronizer is
+         * also a destructive replacement: once any source row is SETTLED or
+         * FROZEN it must fail closed rather than delete the historical fact.
+         * The FOR UPDATE query both checks the status and owns the rows until
+         * this transaction commits, including the terminated-order cleanup
+         * branch below.
+         */
+        if (incomeRepository.hasNonPendingBySourceForUpdate(
+            IncomeSourceType.EXTERNAL_ORDER,
+            lockedOrder.id()
+        )) {
+            throw BusinessException.badRequest("补录订单收益已结算或冻结，不能重建");
+        }
+        if (lockedOrder.orderStatus() == ExternalRentalOrderStatus.TERMINATED) {
+            incomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, lockedOrder.id());
             return 0;
         }
-        if (order.settlementSnapshotId() == null) {
+        if (lockedOrder.settlementSnapshotId() == null) {
             throw BusinessException.badRequest("补录订单暂无分润快照");
         }
-        var snapshot = settlementRepository.findSnapshot(order.settlementSnapshotId())
+        var snapshot = settlementRepository.findSnapshot(lockedOrder.settlementSnapshotId())
             .orElseThrow(() -> BusinessException.badRequest("补录订单分润快照不存在"));
-        if (snapshot.sourceType() != SnapshotSourceType.EXTERNAL_ORDER || !order.id().equals(snapshot.sourceId())) {
+        if (snapshot.sourceType() != SnapshotSourceType.EXTERNAL_ORDER || !lockedOrder.id().equals(snapshot.sourceId())) {
             throw BusinessException.badRequest("补录订单与分润快照不匹配");
         }
-        incomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, order.id());
+        incomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, lockedOrder.id());
         return createEntries(snapshot, new IncomeSource(
             IncomeSourceType.EXTERNAL_ORDER,
-            order.id(),
-            order.recordNo(),
+            lockedOrder.id(),
+            lockedOrder.recordNo(),
             null,
-            order.createdAt() == null ? LocalDateTime.now() : order.createdAt(),
-            order.signFeeAmount(),
+            lockedOrder.createdAt() == null ? LocalDateTime.now() : lockedOrder.createdAt(),
+            lockedOrder.signFeeAmount(),
             snapshot.settlementBaseAmount()
         )).size();
     }
@@ -205,7 +234,21 @@ public class SettlementIncomeService {
     @Transactional
     public SettlementIncomeEntryResponse updateStatus(Long id, String status) {
         authorizationService.requirePermission("settlement.write");
-        return toResponse(incomeRepository.updateStatus(id, parseStatus(status)));
+        var current = incomeRepository.findByIdForUpdate(id)
+            .orElseThrow(() -> BusinessException.badRequest("收益流水不存在"));
+        var target = parseStatus(status);
+        /* A settled entry is a financial lock.  FROZEN entries may be
+         * deliberately released by an administrator, but a settled amount
+         * must never be rolled back to pending/frozen and then rewritten or
+         * deleted through an order edit. */
+        if (current.entryStatus() == IncomeEntryStatus.SETTLED
+            && target != IncomeEntryStatus.SETTLED) {
+            throw BusinessException.badRequest("已结算收益流水不可回退状态");
+        }
+        if (current.entryStatus() == target) {
+            return toResponse(current);
+        }
+        return toResponse(incomeRepository.updateStatus(id, target));
     }
 
     private List<SettlementIncomeEntry> createEntries(SettlementRuleSnapshot snapshot, IncomeSource source) {
@@ -223,7 +266,7 @@ public class SettlementIncomeService {
                 source.rentAmount(),
                 snapshot.channelFeeRate(),
                 snapshot.platformFeeRate(),
-                BatteryCostCalculator.prorate(snapshot.batteryCostAmount(), source.rentAmount(), snapshot.settlementBaseAmount()),
+                BatteryCostCalculator.prorate(snapshot.batteryCostAmount(), source.rentAmount(), snapshot.rentalAmount()),
                 snapshot.storeOperationRate(),
                 snapshot.maintenanceFundRate(),
                 snapshot.channelReferralRate(),
@@ -256,7 +299,10 @@ public class SettlementIncomeService {
     private List<SettlementIncomeEntry> createLegacyEntries(SettlementRuleSnapshot snapshot, IncomeSource source) {
         var created = new ArrayList<SettlementIncomeEntry>();
         var actualSource = source.sourceType() != IncomeSourceType.ORDER;
-        var signFeeAmount = actualSource ? source.signFeeAmount() : snapshot.merchantOrderFeeAmount();
+        var orderFeeAllocation = actualSource
+            ? ProfitSharingCalculator.calculateOrderFee(source.signFeeAmount())
+            : null;
+        var signFeeAmount = actualSource ? orderFeeAllocation.merchantNetAmount() : snapshot.merchantOrderFeeAmount();
         var merchantShareAmount = actualSource
             ? money(source.rentAmount().multiply(snapshot.merchantRentShareRate()))
             : snapshot.merchantRentShareAmount();
@@ -267,6 +313,10 @@ public class SettlementIncomeService {
             ? money(source.rentAmount().multiply(snapshot.investorRentShareRate()))
             : snapshot.investorGrossShareAmount();
         add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MERCHANT_ORDER_FEE, signFeeAmount, actualSource ? "签单费实收" : "门店办单费");
+        if (actualSource && orderFeeAllocation.serviceFeeAmount().signum() > 0) {
+            add(created, snapshot, source, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID,
+                IncomeLineType.PLATFORM_ORDER_FEE_SERVICE_FEE, orderFeeAllocation.serviceFeeAmount(), "签单费手续费计入平台收益");
+        }
         add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MERCHANT_RENT_SHARE, merchantShareAmount, "门店租金分成");
         add(created, snapshot, source, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.PLATFORM_RENT_SHARE, platformShareAmount, "平台租金分成");
         var allocations = buildInvestorAllocations(snapshot, investorGrossAmount, !actualSource);
@@ -445,7 +495,66 @@ public class SettlementIncomeService {
         }
     }
 
+    private List<SettlementIncomeEntryResponse> toResponses(List<SettlementIncomeEntry> entries) {
+        if (entries.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, SettlementRuleSnapshot> snapshots = settlementRepository.findSnapshotsByIds(
+            entries.stream()
+                .map(SettlementIncomeEntry::snapshotId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList()
+        ).stream().collect(java.util.stream.Collectors.toMap(SettlementRuleSnapshot::id, snapshot -> snapshot));
+        var externalOrderIds = entries.stream()
+            .filter(entry -> entry.sourceType() == IncomeSourceType.EXTERNAL_ORDER
+                && entry.lineType() == IncomeLineType.MERCHANT_ORDER_FEE)
+            .map(SettlementIncomeEntry::sourceId)
+            .distinct()
+            .toList();
+        var externalOrderFees = externalRentalOrderRepository.findSignFeeAmounts(externalOrderIds);
+        return entries.stream().map(entry -> toResponse(
+            entry,
+            snapshots.get(entry.snapshotId()),
+            entry.sourceType() == IncomeSourceType.EXTERNAL_ORDER
+                ? externalOrderFees.get(entry.sourceId())
+                : null
+        )).toList();
+    }
+
     private SettlementIncomeEntryResponse toResponse(SettlementIncomeEntry entry) {
+        var snapshot = settlementRepository.findSnapshot(entry.snapshotId()).orElse(null);
+        var orderFee = entry.sourceType() == IncomeSourceType.EXTERNAL_ORDER
+            ? externalRentalOrderRepository.findSignFeeAmounts(List.of(entry.sourceId())).get(entry.sourceId())
+            : null;
+        return toResponse(entry, snapshot, orderFee);
+    }
+
+    private SettlementIncomeEntryResponse toResponse(
+        SettlementIncomeEntry entry,
+        SettlementRuleSnapshot snapshot,
+        BigDecimal externalOrderFee
+    ) {
+        var storeRevenueAmount = entry.amount();
+        /* Historical supplemental-order rows can contain the gross handling
+         * fee (including the early PROFIT_V2 window where the snapshot fee was
+         * left at zero). Keep the immutable ledger amount intact, but expose
+         * the confirmed 97% net entitlement for dashboards/store views. New
+         * net rows do not equal the snapshot gross, so they are not reduced
+         * twice. */
+        var grossFee = externalOrderFee != null ? money(externalOrderFee)
+            : snapshot == null ? BigDecimal.ZERO : money(snapshot.signFeeAmount());
+        if (entry.beneficiaryType() == IncomeBeneficiaryType.MERCHANT
+            && entry.lineType() == IncomeLineType.MERCHANT_ORDER_FEE
+            && entry.sourceType() != IncomeSourceType.ORDER
+            && grossFee.signum() > 0
+            && (money(entry.amount()).signum() == 0 || money(entry.amount()).compareTo(grossFee) == 0)) {
+            // V2 was briefly deployed with a zero merchant fee row, and an
+            // older importer could persist the gross fee.  Both fingerprints
+            // are immutable historical data; expose the current merchant
+            // entitlement only in the response projection.
+            storeRevenueAmount = ProfitSharingCalculator.calculateOrderFee(grossFee).merchantNetAmount();
+        }
         return new SettlementIncomeEntryResponse(
             entry.id(),
             entry.entryNo(),
@@ -460,6 +569,7 @@ public class SettlementIncomeService {
             entry.beneficiaryId(),
             entry.lineType().name(),
             entry.amount(),
+            storeRevenueAmount,
             entry.entryStatus().name(),
             entry.remark(),
             entry.occurredAt(),

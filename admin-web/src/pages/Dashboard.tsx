@@ -46,6 +46,7 @@ import type {
 import {
   buildTimeBuckets,
   dateTimeText,
+  externalOrderInitialCollectedAmount,
   getDateWindow,
   isInWindow,
   percent,
@@ -55,6 +56,11 @@ import {
   type CockpitCustomRange,
   type CockpitPeriod
 } from '../utils/dashboard';
+import {
+  isStoreRevenueEntry,
+  storeRevenueEntryAmount,
+  summarizeStoreRevenue
+} from '../utils/storeRevenue';
 
 type DashboardData = {
   orders: RentalOrder[];
@@ -112,19 +118,6 @@ type InvestorPerformance = {
   deploymentRate: number;
 };
 
-// V2 records use operation/maintenance share names; keep legacy rent-share records visible too.
-const storeOperationRevenueLineTypes: ReadonlySet<SettlementIncomeEntry['lineType']> = new Set([
-  'STORE_OPERATION_SHARE',
-  'MERCHANT_RENT_SHARE'
-]);
-const storeMaintenanceRevenueLineTypes: ReadonlySet<SettlementIncomeEntry['lineType']> = new Set([
-  'MAINTENANCE_FUND_SHARE'
-]);
-const storeRevenueLineTypes: ReadonlySet<SettlementIncomeEntry['lineType']> = new Set([
-  ...storeOperationRevenueLineTypes,
-  ...storeMaintenanceRevenueLineTypes
-]);
-
 const initialData: DashboardData = {
   orders: [],
   externalOrders: [],
@@ -144,7 +137,7 @@ const initialData: DashboardData = {
 
 export function Dashboard() {
   const [data, setData] = useState<DashboardData>(initialData);
-  const [period, setPeriod] = useState<CockpitPeriod>('30D');
+  const [period, setPeriod] = useState<CockpitPeriod>('MONTH');
   const [customRange, setCustomRange] = useState<CockpitCustomRange>(null);
   const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [selectedStoreId, setSelectedStoreId] = useState<number>();
@@ -153,12 +146,14 @@ export function Dashboard() {
   const [editingRecord, setEditingRecord] = useState<DashboardBusinessRecord | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [incomeDataAvailable, setIncomeDataAvailable] = useState<boolean | null>(null);
 
   async function loadData() {
     setLoading(true);
     setError('');
     try {
-      const [orders, externalOrders, externalRenewals, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeEntries] = await Promise.all([
+      const [orders, externalOrders, externalRenewals, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeResult] = await Promise.all([
         http.get<unknown, RentalOrder[]>('/api/admin/orders'),
         http.get<unknown, ExternalRentalOrder[]>('/api/admin/external-orders'),
         http.get<unknown, ExternalOrderRenewal[]>('/api/admin/external-orders/renewals'),
@@ -172,10 +167,13 @@ export function Dashboard() {
         optionalGet<Investor[]>('/api/admin/investors', []),
         optionalGet<SettlementStatement[]>('/api/admin/settlement/statements?beneficiaryType=INVESTOR', []),
         optionalGet<SettlementStatement[]>('/api/admin/settlement/statements?beneficiaryType=MERCHANT', []),
-        optionalGet<SettlementIncomeEntry[]>('/api/admin/settlement/income/entries', [])
+        optionalGetWithStatus<SettlementIncomeEntry[]>('/api/admin/settlement/income/entries', [])
       ]);
-      setData({ orders, externalOrders, externalRenewals, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeEntries });
+      setIncomeDataAvailable(incomeResult.available);
+      setData({ orders, externalOrders, externalRenewals, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeEntries: incomeResult.value });
+      setLastUpdatedAt(new Date());
     } catch (requestError) {
+      setIncomeDataAvailable(false);
       setError(requestError instanceof Error ? requestError.message : '经营驾驶舱数据加载失败');
     } finally {
       setLoading(false);
@@ -184,6 +182,8 @@ export function Dashboard() {
 
   useEffect(() => {
     void loadData();
+    const timer = setInterval(() => void loadData(), 30_000);
+    return () => clearInterval(timer);
   }, []);
 
   const window = useMemo(() => getDateWindow(period, new Date(), customRange, selectedMonth), [customRange, period, selectedMonth]);
@@ -222,23 +222,13 @@ export function Dashboard() {
     const periodRenewals = scopedData.externalRenewals.filter((item) => isInWindow(item.occurredAt, window.start, window.end));
     const previousRenewals = scopedData.externalRenewals.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd));
     const periodRenewalAmount = sumNumbers(periodRenewals.map((item) => item.renewalAmount));
-    const periodCollected = netPayments(periodPayments) + sumNumbers(periodExternal.map((item) => item.verificationAmount)) + periodRenewalAmount;
-    const previousCollected = netPayments(previousPayments) + sumNumbers(previousExternal.map((item) => item.verificationAmount)) + sumNumbers(previousRenewals.map((item) => item.renewalAmount));
-    const actualStoreRevenueEntries = scopedData.incomeEntries.filter((item) => item.sourceType !== 'ORDER'
-      && item.entryStatus !== 'FROZEN'
-      && item.beneficiaryType === 'MERCHANT'
-      && storeRevenueLineTypes.has(item.lineType));
+    const periodCollected = netPayments(periodPayments) + sumNumbers(periodExternal.map(externalOrderInitialCollectedAmount)) + periodRenewalAmount;
+    const previousCollected = netPayments(previousPayments) + sumNumbers(previousExternal.map(externalOrderInitialCollectedAmount)) + sumNumbers(previousRenewals.map((item) => item.renewalAmount));
+    const actualStoreRevenueEntries = scopedData.incomeEntries.filter(isStoreRevenueEntry);
     const periodStoreRevenueEntries = actualStoreRevenueEntries.filter((item) => isInWindow(item.occurredAt, window.start, window.end));
-    const storeOperationRevenue = sumNumbers(periodStoreRevenueEntries
-      .filter((item) => storeOperationRevenueLineTypes.has(item.lineType))
-      .map((item) => item.amount));
-    const storeMaintenanceRevenue = sumNumbers(periodStoreRevenueEntries
-      .filter((item) => storeMaintenanceRevenueLineTypes.has(item.lineType))
-      .map((item) => item.amount));
-    const storeRevenue = storeOperationRevenue + storeMaintenanceRevenue;
-    const previousStoreRevenue = sumNumbers(actualStoreRevenueEntries
-      .filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd))
-      .map((item) => item.amount));
+    const storeRevenueBreakdown = summarizeStoreRevenue(periodStoreRevenueEntries);
+    const previousStoreRevenue = summarizeStoreRevenue(actualStoreRevenueEntries
+      .filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd))).total;
     const platformIncome = sumNumbers(scopedData.incomeEntries
       .filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN' && item.beneficiaryType === 'PLATFORM' && isInWindow(item.occurredAt, window.start, window.end))
       .map((item) => item.amount));
@@ -268,10 +258,11 @@ export function Dashboard() {
       periodCollected,
       periodRenewalAmount,
       collectedChange: percentageChange(periodCollected, previousCollected),
-      storeRevenue,
-      storeOperationRevenue,
-      storeMaintenanceRevenue,
-      storeRevenueChange: percentageChange(storeRevenue, previousStoreRevenue),
+      storeRevenue: storeRevenueBreakdown.total,
+      storeOperationRevenue: storeRevenueBreakdown.operation,
+      storeMaintenanceRevenue: storeRevenueBreakdown.maintenance,
+      storeOrderFeeRevenue: storeRevenueBreakdown.orderFee,
+      storeRevenueChange: percentageChange(storeRevenueBreakdown.total, previousStoreRevenue),
       platformIncome,
       platformRenewalIncome,
       platformIncomeChange: percentageChange(platformIncome, previousPlatformIncome),
@@ -301,7 +292,7 @@ export function Dashboard() {
   const trend = useMemo(() => {
     const buckets = buildTimeBuckets(window);
     const paymentValues = valueByBuckets(buckets, scopedData.payments.filter((item) => item.payStatus === 'PAID'), (item) => item.paidAt, (item) => Math.max(0, Number(item.paidAmount || 0) - Number(item.refundAmount || 0)));
-    const externalValues = valueByBuckets(buckets, scopedData.externalOrders, (item) => item.createdAt || item.rentStartedAt, (item) => Number(item.verificationAmount || 0));
+    const externalValues = valueByBuckets(buckets, scopedData.externalOrders, (item) => item.createdAt || item.rentStartedAt, externalOrderInitialCollectedAmount);
     const renewalValues = valueByBuckets(buckets, scopedData.externalRenewals, (item) => item.occurredAt, (item) => Number(item.renewalAmount || 0));
     return {
       labels: buckets.map((item) => item.label),
@@ -332,17 +323,13 @@ export function Dashboard() {
       .forEach((item) => { ensureStore(item.storeId).collected += Math.max(0, Number(item.paidAmount || 0) - Number(item.refundAmount || 0)); });
     data.externalOrders
       .filter((item) => isInWindow(item.createdAt || item.rentStartedAt, window.start, window.end))
-      .forEach((item) => { ensureStore(item.storeId, item.storeName).collected += Number(item.verificationAmount || 0); });
+      .forEach((item) => { ensureStore(item.storeId, item.storeName).collected += externalOrderInitialCollectedAmount(item); });
     data.externalRenewals
       .filter((item) => isInWindow(item.occurredAt, window.start, window.end))
       .forEach((item) => { ensureStore(item.storeId).collected += Number(item.renewalAmount || 0); });
     data.incomeEntries
-      .filter((item) => item.beneficiaryType === 'MERCHANT'
-        && item.sourceType !== 'ORDER'
-        && item.entryStatus !== 'FROZEN'
-        && storeRevenueLineTypes.has(item.lineType)
-        && isInWindow(item.occurredAt, window.start, window.end))
-      .forEach((item) => { ensureStore(item.storeId).revenue += Number(item.amount || 0); });
+      .filter((item) => isStoreRevenueEntry(item) && isInWindow(item.occurredAt, window.start, window.end))
+      .forEach((item) => { ensureStore(item.storeId).revenue += storeRevenueEntryAmount(item); });
     data.assets.filter((item) => !['SCRAPPED', 'SOLD'].includes(item.status)).forEach((item) => {
       if (!item.currentStoreId) return;
       const row = ensureStore(item.currentStoreId, item.storeName);
@@ -352,7 +339,7 @@ export function Dashboard() {
     data.overdues.forEach((item) => { ensureStore(item.storeId).overdueAmount += Number(item.unpaidAmount || 0); });
     const rankings = [...storeMap.values()]
       .map((item) => ({ ...item, deploymentRate: item.activeAssets ? item.rentingAssets / item.activeAssets * 100 : 0 }))
-      .sort((left, right) => right.collected - left.collected || right.activeAssets - left.activeAssets);
+      .sort((left, right) => right.revenue - left.revenue || right.collected - left.collected || right.activeAssets - left.activeAssets);
     return selectedStoreId ? rankings.filter((item) => item.storeId === selectedStoreId) : rankings;
   }, [data, selectedStoreId, window]);
 
@@ -501,7 +488,7 @@ export function Dashboard() {
           sourceLabel: sourcePlatformText(item.sourcePlatform),
           businessNo: item.recordNo,
           customerName: item.customerName,
-          collectedAmount: Number(item.verificationAmount || 0),
+          collectedAmount: externalOrderInitialCollectedAmount(item),
           status: externalOrderStatusText(item.orderStatus),
           asset: item.frameAssetSerialNo || '未绑定资产',
           occurredAt: item.createdAt || item.rentStartedAt,
@@ -515,7 +502,7 @@ export function Dashboard() {
       <CockpitHeader
         eyebrow="Business Operations"
         title="总部经营驾驶舱"
-        description={`${selectedStore?.storeName || '全平台'} · ${window.label}经营、回款、履约与资产风险总览；经营金额均来自现有业务流水。`}
+        description={`${selectedStore?.storeName || '全平台'} · ${window.label}经营、回款、履约与资产风险总览；门店收益按运营分成 + 维修分成 + 办单费（97%实收）计算，每30秒自动刷新。`}
         period={period}
         onPeriodChange={setPeriod}
         customRange={customRange}
@@ -527,6 +514,7 @@ export function Dashboard() {
         scope={(
           <Space size={8} wrap>
             <Tag color="green">{selectedStore ? selectedStore.storeName : `全平台 · ${data.stores.length || '-'} 家门店`}</Tag>
+            {lastUpdatedAt ? <Typography.Text type="secondary">同步于 {lastUpdatedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</Typography.Text> : null}
             <Select
               showSearch
               optionFilterProp="label"
@@ -546,7 +534,17 @@ export function Dashboard() {
 
       <div className="cockpit-metric-grid">
         <CockpitMetric icon={<WalletOutlined />} tone="green" label="期间营业额" value={fullMoney(dashboard.periodCollected)} detail={`续租 ${fullMoney(dashboard.periodRenewalAmount)} · ${dashboard.totalPeriodOrders} 笔订单`} change={dashboard.collectedChange} changeLabel="环比" />
-        <CockpitMetric icon={<ShopOutlined />} tone="blue" label={selectedStore ? '当前门店收益' : '全平台门店收益'} value={fullMoney(dashboard.storeRevenue)} detail={`运营 ${fullMoney(dashboard.storeOperationRevenue)} · 维修 ${fullMoney(dashboard.storeMaintenanceRevenue)}`} change={dashboard.storeRevenueChange} changeLabel="环比" />
+        <CockpitMetric
+          icon={<ShopOutlined />}
+          tone="blue"
+          label={selectedStore ? '实时门店收益' : '全平台实时门店收益'}
+          value={incomeDataAvailable === false ? '不可用' : incomeDataAvailable === null && loading ? '加载中…' : fullMoney(dashboard.storeRevenue)}
+          detail={incomeDataAvailable === false
+            ? '收益流水接口不可用，请刷新或检查结算查看权限'
+            : `运营 ${fullMoney(dashboard.storeOperationRevenue)} · 维修 ${fullMoney(dashboard.storeMaintenanceRevenue)} · 办单费97%净额 ${fullMoney(dashboard.storeOrderFeeRevenue)}`}
+          change={incomeDataAvailable === false ? undefined : dashboard.storeRevenueChange}
+          changeLabel="环比"
+        />
         <CockpitMetric icon={<RiseOutlined />} tone="violet" label="平台期间收入" value={fullMoney(dashboard.platformIncome)} detail={`其中续租 ${fullMoney(dashboard.platformRenewalIncome)}`} change={dashboard.platformIncomeChange} changeLabel="环比" />
         <CockpitMetric icon={<CheckCircleOutlined />} tone="blue" label="到期账单回款率" value={percent(dashboard.collectionRate)} detail={`期间应收 ${fullMoney(dashboard.dueAmount)}`} change={dashboard.collectionRateChange} changeLabel="百分点" />
         <CockpitMetric icon={<CarOutlined />} tone="orange" label="当前资产投放率" value={percent(dashboard.deploymentRate)} detail={`${dashboard.rentingAssets.length} / ${dashboard.activeAssets.length} 台在租`} />
@@ -638,7 +636,7 @@ export function Dashboard() {
       <div className="cockpit-layout cockpit-layout-equal">
         <CockpitPanel
           title={selectedStore ? '当前门店经营摘要' : '门店经营排名'}
-          subtitle={`${window.label}门店收益（运营分成 + 维修分成）、实收、当前投放与逾期风险`}
+          subtitle={`${window.label}门店收益（运营分成 + 维修分成 + 办单费97%）、实收、当前投放与逾期风险`}
           extra={selectedStore
             ? <Button size="small" onClick={() => setSelectedStoreId(undefined)}>返回全平台</Button>
             : <Tag color="blue">共 {storeRankings.length} 家</Tag>}
@@ -774,6 +772,14 @@ async function optionalGet<T>(url: string, fallback: T) {
     return await http.get<unknown, T>(url);
   } catch {
     return fallback;
+  }
+}
+
+async function optionalGetWithStatus<T>(url: string, fallback: T) {
+  try {
+    return { value: await http.get<unknown, T>(url), available: true };
+  } catch {
+    return { value: fallback, available: false };
   }
 }
 

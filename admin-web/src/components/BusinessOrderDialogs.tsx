@@ -3,6 +3,7 @@ import dayjs, { type Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
 import type { Asset, ExternalRentalOrder, RentalOrder, StoreSku } from '../types/api';
+import { storeOrderFeeNetAmount } from '../utils/storeRevenue';
 
 export type DashboardBusinessRecord =
   | { sourceType: 'FORMAL'; order: RentalOrder }
@@ -218,7 +219,9 @@ export function BusinessOrderDialogs(props: Props) {
         rentStartedAt: values.rentStartedAt.format('YYYY-MM-DDTHH:mm:ss'),
         expectedReturnAt: values.expectedReturnAt?.format('YYYY-MM-DDTHH:mm:ss')
       });
-      message.success('补录订单已更新，分润已按最新核销金额重新计算');
+      message.success(externalOrder.orderStatus === 'ACTIVE'
+        ? '补录订单已更新；如修改核销金额，仅从本次修改时间起影响后续续租，首期分润保持不变'
+        : '已结束补录订单资料已更新；首期分润保持原快照，终态不会再产生后续续租收益');
       props.onCloseEdit();
       await props.onUpdated();
     } finally {
@@ -306,7 +309,7 @@ export function BusinessOrderDialogs(props: Props) {
         destroyOnHidden
       >
         {externalOrder && externalOrder.orderStatus !== 'ACTIVE' ? (
-          <Alert type="info" showIcon message="正在修正已结束补录订单" description="保存后会按最新核销金额和资产归属重算分润，但不会重新占用已归还资产。" style={{ marginBottom: 16 }} />
+          <Alert type="info" showIcon message="正在修正已结束补录订单" description="终态不会再产生后续续租收益；修改核销金额只记录为历史时间线，首期分润保持原快照。可修正客户资料和来源平台，不能修改门店、资产、办单费或租期结构。" style={{ marginBottom: 16 }} />
         ) : null}
         <Form form={externalForm} layout="vertical" onFinish={saveExternal}>
           <Space size={12} style={{ width: '100%' }} align="start">
@@ -458,13 +461,15 @@ function ExternalOrderDetail({ order }: { order: ExternalRentalOrder }) {
         <Descriptions.Item label="主资产">{order.frameAssetSerialNo || '-'}</Descriptions.Item>
         <Descriptions.Item label="第二资产">{order.batteryAssetSerialNo || '-'}</Descriptions.Item>
         <Descriptions.Item label="外部订单租金">{money(order.externalRentalAmount)}</Descriptions.Item>
-        <Descriptions.Item label="实际核销金额">{money(order.verificationAmount)}</Descriptions.Item>
-        <Descriptions.Item label="分润基数">{money(order.settlementBaseAmount)}</Descriptions.Item>
+        <Descriptions.Item label="当前人工核销金额">{money(order.verificationAmount)}</Descriptions.Item>
+        <Descriptions.Item label="首期分润基数">{money(order.settlementBaseAmount)}</Descriptions.Item>
         <Descriptions.Item label="平台扣点">{money(order.platformFeeAmount)}</Descriptions.Item>
         <Descriptions.Item label="门店运营分润">{money(order.storeOperationAmount)}</Descriptions.Item>
         <Descriptions.Item label="门店维修分润">{money(order.maintenanceFundAmount)}</Descriptions.Item>
         <Descriptions.Item label="出资方分润">{money(order.investorShareAmount)}</Descriptions.Item>
-        <Descriptions.Item label="签单费">{money(order.signFeeAmount)}</Descriptions.Item>
+        <Descriptions.Item label="办单费（原额）">{money(order.signFeeAmount)}</Descriptions.Item>
+        <Descriptions.Item label="办单费门店净额（97%）">{money(order.storeOrderFeeAmount ?? storeOrderFeeNetAmount(order.signFeeAmount))}</Descriptions.Item>
+        <Descriptions.Item label="门店收益合计">{money(order.storeRevenueAmount ?? (Number(order.storeOperationAmount || 0) + Number(order.maintenanceFundAmount || 0) + (order.storeOrderFeeAmount ?? storeOrderFeeNetAmount(order.signFeeAmount))))}</Descriptions.Item>
         <Descriptions.Item label="押金">{money(order.depositAmount)}</Descriptions.Item>
         <Descriptions.Item label="起租时间">{dateText(order.rentStartedAt)}</Descriptions.Item>
         <Descriptions.Item label="预计归还">{dateText(order.expectedReturnAt)}</Descriptions.Item>

@@ -18,6 +18,7 @@ import com.xniu.rental.settlement.model.SettlementStatementLine;
 import com.xniu.rental.settlement.model.SettlementStatementLineType;
 import com.xniu.rental.settlement.model.SettlementStatementStatus;
 import com.xniu.rental.settlement.model.StatementBeneficiaryType;
+import com.xniu.rental.settlement.model.SnapshotSourceType;
 import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
 import com.xniu.rental.settlement.repository.SettlementStatementRepository;
@@ -42,7 +43,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class SettlementStatementService {
 
     private static final DateTimeFormatter MONTH_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM");
-    private static final BigDecimal ORDER_FEE_SERVICE_RATE = new BigDecimal("0.03");
 
     private final SettlementStatementRepository statementRepository;
     private final SettlementIncomeRepository incomeRepository;
@@ -73,13 +73,58 @@ public class SettlementStatementService {
     @Transactional
     public SettlementStatementGenerateResponse generateMonth(String statementMonth) {
         authorizationService.requirePermission("settlement.write");
+        return generateMonthInternal(statementMonth, true);
+    }
+
+    /** Trusted repair path used after an unlocked renewal amount changes. */
+    @Transactional
+    public SettlementStatementGenerateResponse regenerateUnlockedMonth(String statementMonth) {
+        return generateMonthInternal(statementMonth, true);
+    }
+
+    /**
+     * Rebuild a draft month when the caller already owns that month's
+     * statement lock.  Order-mutating services use this entry point after
+     * locking the external order first and then the affected months.  Taking
+     * the month-wide external-order lock again here would invert that order
+     * (month -> other order) and can deadlock with a concurrent generator
+     * (order -> month).
+     *
+     * <p>This method is intentionally public only because the caller lives in
+     * another service package; it is not a controller endpoint.  Callers must
+     * hold {@code settlement_statement} rows for the month for the duration
+     * of the surrounding transaction.</p>
+     */
+    @Transactional
+    public SettlementStatementGenerateResponse regenerateUnlockedMonthAlreadyLocked(String statementMonth) {
+        return generateMonthInternal(statementMonth, false);
+    }
+
+    private SettlementStatementGenerateResponse generateMonthInternal(
+        String statementMonth,
+        boolean lockExternalOrders
+    ) {
         var month = normalizeRequiredMonth(statementMonth);
+        var range = monthRange(month);
+        /* External-order mutations lock the order row before any statement
+         * rows.  Public generation follows the same order -> statement order
+         * so a concurrent terminate/delete cannot be followed by a stale
+         * draft insertion.  The already-locked repair path deliberately skips
+         * this second, month-wide order scan; its caller already holds the
+         * month lock and re-acquiring other order rows here would invert the
+         * order and deadlock with a public generator. */
+        if (lockExternalOrders) {
+            statementRepository.lockExternalOrdersForMonthForUpdate(range.startAt(), range.endAt());
+        }
+        // Serialize draft regeneration with statement status transitions. A
+        // locked month must never be deleted while another transaction is
+        // confirming or paying one of its statements.
+        statementRepository.lockStatementsByMonthForUpdate(month);
         if (statementRepository.hasLockedStatements(month)) {
             throw BusinessException.badRequest("该月份已存在已确认或已支付月结单，不能重新生成");
         }
         statementRepository.deleteDraftStatements(month);
 
-        var range = monthRange(month);
         settlementIncomeService.syncPaidBills(range.startAt(), range.endAt());
         var paidBillItems = statementRepository.listPaidBillItems(range.startAt(), range.endAt());
         var externalOrderItems = statementRepository.listExternalOrderItems(range.startAt(), range.endAt());
@@ -249,6 +294,12 @@ public class SettlementStatementService {
             if (!"EXTERNAL_ORDER".equals(snapshot.sourceType().name()) || !externalOrder.externalOrderId().equals(snapshot.sourceId())) {
                 throw BusinessException.badRequest("补录订单 " + externalOrder.recordNo() + " 的分润快照不匹配");
             }
+            // The verification/rent base is frozen on the initial snapshot;
+            // the order row remains the authoritative recorded handling fee.
+            // Structural fee edits are blocked once any statement/income is
+            // locked, so using it here cannot rewrite settled history and it
+            // also preserves older snapshots created before custom fees were
+            // frozen into the snapshot.
             var signFeeAllocation = ProfitSharingCalculator.calculateOrderFee(externalOrder.signFeeAmount());
             if (signFeeAllocation.merchantNetAmount().signum() > 0) {
                 merchantDraft(merchantDrafts, externalOrder.merchantId(), externalOrder.storeId()).register(
@@ -269,7 +320,7 @@ public class SettlementStatementService {
                     BigDecimal.ZERO
                 );
             }
-            var settlementBase = money(externalOrder.verificationAmount());
+            var settlementBase = money(snapshot.settlementBaseAmount());
             if (settlementBase.signum() <= 0) {
                 continue;
             }
@@ -380,13 +431,21 @@ public class SettlementStatementService {
                     settlementBase
                 );
             }
-            if (snapshot.storeOperationAmount().signum() > 0) {
+            /* Legacy renewal snapshots keep the store entitlement in
+             * merchantRentShareAmount; PROFIT_V2 stores it in the separate
+             * operation/maintenance fields.  Use the frozen snapshot value so
+             * the monthly statement agrees with the income ledger for both
+             * calculation versions. */
+            var merchantShare = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+                ? money(snapshot.storeOperationAmount())
+                : money(snapshot.merchantRentShareAmount());
+            if (merchantShare.signum() > 0) {
                 merchantDraft(merchantDrafts, renewal.merchantId(), renewal.storeId()).register(
                     new LineDraft(
                         "EXTERNAL_RENEWAL", renewal.renewalEventId(), null, null, null,
                         renewal.merchantId(), renewal.storeId(), 0L,
                         SettlementStatementLineType.MERCHANT_RENT_SHARE,
-                        snapshot.storeOperationAmount(), renewal.periodStartAt(),
+                        merchantShare, renewal.periodStartAt(),
                         "补录订单 " + renewal.recordNo() + " 自动续租门店运营分润"
                     ),
                     snapshot.batteryCostAmount().signum() > 0 ? BigDecimal.ZERO : settlementBase
@@ -630,6 +689,14 @@ public class SettlementStatementService {
     public SettlementStatementResponse updateStatus(Long id, String status) {
         authorizationService.requirePermission("settlement.write");
         var targetStatus = parseStatus(status);
+        var current = statementRepository.findStatementForUpdate(id)
+            .orElseThrow(() -> BusinessException.badRequest("月结单不存在"));
+        if (targetStatus.ordinal() < current.status().ordinal()) {
+            throw BusinessException.badRequest("月结单状态不可回退");
+        }
+        if (targetStatus == current.status()) {
+            return toResponse(current);
+        }
         var updated = statementRepository.updateStatementStatus(id, targetStatus);
         if (targetStatus == SettlementStatementStatus.PAID) {
             incomeRepository.settleByStatement(
@@ -723,9 +790,21 @@ public class SettlementStatementService {
         if (orderId != null && investorIds.size() > 1) {
             throw BusinessException.badRequest("订单 " + orderId + " 绑定了不同出资方的资产，请拆分订单后再生成月结");
         }
-        var grossAmount = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
-            ? money(calculateProfitV2(snapshot, rentAmount).investorShareAmount())
-            : money(rentAmount.multiply(snapshot.investorRentShareRate()));
+        /* Formal BILL statements are built from each paid bill's actual rent
+         * items and therefore retain the recalculation path.  External
+         * supplemental orders/renewal events already carry a frozen V2
+         * investor allocation on their source snapshot.  Reuse that exact
+         * amount so month-end statements stay cent-for-cent aligned with the
+         * income ledger, including legacy/anomalous rows whose base fields may
+         * not be identical. */
+        BigDecimal grossAmount;
+        if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2) {
+            grossAmount = externalFrozenInvestorShare(snapshot)
+                ? money(snapshot.investorShareAmount())
+                : money(calculateProfitV2(snapshot, rentAmount).investorShareAmount());
+        } else {
+            grossAmount = money(rentAmount.multiply(snapshot.investorRentShareRate()));
+        }
         var rentByInvestor = new LinkedHashMap<Long, BigDecimal>();
         var grossByInvestor = new LinkedHashMap<Long, BigDecimal>();
         var remainingRent = money(rentAmount);
@@ -746,12 +825,17 @@ public class SettlementStatementService {
             .toList();
     }
 
+    private boolean externalFrozenInvestorShare(SettlementRuleSnapshot snapshot) {
+        return snapshot.sourceType() == SnapshotSourceType.EXTERNAL_ORDER
+            || snapshot.sourceType() == SnapshotSourceType.EXTERNAL_RENEWAL;
+    }
+
     private ProfitSharingCalculator.Allocation calculateProfitV2(SettlementRuleSnapshot snapshot, BigDecimal settlementBaseAmount) {
         return ProfitSharingCalculator.calculate(
             settlementBaseAmount,
             snapshot.channelFeeRate(),
             snapshot.platformFeeRate(),
-            BatteryCostCalculator.prorate(snapshot.batteryCostAmount(), settlementBaseAmount, snapshot.settlementBaseAmount()),
+            BatteryCostCalculator.prorate(snapshot.batteryCostAmount(), settlementBaseAmount, snapshot.rentalAmount()),
             snapshot.storeOperationRate(),
             snapshot.maintenanceFundRate(),
             snapshot.channelReferralRate(),
@@ -902,7 +986,7 @@ public class SettlementStatementService {
     }
 
     private BigDecimal netOrderFee(BigDecimal amount) {
-        return money(amount).multiply(BigDecimal.ONE.subtract(ORDER_FEE_SERVICE_RATE)).setScale(2, RoundingMode.HALF_UP);
+        return ProfitSharingCalculator.calculateOrderFee(amount).merchantNetAmount();
     }
 
     private record Range(LocalDateTime startAt, LocalDateTime endAt) {

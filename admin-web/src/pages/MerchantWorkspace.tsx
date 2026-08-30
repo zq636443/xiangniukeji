@@ -34,6 +34,7 @@ import {
   Table,
   Tag,
   Tabs,
+  Tooltip,
   Typography,
   message
 } from 'antd';
@@ -55,6 +56,7 @@ import { downloadCsv } from '../utils/csv';
 import {
   buildTimeBuckets,
   compactMoney,
+  externalOrderInitialCollectedAmount,
   getDateWindow,
   isInWindow,
   percent,
@@ -64,6 +66,13 @@ import {
   type CockpitCustomRange,
   type CockpitPeriod
 } from '../utils/dashboard';
+import {
+  isStoreRevenueEntry,
+  isStoreRevenueLine,
+  snapshotStoreOrderFeeAmount,
+  storeRevenueEntryAmount,
+  summarizeStoreRevenue
+} from '../utils/storeRevenue';
 import type {
   AssetDetail,
   AssetInvestorOption,
@@ -353,6 +362,8 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
   const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [settlementIncomeUnavailable, setSettlementIncomeUnavailable] = useState(false);
   const canReadSettlement = account.permissions.includes('settlement.read') || account.permissions.includes('system.admin');
 
   async function loadData() {
@@ -364,31 +375,44 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       setOverdues([]);
       setIncomeEntries([]);
       setStatements([]);
+      setLastUpdatedAt(null);
+      setSettlementIncomeUnavailable(false);
       return;
     }
     setLoading(true);
     setError('');
     try {
-      const [orderData, externalOrderData, externalRenewalData, assetData, overdueData, incomeData, statementData] = await Promise.all([
+      const incomeRequest = canReadSettlement
+        ? http.get<unknown, SettlementIncomeEntry[]>('/api/merchant/settlement/income/entries', { params: { storeId } })
+          .then((data) => ({ data, unavailable: false as const }))
+          .catch(() => ({ data: [] as SettlementIncomeEntry[], unavailable: true as const }))
+        : Promise.resolve({ data: [] as SettlementIncomeEntry[], unavailable: false as const });
+      const statementRequest = canReadSettlement
+        ? http.get<unknown, SettlementStatement[]>('/api/merchant/settlement/statements', { params: { storeId } })
+          .then((data) => ({ data, error: null as unknown }))
+          .catch((requestError) => ({ data: [] as SettlementStatement[], error: requestError }))
+        : Promise.resolve({ data: [] as SettlementStatement[], error: null as unknown });
+      const [orderData, externalOrderData, externalRenewalData, assetData, overdueData, incomeResult, statementResult] = await Promise.all([
         http.get<unknown, RentalOrder[]>('/api/merchant/orders', { params: { storeId } }),
         http.get<unknown, ExternalRentalOrder[]>('/api/merchant/external-orders', { params: { storeId } }),
         http.get<unknown, ExternalOrderRenewal[]>('/api/merchant/external-orders/renewals', { params: { storeId } }),
         http.get<unknown, Asset[]>(`/api/merchant/assets/stores/${storeId}`),
         http.get<unknown, OverdueCase[]>('/api/merchant/overdues', { params: { storeId, overdueStatus: 'OPEN' } }),
-        canReadSettlement
-          ? http.get<unknown, SettlementIncomeEntry[]>('/api/merchant/settlement/income/entries', { params: { storeId } })
-          : Promise.resolve([]),
-        canReadSettlement
-          ? http.get<unknown, SettlementStatement[]>('/api/merchant/settlement/statements', { params: { storeId } })
-          : Promise.resolve([])
+        incomeRequest,
+        statementRequest
       ]);
+      setSettlementIncomeUnavailable(incomeResult.unavailable);
       setOrders(orderData);
       setExternalOrders(externalOrderData);
       setExternalRenewals(externalRenewalData);
       setAssets(assetData);
       setOverdues(overdueData);
-      setIncomeEntries(incomeData);
-      setStatements(statementData);
+      setIncomeEntries(incomeResult.data);
+      if (statementResult.error) {
+        throw statementResult.error;
+      }
+      setStatements(statementResult.data);
+      setLastUpdatedAt(new Date());
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '商户工作台加载失败');
     } finally {
@@ -398,6 +422,8 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
 
   useEffect(() => {
     void loadData();
+    const timer = setInterval(() => void loadData(), 30_000);
+    return () => clearInterval(timer);
   }, [storeId, canReadSettlement]);
 
   const currentStore = stores.find((item) => item.id === storeId);
@@ -410,12 +436,16 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     const periodRenewals = externalRenewals.filter((item) => isInWindow(item.occurredAt, window.start, window.end));
     const previousRenewals = externalRenewals.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd));
     const periodRenewalAmount = sumNumbers(periodRenewals.map((item) => item.renewalAmount));
-    const periodCollected = sumNumbers(periodOrders.map((item) => item.paidAmount)) + sumNumbers(periodExternal.map((item) => item.verificationAmount)) + periodRenewalAmount;
-    const previousCollected = sumNumbers(previousOrders.map((item) => item.paidAmount)) + sumNumbers(previousExternal.map((item) => item.verificationAmount)) + sumNumbers(previousRenewals.map((item) => item.renewalAmount));
-    const actualIncomeEntries = incomeEntries.filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN');
-    const periodIncome = sumNumbers(actualIncomeEntries.filter((item) => isInWindow(item.occurredAt, window.start, window.end)).map((item) => item.amount));
-    const periodRenewalIncome = sumNumbers(actualIncomeEntries.filter((item) => item.sourceType === 'EXTERNAL_RENEWAL' && isInWindow(item.occurredAt, window.start, window.end)).map((item) => item.amount));
-    const previousIncome = sumNumbers(actualIncomeEntries.filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd)).map((item) => item.amount));
+    const periodCollected = sumNumbers(periodOrders.map((item) => item.paidAmount)) + sumNumbers(periodExternal.map(externalOrderInitialCollectedAmount)) + periodRenewalAmount;
+    const previousCollected = sumNumbers(previousOrders.map((item) => item.paidAmount)) + sumNumbers(previousExternal.map(externalOrderInitialCollectedAmount)) + sumNumbers(previousRenewals.map((item) => item.renewalAmount));
+    const actualIncomeEntries = incomeEntries.filter(isStoreRevenueEntry);
+    const periodStoreRevenueEntries = actualIncomeEntries.filter((item) => isInWindow(item.occurredAt, window.start, window.end));
+    const periodStoreRevenue = summarizeStoreRevenue(periodStoreRevenueEntries);
+    const periodRenewalIncome = sumNumbers(periodStoreRevenueEntries
+      .filter((item) => item.sourceType === 'EXTERNAL_RENEWAL')
+      .map(storeRevenueEntryAmount));
+    const previousIncome = summarizeStoreRevenue(actualIncomeEntries
+      .filter((item) => isInWindow(item.occurredAt, window.previousStart, window.previousEnd))).total;
     const activeAssets = assets.filter((item) => !['SCRAPPED', 'SOLD'].includes(item.status));
     const rentingAssets = activeAssets.filter((item) => item.status === 'RENTING');
     const deploymentRate = activeAssets.length ? rentingAssets.length / activeAssets.length * 100 : 0;
@@ -433,9 +463,12 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       periodCollected,
       periodRenewalAmount,
       collectedChange: percentageChange(periodCollected, previousCollected),
-      periodIncome,
+      periodIncome: periodStoreRevenue.total,
+      periodOperationIncome: periodStoreRevenue.operation,
+      periodMaintenanceIncome: periodStoreRevenue.maintenance,
+      periodOrderFeeIncome: periodStoreRevenue.orderFee,
       periodRenewalIncome,
-      incomeChange: percentageChange(periodIncome, previousIncome),
+      incomeChange: percentageChange(periodStoreRevenue.total, previousIncome),
       activeAssets,
       rentingAssets,
       deploymentRate,
@@ -452,7 +485,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       pendingReturn: orders.filter((item) => item.orderStatus === 'PENDING_RETURN').length,
       repairingAssets: activeAssets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length,
       idleAssets: activeAssets.filter((item) => item.status === 'IDLE').length,
-      pendingIncome: sumNumbers(incomeEntries.filter((item) => item.entryStatus === 'PENDING').map((item) => item.amount)),
+      pendingIncome: summarizeStoreRevenue(incomeEntries.filter((item) => item.entryStatus === 'PENDING' && isStoreRevenueEntry(item))).total,
       latestStatement: [...statements].sort((left, right) => right.statementMonth.localeCompare(left.statementMonth))[0]
     };
   }, [orders, externalOrders, externalRenewals, assets, overdues, incomeEntries, statements, window]);
@@ -464,7 +497,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     return {
       labels: buckets.map((item) => item.label),
       orders: formalCounts.map((value, index) => value + externalCounts[index]),
-      income: valueByBuckets(buckets, incomeEntries.filter((item) => item.sourceType !== 'ORDER' && item.entryStatus !== 'FROZEN'), (item) => item.occurredAt, (item) => Number(item.amount || 0))
+      income: valueByBuckets(buckets, incomeEntries.filter(isStoreRevenueEntry), (item) => item.occurredAt, storeRevenueEntryAmount)
     };
   }, [orders, externalOrders, incomeEntries, window]);
 
@@ -538,7 +571,12 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
         onSelectedMonthChange={setSelectedMonth}
         onRefresh={loadData}
         loading={loading}
-        scope={<Tag color="green"><ShopOutlined /> {currentStore?.storeName || `门店 ${storeId}`}</Tag>}
+        scope={(
+          <Space size={8} wrap>
+            <Tag color="green"><ShopOutlined /> {currentStore?.storeName || `门店 ${storeId}`}</Tag>
+            {lastUpdatedAt ? <Typography.Text type="secondary">同步于 {lastUpdatedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</Typography.Text> : null}
+          </Space>
+        )}
       />
 
       {error ? <Alert type="error" message={error} showIcon /> : null}
@@ -546,7 +584,15 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       <div className="cockpit-metric-grid">
         <CockpitMetric icon={<WalletOutlined />} tone="green" label="期间营业额" value={compactMoney(dashboard.periodCollected)} detail={`续租 ${compactMoney(dashboard.periodRenewalAmount)} · ${dashboard.periodOrderCount} 笔订单`} change={dashboard.collectedChange} changeLabel="环比" />
         {canReadSettlement ? (
-          <CockpitMetric icon={<CheckCircleOutlined />} tone="violet" label="期间门店收益" value={compactMoney(dashboard.periodIncome)} detail={`其中续租 ${compactMoney(dashboard.periodRenewalIncome)}`} change={dashboard.incomeChange} changeLabel="环比" />
+          <CockpitMetric
+            icon={<CheckCircleOutlined />}
+            tone="violet"
+            label="实时门店收益"
+            value={settlementIncomeUnavailable ? '不可用' : compactMoney(dashboard.periodIncome)}
+            detail={settlementIncomeUnavailable ? '收益接口加载失败，请刷新重试' : `运营 ${compactMoney(dashboard.periodOperationIncome)} · 维修 ${compactMoney(dashboard.periodMaintenanceIncome)} · 办单费 ${compactMoney(dashboard.periodOrderFeeIncome)}（97%实收）`}
+            change={settlementIncomeUnavailable ? undefined : dashboard.incomeChange}
+            changeLabel={settlementIncomeUnavailable ? undefined : '环比'}
+          />
         ) : (
           <CockpitMetric icon={<BankOutlined />} tone="violet" label="期间新增订单" value={`${dashboard.periodOrderCount} 单`} detail="正式订单与补录订单" />
         )}
@@ -616,7 +662,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
             <div className="cockpit-summary-block">
               <div><span>最近月结月份</span><strong>{dashboard.latestStatement?.statementMonth || '-'}</strong></div>
               <div><span>最近应结算金额</span><strong>{compactMoney(dashboard.latestStatement?.payableAmount)}</strong></div>
-              <div><span>签单费收益</span><strong>{compactMoney(dashboard.latestStatement?.signFeeIncomeAmount)}</strong></div>
+              <div><span>月结办单费结算金额</span><strong>{compactMoney(dashboard.latestStatement?.signFeeIncomeAmount)}</strong></div>
               <div><span>运营及维修分润</span><strong>{compactMoney(dashboard.latestStatement?.rentShareIncomeAmount)}</strong></div>
               <div><span>应付电池公司</span><strong>{compactMoney(dashboard.latestStatement?.batteryCostAmount)}</strong></div>
             </div>
@@ -1385,14 +1431,16 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
                       <Descriptions.Item label="租赁平台扣点">{money(settlement.platformFeeAmount)}</Descriptions.Item>
                       <Descriptions.Item label="门店运营分润">{money(settlement.storeOperationAmount)}</Descriptions.Item>
                       <Descriptions.Item label="门店维修分润">{money(settlement.maintenanceFundAmount)}</Descriptions.Item>
-                      <Descriptions.Item label="门店合计分润">{money(Number(settlement.storeOperationAmount || 0) + Number(settlement.maintenanceFundAmount || 0))}</Descriptions.Item>
+                      <Descriptions.Item label="办单费门店净额（97%）">{money(snapshotStoreOrderFeeAmount(settlement))}</Descriptions.Item>
+                      <Descriptions.Item label="门店收益合计">{money(Number(settlement.storeOperationAmount || 0) + Number(settlement.maintenanceFundAmount || 0) + snapshotStoreOrderFeeAmount(settlement))}</Descriptions.Item>
                       <Descriptions.Item label="渠道引流分润">{money(settlement.channelReferralAmount)}</Descriptions.Item>
                       <Descriptions.Item label="出资方分润">{money(settlement.investorShareAmount)}</Descriptions.Item>
                     </>
                   ) : (
                     <>
-                      <Descriptions.Item label="门店收益">{money(settlement.merchantRentShareAmount)}</Descriptions.Item>
-                      <Descriptions.Item label="签单费">{money(settlement.signFeeAmount)}</Descriptions.Item>
+                      <Descriptions.Item label="门店租金分成">{money(settlement.merchantRentShareAmount)}</Descriptions.Item>
+                      <Descriptions.Item label="办单费门店净额（97%）">{money(snapshotStoreOrderFeeAmount(settlement))}</Descriptions.Item>
+                      <Descriptions.Item label="门店收益合计">{money(Number(settlement.merchantRentShareAmount || 0) + snapshotStoreOrderFeeAmount(settlement))}</Descriptions.Item>
                       <Descriptions.Item label="平台收益">{money(settlement.platformRentShareAmount)}</Descriptions.Item>
                       <Descriptions.Item label="运营手续费">{money(settlement.investorOperationFeeAmount)}</Descriptions.Item>
                       <Descriptions.Item label="出资方净收益">{money(settlement.investorNetShareAmount)}</Descriptions.Item>
@@ -2610,7 +2658,7 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
 
   const visibleEntries = useMemo(() => entries.filter((entry) => {
     if (dayjs(entry.occurredAt).format('YYYY-MM') !== incomeMonth) return false;
-    return entry.sourceType !== 'ORDER';
+    return isStoreRevenueLine(entry);
   }), [entries, incomeMonth]);
 
   async function openStatement(record: SettlementStatement) {
@@ -2654,7 +2702,16 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
             { title: '来源', dataIndex: 'sourceType', render: merchantIncomeSourceTag },
             { title: '业务单号', render: (_, record) => record.sourceNo || record.sourceId },
             { title: '收益类型', dataIndex: 'lineType', render: incomeLineText },
-            { title: '金额', dataIndex: 'amount', render: money },
+            {
+              title: '收益金额',
+              render: (_, record) => {
+                const normalized = storeRevenueEntryAmount(record);
+                const adjusted = Math.abs(normalized - Number(record.amount || 0)) >= 0.005;
+                return adjusted
+                  ? <Tooltip title={`历史流水原额 ${money(record.amount)}；门店收益按97%净额展示`}>{money(normalized)}</Tooltip>
+                  : money(normalized);
+              }
+            },
             { title: '状态', dataIndex: 'entryStatus', render: incomeStatusTag },
             { title: '备注', dataIndex: 'remark', render: (value?: string | null) => value || '-' },
             { title: '计入时间', dataIndex: 'occurredAt', render: dateText }
@@ -2680,7 +2737,7 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
           columns={[
             { title: '月结单号', dataIndex: 'statementNo' },
             { title: '月份', dataIndex: 'statementMonth' },
-            { title: '签单费', dataIndex: 'signFeeIncomeAmount', render: money },
+            { title: '办单费结算金额', dataIndex: 'signFeeIncomeAmount', render: money },
             { title: '运营及维修分润', dataIndex: 'rentShareIncomeAmount', render: money },
             { title: '应付电池公司', dataIndex: 'batteryCostAmount', render: money },
             { title: '维保扣减', dataIndex: 'maintenanceDeductAmount', render: money },
@@ -2715,7 +2772,7 @@ export function MerchantIncomeWorkspace({ storeId }: MerchantPageProps) {
             { title: '账单', dataIndex: 'billId', render: (value) => value ?? '-' },
             { title: '资产', dataIndex: 'assetId', render: (value) => value ?? '-' },
             { title: '发生时间', dataIndex: 'occurredAt', render: dateText },
-            { title: '金额', dataIndex: 'amount', render: signedMoney },
+            { title: '月结锁定金额', dataIndex: 'amount', render: signedMoney },
             { title: '备注', dataIndex: 'remark', render: (value?: string | null) => value || '-' }
           ]}
         />

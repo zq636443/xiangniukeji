@@ -15,6 +15,7 @@ import type {
   Store,
   StoreSku
 } from '../types/api';
+import { storeOrderFeeNetAmount } from '../utils/storeRevenue';
 
 type Scope = 'admin' | 'merchant';
 
@@ -544,7 +545,9 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       };
       if (editingOrder) {
         await http.put(`${endpoint}/${editingOrder.id}`, payload);
-        message.success('补录订单已更新，分润已按最新核销金额重新计算');
+        message.success(editingOrder?.orderStatus === 'ACTIVE'
+          ? '补录订单已更新；如修改核销金额，仅从本次修改时间起影响后续续租，首期分润保持不变'
+          : '已结束补录订单资料已更新；首期分润保持原快照，终态不会再产生后续续租收益');
       } else {
         await http.post(endpoint, payload);
         message.success('补录订单已创建并计入分润');
@@ -742,18 +745,18 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               )
             },
             { title: '租金', dataIndex: 'externalRentalAmount', width: 110, render: moneyText },
-            { title: '实际核销金额', dataIndex: 'verificationAmount', width: 130, render: moneyText },
+            { title: '当前人工核销', dataIndex: 'verificationAmount', width: 130, render: moneyText },
             {
               title: '分润结果',
               width: 150,
               render: (_, record) => record.settlementSnapshotId ? (
                 <div>
-                  <div>门店 {moneyText(record.storeOperationAmount)}</div>
+                  <div>门店收益 {moneyText(record.storeRevenueAmount ?? (Number(record.storeOperationAmount || 0) + Number(record.maintenanceFundAmount || 0) + (record.storeOrderFeeAmount ?? storeOrderFeeNetAmount(record.signFeeAmount))))}</div>
                   <div>出资方 {moneyText(record.investorShareAmount)}</div>
                 </div>
               ) : <Tag color="warning">待计算</Tag>
             },
-            { title: '签单费', dataIndex: 'signFeeAmount', width: 110, render: moneyText },
+            { title: '办单费原额', dataIndex: 'signFeeAmount', width: 110, render: moneyText },
             { title: '续租规则', width: 260, render: (_, record) => externalRenewalText(record) },
             { title: '状态', dataIndex: 'orderStatus', width: 110, render: statusTag },
             { title: '起租时间', dataIndex: 'rentStartedAt', width: 170, render: dateText },
@@ -813,7 +816,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               type="info"
               showIcon
               message="正在修正已结束补录订单"
-              description="保存后会按最新核销金额和资产归属重算分润，但不会重新占用已归还资产。"
+              description="终态不会再产生后续续租收益；修改核销金额只记录为历史时间线，首期分润保持原快照。可修正客户资料和来源平台，不能修改门店、资产、办单费或租期结构。"
               style={{ marginBottom: 16 }}
             />
           ) : null}
@@ -1048,17 +1051,18 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               <Descriptions.Item label="主资产">{selectedOrder.frameAssetSerialNo || '-'}</Descriptions.Item>
               <Descriptions.Item label="第二资产">{selectedOrder.batteryAssetSerialNo || '-'}</Descriptions.Item>
               <Descriptions.Item label="外部订单租金">{moneyText(selectedOrder.externalRentalAmount)}</Descriptions.Item>
-              <Descriptions.Item label="实际核销金额">{moneyText(selectedOrder.verificationAmount)}</Descriptions.Item>
+              <Descriptions.Item label="当前人工核销金额">{moneyText(selectedOrder.verificationAmount)}</Descriptions.Item>
               <Descriptions.Item label="分润快照">{selectedOrder.settlementSnapshotNo || '-'}</Descriptions.Item>
-              <Descriptions.Item label="分润基数">{moneyText(selectedOrder.settlementBaseAmount)}</Descriptions.Item>
+              <Descriptions.Item label="首期分润基数">{moneyText(selectedOrder.settlementBaseAmount)}</Descriptions.Item>
               <Descriptions.Item label="渠道核销扣点">{moneyText(selectedOrder.channelFeeAmount)}</Descriptions.Item>
               <Descriptions.Item label="平台扣点">{moneyText(selectedOrder.platformFeeAmount)}</Descriptions.Item>
               <Descriptions.Item label="门店运营分润">{moneyText(selectedOrder.storeOperationAmount)}</Descriptions.Item>
               <Descriptions.Item label="门店维修分润">{moneyText(selectedOrder.maintenanceFundAmount)}</Descriptions.Item>
-              <Descriptions.Item label="门店合计分润">{moneyText(Number(selectedOrder.storeOperationAmount || 0) + Number(selectedOrder.maintenanceFundAmount || 0))}</Descriptions.Item>
+              <Descriptions.Item label="门店合计收益">{moneyText(selectedOrder.storeRevenueAmount ?? (Number(selectedOrder.storeOperationAmount || 0) + Number(selectedOrder.maintenanceFundAmount || 0) + (selectedOrder.storeOrderFeeAmount ?? storeOrderFeeNetAmount(selectedOrder.signFeeAmount))))}</Descriptions.Item>
               <Descriptions.Item label="渠道引流分润">{moneyText(selectedOrder.channelReferralAmount)}</Descriptions.Item>
               <Descriptions.Item label="出资方分润">{moneyText(selectedOrder.investorShareAmount)}</Descriptions.Item>
-              <Descriptions.Item label="签单费">{moneyText(selectedOrder.signFeeAmount)}</Descriptions.Item>
+              <Descriptions.Item label="办单费（原额）">{moneyText(selectedOrder.signFeeAmount)}</Descriptions.Item>
+              <Descriptions.Item label="办单费门店净额（97%）">{moneyText(selectedOrder.storeOrderFeeAmount ?? storeOrderFeeNetAmount(selectedOrder.signFeeAmount))}</Descriptions.Item>
               <Descriptions.Item label="押金">{moneyText(selectedOrder.depositAmount)}</Descriptions.Item>
               <Descriptions.Item label="起租时间">{dateText(selectedOrder.rentStartedAt)}</Descriptions.Item>
               <Descriptions.Item label="预计归还">{dateText(selectedOrder.expectedReturnAt)}</Descriptions.Item>

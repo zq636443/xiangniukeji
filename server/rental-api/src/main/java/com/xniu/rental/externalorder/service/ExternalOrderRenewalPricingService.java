@@ -71,10 +71,19 @@ public class ExternalOrderRenewalPricingService {
     @Transactional
     public ExternalOrderPricingRevisionResponse confirm(Long revisionId, ExternalOrderPricingConfirmRequest request) {
         authorizationService.requirePermission("order.operate");
+        /* Lock in the same order as complete/terminate (order -> pricing
+         * revision).  Reading the revision once to discover its order and
+         * then re-reading it under lock prevents a confirm/terminate pair
+         * from deadlocking on opposite row-lock orders. */
+        var revisionRef = revisionRepository.findById(revisionId)
+            .orElseThrow(() -> BusinessException.badRequest("补录订单续租调价记录不存在"));
+        var order = orderRepository.findByIdForUpdate(revisionRef.externalOrderId())
+            .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
         var revision = revisionRepository.findByIdForUpdate(revisionId)
             .orElseThrow(() -> BusinessException.badRequest("补录订单续租调价记录不存在"));
-        var order = orderRepository.findByIdForUpdate(revision.externalOrderId())
-            .orElseThrow(() -> BusinessException.badRequest("补录订单不存在"));
+        if (!revision.externalOrderId().equals(order.id())) {
+            throw BusinessException.badRequest("补录订单调价记录关联关系异常");
+        }
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         if (revision.revisionStatus() == PricingRevisionStatus.APPLIED) {
             return toResponse(revision);

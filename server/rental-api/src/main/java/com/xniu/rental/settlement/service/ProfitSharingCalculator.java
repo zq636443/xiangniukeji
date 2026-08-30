@@ -78,8 +78,11 @@ public final class ProfitSharingCalculator {
 
     public static OrderFeeAllocation calculateOrderFee(BigDecimal orderFeeAmount) {
         var gross = money(orderFeeAmount);
-        var serviceFee = multiply(gross, ORDER_FEE_SERVICE_RATE);
-        var merchantNet = gross.subtract(serviceFee).setScale(2, RoundingMode.HALF_UP);
+        // The confirmed business rule is a direct 97% merchant entitlement.
+        // Calculate that side first, then assign the exact cent remainder to
+        // the platform so both rows always add back to the gross fee.
+        var merchantNet = multiply(gross, BigDecimal.ONE.subtract(ORDER_FEE_SERVICE_RATE));
+        var serviceFee = gross.subtract(merchantNet).setScale(2, RoundingMode.HALF_UP);
         return new OrderFeeAllocation(
             gross,
             ORDER_FEE_SERVICE_RATE,

@@ -758,7 +758,83 @@ class ExternalRentalOrderIntegrationTests {
 
         assertThat(created.externalRentalAmount()).isEqualByComparingTo("129.00");
         assertThat(created.verificationAmount()).isEqualByComparingTo("96.00");
-        assertThat(created.renewalAmount()).isEqualByComparingTo("129.00");
+        assertThat(created.renewalAmount()).isEqualByComparingTo("99.00");
+    }
+
+    @Test
+    void verificationOnlyEditShouldPreserveInitialSnapshotAndMonthEndBase() {
+        var suffix = String.valueOf(System.nanoTime());
+        var assetId = createIntegratedAsset("verification-revision-" + suffix);
+        var startedAt = LocalDateTime.of(2026, 7, 1, 10, 0);
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE",
+            "VERIFICATION-REVISION-" + suffix,
+            2L,
+            4L,
+            "核销改价客户",
+            "13800132217",
+            startedAt,
+            null,
+            null,
+            assetId,
+            new BigDecimal("129.00"),
+            new BigDecimal("129.00"),
+            new BigDecimal("30.00"),
+            BigDecimal.ZERO,
+            "首期核销129"
+        ));
+        var initialSnapshotId = created.settlementSnapshotId();
+        var initialIncome = jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, BigDecimal.class, created.id());
+
+        var updated = externalRentalOrderService.updateOrder(created.id(), new ExternalRentalOrderUpdateRequest(
+            created.sourcePlatform(),
+            created.externalOrderNo(),
+            created.storeSkuId(),
+            created.packageId(),
+            created.leaseMultiplier(),
+            created.customerName(),
+            created.customerPhone(),
+            created.rentStartedAt(),
+            created.expectedReturnAt(),
+            created.frameAssetId(),
+            created.batteryAssetId(),
+            created.externalRentalAmount(),
+            new BigDecimal("96.00"),
+            created.signFeeAmount(),
+            created.depositAmount(),
+            "次月人工核销96"
+        ));
+
+        assertThat(updated.verificationAmount()).isEqualByComparingTo("96.00");
+        assertThat(updated.settlementSnapshotId()).isEqualTo(initialSnapshotId);
+        assertThat(updated.settlementBaseAmount()).isEqualByComparingTo("129.00");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COALESCE(SUM(amount), 0)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, BigDecimal.class, created.id())).isEqualByComparingTo(initialIncome);
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM external_order_verification_revision
+            WHERE external_order_id = ? AND revision_type = 'ORDER_EDIT' AND verification_amount = 96.00
+            """, Integer.class, created.id())).isEqualTo(1);
+
+        jdbcTemplate.update(
+            "UPDATE external_rental_order SET created_at = '2099-04-15 10:00:00' WHERE id = ?",
+            created.id()
+        );
+        settlementStatementService.generateMonth("2099-04");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT rent_base_amount
+            FROM settlement_statement
+            WHERE statement_month = '2099-04'
+              AND beneficiary_type = 'MERCHANT'
+              AND store_id = ?
+            """, BigDecimal.class, created.storeId())).isEqualByComparingTo("129.00");
     }
 
     @Test
@@ -909,8 +985,11 @@ class ExternalRentalOrderIntegrationTests {
         assertThat(closedUpdated.orderStatus()).isEqualTo("TERMINATED");
         assertThat(closedUpdated.customerName()).isEqualTo("已结束订单");
         assertThat(closedUpdated.verificationAmount()).isEqualByComparingTo("399.99");
-        assertThat(closedUpdated.settlementSnapshotId()).isNotEqualTo(terminated.settlementSnapshotId());
-        assertThat(closedUpdated.settlementBaseAmount()).isEqualByComparingTo("399.99");
+        // The initial settlement fact remains immutable even when an ended
+        // supplemental order's current verification field is corrected. The
+        // edit is recorded as a future renewal override only.
+        assertThat(closedUpdated.settlementSnapshotId()).isEqualTo(terminated.settlementSnapshotId());
+        assertThat(closedUpdated.settlementBaseAmount()).isEqualByComparingTo(terminated.settlementBaseAmount());
         assertThat(assetStatus(newFrameId)).isEqualTo("IDLE");
         assertThat(assetStatus(newBatteryId)).isEqualTo("IDLE");
         assertThat(jdbcTemplate.queryForObject("""
@@ -918,6 +997,25 @@ class ExternalRentalOrderIntegrationTests {
             FROM settlement_income_entry
             WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
             """, Integer.class, updated.id())).isZero();
+        assertThatThrownBy(() -> externalRentalOrderService.updateOrder(updated.id(), new ExternalRentalOrderUpdateRequest(
+            closedUpdated.sourcePlatform(),
+            closedUpdated.externalOrderNo(),
+            closedUpdated.storeSkuId(),
+            closedUpdated.packageId(),
+            closedUpdated.leaseMultiplier(),
+            closedUpdated.customerName(),
+            closedUpdated.customerPhone(),
+            closedUpdated.rentStartedAt(),
+            closedUpdated.expectedReturnAt(),
+            closedUpdated.frameAssetId(),
+            closedUpdated.batteryAssetId(),
+            closedUpdated.externalRentalAmount(),
+            closedUpdated.verificationAmount(),
+            new BigDecimal("36.00"),
+            closedUpdated.depositAmount(),
+            "终态禁止改办单费"
+        ))).isInstanceOf(BusinessException.class)
+            .hasMessageContaining("不能修改门店、资产、办单费或租期结构");
     }
 
     @Test

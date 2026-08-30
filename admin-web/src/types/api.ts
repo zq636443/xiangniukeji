@@ -103,10 +103,14 @@ export type ExternalRentalOrder = {
   settlementSnapshotId?: number | null;
   settlementSnapshotNo?: string | null;
   settlementBaseAmount?: number | null;
+  /** Frozen gross rental amount for the initial period, before settlement deductions. */
+  settlementRentalAmount?: number | null;
   channelFeeAmount?: number | null;
   platformFeeAmount?: number | null;
   storeOperationAmount?: number | null;
   maintenanceFundAmount?: number | null;
+  storeOrderFeeAmount?: number | null;
+  storeRevenueAmount?: number | null;
   channelReferralAmount?: number | null;
   investorShareAmount?: number | null;
   signFeeAmount: number;
@@ -723,6 +727,8 @@ export type SettlementIncomeEntry = {
     | 'MAINTENANCE_FEE'
     | 'INVESTOR_NET_RENT';
   amount: number;
+  /** Net amount used by store-revenue views; raw immutable ledger amount stays in `amount`. */
+  storeRevenueAmount?: number | null;
   entryStatus: 'PENDING' | 'SETTLED' | 'FROZEN';
   remark?: string | null;
   occurredAt: string;

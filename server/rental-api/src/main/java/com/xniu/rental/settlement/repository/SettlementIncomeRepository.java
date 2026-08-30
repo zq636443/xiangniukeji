@@ -61,6 +61,21 @@ public class SettlementIncomeRepository {
         return list.stream().findFirst();
     }
 
+    /**
+     * Lock an income row while an administrator changes its status.  Order
+     * deletion/termination uses the same row lock before removing pending
+     * entries, so a concurrent settlement cannot slip between the safety
+     * check and the delete.
+     */
+    public Optional<SettlementIncomeEntry> findByIdForUpdate(Long id) {
+        var list = jdbcTemplate.query(
+            "SELECT * FROM settlement_income_entry WHERE id = ? FOR UPDATE",
+            mapper,
+            id
+        );
+        return list.stream().findFirst();
+    }
+
     public List<SettlementIncomeEntry> listBySource(IncomeSourceType sourceType, Long sourceId) {
         return jdbcTemplate.query("""
             SELECT *
@@ -79,6 +94,37 @@ public class SettlementIncomeRepository {
               AND entry_status <> 'PENDING'
             """, Integer.class, sourceType.name(), sourceId);
         return count != null && count > 0;
+    }
+
+    /** Lock all source rows before a destructive order operation. */
+    public boolean hasNonPendingBySourceForUpdate(IncomeSourceType sourceType, Long sourceId) {
+        var statuses = jdbcTemplate.queryForList("""
+            SELECT entry_status
+            FROM settlement_income_entry
+            WHERE source_type = ?
+              AND source_id = ?
+            FOR UPDATE
+            """, String.class, sourceType.name(), sourceId);
+        return statuses.stream().anyMatch(status -> !"PENDING".equals(status));
+    }
+
+    /**
+     * Lock every income row belonging to a source before replacing that
+     * source's derived entries.  Unlike {@link #hasNonPendingBySourceForUpdate}
+     * this method deliberately does not inspect or reject the statuses: callers
+     * such as the external-order settlement synchronizer perform their own
+     * mutability checks and only need a stable source-row set while deleting
+     * and recreating entries.
+     */
+    public void lockBySourceForUpdate(IncomeSourceType sourceType, Long sourceId) {
+        jdbcTemplate.queryForList("""
+            SELECT id
+            FROM settlement_income_entry
+            WHERE source_type = ?
+              AND source_id = ?
+            ORDER BY id
+            FOR UPDATE
+            """, Long.class, sourceType.name(), sourceId);
     }
 
     public void deleteBySource(IncomeSourceType sourceType, Long sourceId) {
