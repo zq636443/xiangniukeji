@@ -16,12 +16,25 @@ CREATE TABLE IF NOT EXISTS external_order_verification_revision (
   KEY idx_external_verification_revision_snapshot (source_snapshot_id)
 );
 
-/* Keep the DDL retry-safe: MySQL commits ALTER TABLE independently, so a
- * failed data-repair statement must be able to rerun without tripping over an
- * already-created column.  Production runs MySQL 8.0.46, which supports the
- * IF NOT EXISTS form (and MariaDB accepts it as well). */
-ALTER TABLE external_order_renewal_event
-  ADD COLUMN IF NOT EXISTS system_renewal_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00 AFTER renewal_amount;
+/* Keep the DDL retry-safe: MySQL commits ALTER TABLE independently, and
+ * MySQL (unlike MariaDB) does not support `ADD COLUMN IF NOT EXISTS`.  Use a
+ * metadata check plus a prepared statement so a retry after a partial Flyway
+ * run does not fail on an already-created column. */
+SET @xniu_system_renewal_amount_exists := (
+  SELECT COUNT(*)
+  FROM information_schema.columns
+  WHERE table_schema = DATABASE()
+    AND table_name = 'external_order_renewal_event'
+    AND column_name = 'system_renewal_amount'
+);
+SET @xniu_system_renewal_amount_ddl := IF(
+  @xniu_system_renewal_amount_exists = 0,
+  'ALTER TABLE external_order_renewal_event ADD COLUMN system_renewal_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00 AFTER renewal_amount',
+  'SELECT 1'
+);
+PREPARE xniu_add_system_renewal_amount FROM @xniu_system_renewal_amount_ddl;
+EXECUTE xniu_add_system_renewal_amount;
+DEALLOCATE PREPARE xniu_add_system_renewal_amount;
 
 UPDATE external_order_renewal_event
 SET system_renewal_amount = renewal_amount
