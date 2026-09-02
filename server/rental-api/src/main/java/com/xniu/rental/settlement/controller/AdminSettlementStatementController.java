@@ -1,6 +1,7 @@
 package com.xniu.rental.settlement.controller;
 
 import com.xniu.rental.common.ApiResponse;
+import com.xniu.rental.settlement.dto.BatteryPayableResponse;
 import com.xniu.rental.settlement.dto.SettlementOverviewResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementGenerateResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementLineResponse;
@@ -29,6 +30,14 @@ public class AdminSettlementStatementController {
     @GetMapping("/overview")
     public ApiResponse<SettlementOverviewResponse> overview(@RequestParam(required = false) String month) {
         return ApiResponse.ok(settlementStatementService.overview(month));
+    }
+
+    @GetMapping("/battery-payable")
+    public ApiResponse<BatteryPayableResponse> batteryPayable(
+        @RequestParam(required = false) String month,
+        @RequestParam(required = false) Long storeId
+    ) {
+        return ApiResponse.ok(settlementStatementService.adminBatteryPayable(month, storeId));
     }
 
     @PostMapping("/generate")

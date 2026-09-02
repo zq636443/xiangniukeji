@@ -37,7 +37,7 @@ class ExternalOrderManualRenewalPolicyContractTests {
     }
 
     @Test
-    void exactThirtyOneDayPeriodUsesOneMonthlyBatteryCostAndOneDailyCost() {
+    void exactThirtyOneDayPeriodUsesThirtyOneDailyBatteryCosts() {
         var cost = BatteryCostCalculator.calculateExactPeriod(
             new BigDecimal("6.80"),
             new BigDecimal("200.00"),
@@ -45,7 +45,7 @@ class ExternalOrderManualRenewalPolicyContractTests {
             START.plusDays(31)
         );
 
-        assertThat(cost).isEqualByComparingTo("206.80");
+        assertThat(cost).isEqualByComparingTo("210.80");
     }
 
     @Test
@@ -57,7 +57,7 @@ class ExternalOrderManualRenewalPolicyContractTests {
             START.plusDays(30).plusHours(12)
         );
 
-        assertThat(cost).isEqualByComparingTo("203.40");
+        assertThat(cost).isEqualByComparingTo("207.40");
     }
 
     @Test
@@ -82,12 +82,12 @@ class ExternalOrderManualRenewalPolicyContractTests {
 
         assertThat(allocation.channelFeeAmount()).isEqualByComparingTo("19.87");
         assertThat(allocation.platformFeeAmount()).isEqualByComparingTo("11.92");
-        assertThat(allocation.batteryCostAmount()).isEqualByComparingTo("206.80");
+        assertThat(allocation.batteryCostAmount()).isEqualByComparingTo("210.80");
         assertThat(allocation.channelReferralAmount()).isEqualByComparingTo("79.46");
-        assertThat(allocation.distributableAmount()).isEqualByComparingTo("79.25");
-        assertThat(allocation.storeOperationAmount()).isEqualByComparingTo("14.86");
-        assertThat(allocation.maintenanceFundAmount()).isEqualByComparingTo("9.91");
-        assertThat(allocation.investorShareAmount()).isEqualByComparingTo("54.48");
+        assertThat(allocation.distributableAmount()).isEqualByComparingTo("75.25");
+        assertThat(allocation.storeOperationAmount()).isEqualByComparingTo("14.11");
+        assertThat(allocation.maintenanceFundAmount()).isEqualByComparingTo("9.41");
+        assertThat(allocation.investorShareAmount()).isEqualByComparingTo("51.73");
     }
 
     @Test

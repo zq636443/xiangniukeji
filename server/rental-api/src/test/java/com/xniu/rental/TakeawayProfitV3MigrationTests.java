@@ -62,7 +62,7 @@ class TakeawayProfitV3MigrationTests {
     void shouldRecalculateCurrentInitialAndRenewalSnapshotsAndRemainIdempotent() throws SQLException {
         seedCurrentInitialAndRenewalSources();
 
-        flyway(null).migrate();
+        flyway(MigrationVersion.fromVersion("65")).migrate();
 
         assertThat(singleLong("SELECT COUNT(*) FROM settlement_snapshot_recalculation_audit WHERE migration_code = 'V65'"))
             .isEqualTo(2);
@@ -101,7 +101,7 @@ class TakeawayProfitV3MigrationTests {
             WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ? AND line_type = 'CHANNEL_REFERRAL_SHARE'
             """, ORDER_ID);
         update("DELETE FROM flyway_schema_history WHERE version = '65'");
-        flyway(null).migrate();
+        flyway(MigrationVersion.fromVersion("65")).migrate();
 
         assertThat(singleLong("SELECT COUNT(*) FROM settlement_snapshot_recalculation_audit WHERE migration_code = 'V65'"))
             .isEqualTo(2);
@@ -124,7 +124,7 @@ class TakeawayProfitV3MigrationTests {
               AND line_type = 'STORE_OPERATION_SHARE'
             """, RENEWAL_ID);
 
-        assertThatThrownBy(() -> flyway(null).migrate())
+        assertThatThrownBy(() -> flyway(MigrationVersion.fromVersion("65")).migrate())
             .isInstanceOf(FlywayException.class);
 
         assertThat(singleLong("SELECT COUNT(*) FROM settlement_rule_snapshot WHERE snapshot_no LIKE 'SNP-V65-%'"))

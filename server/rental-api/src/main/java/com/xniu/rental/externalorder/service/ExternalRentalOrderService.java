@@ -42,6 +42,7 @@ import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
 import com.xniu.rental.settlement.model.IncomeSourceType;
+import com.xniu.rental.settlement.model.SettlementRuleSnapshot;
 import com.xniu.rental.settlement.model.SnapshotSourceType;
 import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
@@ -369,7 +370,11 @@ public class ExternalRentalOrderService {
         var settlementStructureChanged = order.orderStatus() == ExternalRentalOrderStatus.ACTIVE
             ? structuralSettlementChanged
             : terminalSettlementAttributionChanged;
-        var settlementChanged = verificationEdited || structuralSettlementChanged;
+        // The concrete first-period timestamps are part of the battery-cost
+        // basis. A permitted date correction must therefore replace the
+        // initial snapshot and its pending income even when every amount and
+        // attribution field is unchanged.
+        var settlementChanged = verificationEdited || structuralSettlementChanged || renewalScheduleChanged;
         /* The first snapshot is the immutable first-period fact for every
          * supplemental order. A verification-only edit records an
          * effective-dated renewal override; it must not rewrite the initial
@@ -380,7 +385,7 @@ public class ExternalRentalOrderService {
          * resurrect income that termination intentionally removed. */
         var preserveInitialSettlement = order.settlementSnapshotId() != null
             && (order.orderStatus() != ExternalRentalOrderStatus.ACTIVE
-                || (verificationEdited && !structuralSettlementChanged));
+                || (verificationEdited && !structuralSettlementChanged && !renewalScheduleChanged));
 
         /* A verification edit on an order that has no immutable first-period
          * snapshot rebuilds the initial settlement. Any existing
@@ -399,8 +404,8 @@ public class ExternalRentalOrderService {
          * them, so a missing candidate month cannot race this edit.
          */
         var rebuiltInitialDraftMonths = new java.util.LinkedHashSet<String>();
-        if (verificationEdited) {
-            if (!preserveInitialSettlement) {
+        if (verificationEdited || renewalScheduleChanged) {
+            if (!preserveInitialSettlement || renewalScheduleChanged) {
                 rebuiltInitialDraftMonths.addAll(settlementStatementRepository.listDraftStatementMonthsBySource(
                     SnapshotSourceType.EXTERNAL_ORDER.name(), order.id()
                 ));
@@ -435,6 +440,9 @@ public class ExternalRentalOrderService {
         }
         if (verificationEdited && anySettlementLocked && !preserveInitialSettlement) {
             throw BusinessException.badRequest("补录订单收益已锁定，不能改写首期核销金额");
+        }
+        if (renewalScheduleChanged && anySettlementLocked) {
+            throw BusinessException.badRequest("补录订单收益已锁定，不能修改起租或预计归还时间");
         }
         /* Read the database clock immediately before the order write.  This is
          * the effective boundary used by the renewal timeline, so validation
@@ -493,13 +501,24 @@ public class ExternalRentalOrderService {
                 || !java.util.Objects.equals(order.batteryAssetId(), request.batteryAssetId())
                 || !java.util.Objects.equals(order.leaseMultiplier(), leaseMultiplier)
                 || !java.util.Objects.equals(order.leaseUnit(), nextLeaseUnit)
-                || !java.util.Objects.equals(order.leaseValue(), nextLeaseValue);
+                || !java.util.Objects.equals(order.leaseValue(), nextLeaseValue)
+                || renewalScheduleChanged;
+            // A date-only correction must retain the frozen first-period
+            // verification base. The order's current verification amount may
+            // already be a later, effective-dated renewal override and must
+            // not be copied back into the rebuilt initial snapshot.
+            var initialSettlementBase = renewalScheduleChanged && !structuralSettlementChanged
+                && order.settlementSnapshotId() != null
+                ? settlementRepository.findSnapshot(order.settlementSnapshotId())
+                    .map(SettlementRuleSnapshot::settlementBaseAmount)
+                    .orElse(null)
+                : null;
             // A newly rebuilt snapshot must use the current verification
             // amount. The old first-period base is preserved only by the
             // verification-only path above; structural edits (including
             // structural + verification edits) are a new settlement fact and
             // must not accidentally retain the old amount.
-            updated = createAndSyncSettlement(updated, !batteryCostBasisChanged, null);
+            updated = createAndSyncSettlement(updated, !batteryCostBasisChanged, initialSettlementBase);
         }
         if (verificationEdited) {
             verificationRevisionRepository.create(
@@ -507,7 +526,9 @@ public class ExternalRentalOrderService {
                 updated.verificationAmount(),
                 editedAt,
                 ExternalOrderVerificationRevisionType.ORDER_EDIT,
-                preserveInitialSettlement ? null : updated.settlementSnapshotId(),
+                preserveInitialSettlement || renewalScheduleChanged
+                    ? null
+                    : updated.settlementSnapshotId(),
                 currentAccountId()
             );
             // Rebuild only accrued renewal events whose income is still
@@ -518,18 +539,21 @@ public class ExternalRentalOrderService {
             // statement lines from the new snapshot while the month locks
             // acquired before the update are still held.
             regenerateDraftMonths(rebuiltInitialDraftMonths);
-        } else if (!java.util.Objects.equals(order.rentStartedAt(), request.rentStartedAt())
-            && updated.settlementSnapshotId() != null) {
+        } else if (renewalScheduleChanged && updated.settlementSnapshotId() != null) {
             // A date-only correction changes the initial period boundary but
             // must not become a renewal-price override for later periods.
+            var initialSettlementBase = settlementRepository.findSnapshot(updated.settlementSnapshotId())
+                .map(SettlementRuleSnapshot::settlementBaseAmount)
+                .orElse(updated.verificationAmount());
             verificationRevisionRepository.createIfMissingSnapshot(
                 updated.id(),
-                updated.verificationAmount(),
+                initialSettlementBase,
                 updated.rentStartedAt(),
                 ExternalOrderVerificationRevisionType.INITIAL,
                 updated.settlementSnapshotId(),
                 currentAccountId()
             );
+            regenerateDraftMonths(rebuiltInitialDraftMonths);
         }
         externalRentalOrderRepository.addLog(
             updated.id(),

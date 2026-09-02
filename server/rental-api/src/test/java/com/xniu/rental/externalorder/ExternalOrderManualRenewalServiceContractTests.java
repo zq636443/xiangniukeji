@@ -129,7 +129,7 @@ class ExternalOrderManualRenewalServiceContractTests {
     void createsOneOffEventUnderTheOrderLockAndAdvancesOnlyThePaidThroughBoundary() {
         prepareActiveOrder(new BigDecimal("6.80"), new BigDecimal("200.00"));
         var end = START.plusDays(31);
-        prepareCreatedEvent(end, new BigDecimal("397.30"), new BigDecimal("206.80"), "人工确认续租31天");
+        prepareCreatedEvent(end, new BigDecimal("397.30"), new BigDecimal("210.80"), "人工确认续租31天");
 
         var response = service.create(1L, new ExternalOrderManualRenewalRequest(
             START,
@@ -140,7 +140,7 @@ class ExternalOrderManualRenewalServiceContractTests {
 
         assertThat(response.renewalSource()).isEqualTo("MANUAL");
         assertThat(response.renewalAmount()).isEqualByComparingTo("397.30");
-        assertThat(response.batteryCostAmount()).isEqualByComparingTo("206.80");
+        assertThat(response.batteryCostAmount()).isEqualByComparingTo("210.80");
 
         var writes = inOrder(orderRepository, renewalRepository, settlementService, settlementIncomeService);
         writes.verify(orderRepository).findByIdForUpdate(1L);
@@ -153,7 +153,7 @@ class ExternalOrderManualRenewalServiceContractTests {
             eq(end),
             eq(new BigDecimal("397.30")),
             eq(new BigDecimal("129.00")),
-            eq(new BigDecimal("206.80")),
+            eq(new BigDecimal("210.80")),
             eq(ExternalOrderRenewalSource.MANUAL),
             eq(7L),
             eq("人工确认续租31天")
@@ -162,7 +162,7 @@ class ExternalOrderManualRenewalServiceContractTests {
             42L,
             10L,
             new BigDecimal("397.30"),
-            new BigDecimal("206.80")
+            new BigDecimal("210.80")
         );
         writes.verify(settlementIncomeService).createExternalRenewalEntries(
             42L,

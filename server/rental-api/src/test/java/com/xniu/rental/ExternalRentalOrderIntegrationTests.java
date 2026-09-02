@@ -1316,6 +1316,114 @@ class ExternalRentalOrderIntegrationTests {
     }
 
     @Test
+    void editableDateCorrectionShouldRebuildInitialBatteryCostAndPendingIncome() {
+        var suffix = String.valueOf(System.nanoTime());
+        var batteryAssetId = createTestAsset("date-cost-" + suffix, "BATTERY");
+        jdbcTemplate.update("""
+            UPDATE product_sku
+            SET battery_cost_daily_amount = 6.80,
+                battery_cost_monthly_amount = NULL
+            WHERE id = 2
+            """);
+        var initialStart = LocalDateTime.now().plusDays(10).withNano(0);
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE", "DATE-COST-" + suffix, 2L, 4L,
+            "租期更正客户", "13800138888", initialStart, initialStart.plusDays(10),
+            null, batteryAssetId, new BigDecimal("399.00"), new BigDecimal("399.00"),
+            BigDecimal.ZERO, BigDecimal.ZERO, "十天初始租期"
+        ));
+        var oldSnapshotId = created.settlementSnapshotId();
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT battery_cost_amount FROM settlement_rule_snapshot WHERE id = ?",
+            BigDecimal.class,
+            oldSnapshotId
+        )).isEqualByComparingTo("68.00");
+        jdbcTemplate.update(
+            "UPDATE external_rental_order SET created_at = '2099-11-05 09:00:00' WHERE id = ?",
+            created.id()
+        );
+        settlementStatementService.generateMonth("2099-11");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT amount
+            FROM settlement_statement_line
+            WHERE source_type = 'EXTERNAL_ORDER'
+              AND source_id = ?
+              AND line_type = 'MERCHANT_BATTERY_COST_PAYABLE'
+            """, BigDecimal.class, created.id())).isEqualByComparingTo("68.00");
+
+        var correctedStart = initialStart.plusDays(1);
+        var updated = externalRentalOrderService.updateOrder(created.id(), new ExternalRentalOrderUpdateRequest(
+            created.sourcePlatform(), created.externalOrderNo(), created.storeSkuId(), created.packageId(),
+            created.leaseMultiplier(), created.customerName(), created.customerPhone(), correctedStart,
+            correctedStart.plusDays(20), created.frameAssetId(), created.batteryAssetId(),
+            created.externalRentalAmount(), created.verificationAmount(), created.signFeeAmount(),
+            created.depositAmount(), "更正为二十天"
+        ));
+
+        assertThat(updated.settlementSnapshotId()).isNotEqualTo(oldSnapshotId);
+        assertThat(updated.settlementBaseAmount()).isEqualByComparingTo(created.settlementBaseAmount());
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT battery_cost_amount FROM settlement_rule_snapshot WHERE id = ?",
+            BigDecimal.class,
+            updated.settlementSnapshotId()
+        )).isEqualByComparingTo("136.00");
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM settlement_income_entry
+            WHERE source_type = 'EXTERNAL_ORDER'
+              AND source_id = ?
+              AND snapshot_id <> ?
+            """, Integer.class, updated.id(), updated.settlementSnapshotId())).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+            SELECT amount
+            FROM settlement_statement_line
+            WHERE source_type = 'EXTERNAL_ORDER'
+              AND source_id = ?
+              AND line_type = 'MERCHANT_BATTERY_COST_PAYABLE'
+            """, BigDecimal.class, updated.id())).isEqualByComparingTo("136.00");
+    }
+
+    @Test
+    void lockedInitialIncomeShouldRejectDateCorrectionWithoutReplacingSnapshot() {
+        var suffix = String.valueOf(System.nanoTime());
+        var batteryAssetId = createTestAsset("locked-date-cost-" + suffix, "BATTERY");
+        jdbcTemplate.update("""
+            UPDATE product_sku
+            SET battery_cost_daily_amount = 6.80,
+                battery_cost_monthly_amount = NULL
+            WHERE id = 2
+            """);
+        var initialStart = LocalDateTime.now().plusDays(10).withNano(0);
+        var created = externalRentalOrderService.createOrder(new ExternalRentalOrderCreateRequest(
+            "OFFLINE", "LOCKED-DATE-COST-" + suffix, 2L, 4L,
+            "锁定租期客户", "13800137777", initialStart, initialStart.plusDays(10),
+            null, batteryAssetId, new BigDecimal("399.00"), new BigDecimal("399.00"),
+            BigDecimal.ZERO, BigDecimal.ZERO, null
+        ));
+        jdbcTemplate.update("""
+            UPDATE settlement_income_entry
+            SET entry_status = 'FROZEN'
+            WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
+            """, created.id());
+
+        assertThatThrownBy(() -> externalRentalOrderService.updateOrder(
+            created.id(),
+            new ExternalRentalOrderUpdateRequest(
+                created.sourcePlatform(), created.externalOrderNo(), created.storeSkuId(), created.packageId(),
+                created.leaseMultiplier(), created.customerName(), created.customerPhone(), initialStart,
+                initialStart.plusDays(9), created.frameAssetId(), created.batteryAssetId(),
+                created.externalRentalAmount(), created.verificationAmount(), created.signFeeAmount(),
+                created.depositAmount(), "锁定后修改"
+            )
+        )).isInstanceOf(BusinessException.class).hasMessageContaining("收益已锁定");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT settlement_snapshot_id FROM external_rental_order WHERE id = ?",
+            Long.class,
+            created.id()
+        )).isEqualTo(created.settlementSnapshotId());
+    }
+
+    @Test
     void deleteExternalOrderShouldRejectFinanciallyLockedRecords() {
         var suffix = String.valueOf(System.nanoTime());
         var settledAssetId = createIntegratedAsset("settled-" + suffix);

@@ -160,6 +160,18 @@ export type ExternalOrderRenewal = {
   occurredAt: string;
 };
 
+export type BatteryPayableSummary = {
+  statementMonth: string;
+  storeId?: number | null;
+  initialAmount: number;
+  renewalAmount: number;
+  billAmount: number;
+  totalAmount: number;
+  initialCount: number;
+  renewalCount: number;
+  billCount: number;
+};
+
 export type ExternalOrderPricingRevision = {
   id: number;
   externalOrderId: number;
@@ -565,7 +577,6 @@ export type ProductSku = {
   skuType: 'RENTAL' | 'SALE';
   description?: string | null;
   batteryCostDailyAmount?: number | null;
-  batteryCostMonthlyAmount?: number | null;
   needFrameAsset: boolean;
   needBatteryAsset: boolean;
   supportCrossStoreReturn: boolean;

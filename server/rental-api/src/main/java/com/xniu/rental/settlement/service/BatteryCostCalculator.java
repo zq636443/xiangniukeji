@@ -10,7 +10,6 @@ public final class BatteryCostCalculator {
 
     private static final int DAYS_PER_MONTH = 30;
     private static final BigDecimal SECONDS_PER_DAY = BigDecimal.valueOf(86_400L);
-    private static final BigDecimal SECONDS_PER_COST_MONTH = SECONDS_PER_DAY.multiply(BigDecimal.valueOf(DAYS_PER_MONTH));
     private static final int CALCULATION_SCALE = 12;
 
     private BatteryCostCalculator() {
@@ -23,25 +22,22 @@ public final class BatteryCostCalculator {
         int leaseValue,
         int leaseMultiplier
     ) {
-        if (dailyAmount == null || monthlyAmount == null) {
+        if (dailyAmount == null) {
             return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
         }
         var multiplier = Math.max(leaseMultiplier, 1);
         var totalValue = Math.max(leaseValue, 0) * multiplier;
-        if (leaseUnit == LeaseUnit.MONTH) {
-            return money(monthlyAmount.multiply(BigDecimal.valueOf(totalValue)));
-        }
-        var fullMonths = totalValue / DAYS_PER_MONTH;
-        var remainingDays = totalValue % DAYS_PER_MONTH;
-        return money(monthlyAmount.multiply(BigDecimal.valueOf(fullMonths))
-            .add(dailyAmount.multiply(BigDecimal.valueOf(remainingDays))));
+        var totalDays = leaseUnit == LeaseUnit.MONTH
+            ? Math.multiplyExact(totalValue, DAYS_PER_MONTH)
+            : totalValue;
+        return money(dailyAmount.multiply(BigDecimal.valueOf(totalDays)));
     }
 
     /**
      * Calculates the complete battery cost for one concrete rental interval.
-     * Thirty days is only the configured monthly-cost tier; the rental interval
-     * itself always comes from its persisted timestamps.  Any remainder after
-     * complete 30-day tiers is charged continuously by elapsed seconds so a
+     * The rental interval always comes from its persisted timestamps. Battery
+     * cost has no monthly price tier: elapsed seconds are converted to
+     * fractional days and multiplied by the configured daily cost, so a
      * 20.5-day interval is not silently truncated to 20 days.
      */
     public static BigDecimal calculateExactPeriod(
@@ -50,17 +46,15 @@ public final class BatteryCostCalculator {
         LocalDateTime periodStartAt,
         LocalDateTime periodEndAt
     ) {
-        if (dailyAmount == null || monthlyAmount == null
+        if (dailyAmount == null
             || periodStartAt == null || periodEndAt == null || !periodEndAt.isAfter(periodStartAt)) {
             return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
         }
         var duration = Duration.between(periodStartAt, periodEndAt);
         var totalSeconds = BigDecimal.valueOf(duration.getSeconds())
             .add(BigDecimal.valueOf(duration.getNano(), 9));
-        var fullCostMonths = totalSeconds.divideToIntegralValue(SECONDS_PER_COST_MONTH);
-        var remainderSeconds = totalSeconds.remainder(SECONDS_PER_COST_MONTH);
-        var remainderDays = remainderSeconds.divide(SECONDS_PER_DAY, CALCULATION_SCALE, RoundingMode.HALF_UP);
-        return money(monthlyAmount.multiply(fullCostMonths).add(dailyAmount.multiply(remainderDays)));
+        var elapsedDays = totalSeconds.divide(SECONDS_PER_DAY, CALCULATION_SCALE, RoundingMode.HALF_UP);
+        return money(dailyAmount.multiply(elapsedDays));
     }
 
     public static BigDecimal prorate(BigDecimal totalCost, BigDecimal sourceAmount, BigDecimal totalAmount) {

@@ -52,6 +52,7 @@ import {
 } from '../components/OperationsCockpit';
 import { OrderBatchImportModal, OrderImportTemplateButton } from '../components/OrderBatchImportModal';
 import { http } from '../services/request';
+import { batteryPayableBreakdown, batteryPayableQueryParams } from '../utils/batteryPayable';
 import { downloadCsv } from '../utils/csv';
 import {
   buildTimeBuckets,
@@ -82,6 +83,7 @@ import type {
   Asset,
   AssetStatus,
   AssetTypeDefinition,
+  BatteryPayableSummary,
   CollectionStatus,
   CurrentAccount,
   ExternalOrderRenewal,
@@ -365,9 +367,18 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
   const [error, setError] = useState('');
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [settlementIncomeUnavailable, setSettlementIncomeUnavailable] = useState(false);
+  const [batteryPayableState, setBatteryPayableState] = useState<{
+    queryKey: string;
+    data: BatteryPayableSummary | null;
+    error: string;
+  }>({ queryKey: '', data: null, error: '' });
+  const batteryPayableRequestId = useRef(0);
   const canReadSettlement = account.permissions.includes('settlement.read') || account.permissions.includes('system.admin');
+  const batteryPayableMonth = monthKey(selectedMonth);
+  const batteryPayableQueryKey = `${batteryPayableMonth}:${storeId ?? 'NONE'}`;
 
   async function loadData() {
+    const requestId = ++batteryPayableRequestId.current;
     if (!storeId) {
       setOrders([]);
       setExternalOrders([]);
@@ -378,10 +389,34 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       setStatements([]);
       setLastUpdatedAt(null);
       setSettlementIncomeUnavailable(false);
+      setBatteryPayableState({ queryKey: '', data: null, error: '' });
       return;
     }
+    const requestedMonth = monthKey(selectedMonth);
+    const requestedQueryKey = `${requestedMonth}:${storeId}`;
     setLoading(true);
     setError('');
+    setBatteryPayableState((current) => current.queryKey === requestedQueryKey
+      ? { ...current, error: '' }
+      : { queryKey: requestedQueryKey, data: null, error: '' });
+    const batteryPayableRequest = canReadSettlement
+      ? http.get<unknown, BatteryPayableSummary>(
+        '/api/merchant/settlement/statements/battery-payable',
+        { params: batteryPayableQueryParams(requestedMonth, storeId) }
+      ).then((value) => {
+        if (batteryPayableRequestId.current === requestId) {
+          setBatteryPayableState({ queryKey: requestedQueryKey, data: value, error: '' });
+        }
+      }).catch((requestError) => {
+        if (batteryPayableRequestId.current === requestId) {
+          setBatteryPayableState({
+            queryKey: requestedQueryKey,
+            data: null,
+            error: requestError instanceof Error ? requestError.message : '电池应付款加载失败'
+          });
+        }
+      })
+      : Promise.resolve();
     try {
       const incomeRequest = canReadSettlement
         ? http.get<unknown, SettlementIncomeEntry[]>('/api/merchant/settlement/income/entries', { params: { storeId } })
@@ -417,6 +452,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '商户工作台加载失败');
     } finally {
+      await batteryPayableRequest;
       setLoading(false);
     }
   }
@@ -425,7 +461,7 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     void loadData();
     const timer = setInterval(() => void loadData(), 30_000);
     return () => clearInterval(timer);
-  }, [storeId, canReadSettlement]);
+  }, [storeId, canReadSettlement, selectedMonth]);
 
   const currentStore = stores.find((item) => item.id === storeId);
   const window = useMemo(() => getDateWindow(period, new Date(), customRange, selectedMonth), [customRange, period, selectedMonth]);
@@ -456,8 +492,6 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
     const startedCount = periodOrders.filter((item) => Boolean(item.leaseStartedAt)).length + periodExternal.filter((item) => Boolean(item.rentStartedAt)).length;
     const fulfilledCount = periodOrders.filter((item) => ['RENTING', 'PENDING_RETURN', 'OVERDUE', 'PENDING_SUPPLEMENT', 'COMPLETED'].includes(item.orderStatus)).length
       + periodExternal.filter((item) => ['ACTIVE', 'COMPLETED'].includes(item.orderStatus)).length;
-    const batteryCostMonth = monthKey(selectedMonth);
-    const monthStatement = statements.find((item) => item.statementMonth === batteryCostMonth);
     return {
       periodOrders,
       periodExternal,
@@ -478,10 +512,6 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       verifiedCount,
       startedCount,
       fulfilledCount,
-      batteryCostMonth,
-      batteryCostAmount: Number(monthStatement?.batteryCostAmount || 0) + sumNumbers(externalRenewals
-        .filter((item) => !item.includedInMerchantStatement && item.occurredAt.slice(0, 7) === batteryCostMonth)
-        .map((item) => item.batteryCostAmount)),
       pendingPickup: orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').length,
       pendingReturn: orders.filter((item) => item.orderStatus === 'PENDING_RETURN').length,
       repairingAssets: activeAssets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length,
@@ -581,6 +611,14 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
       />
 
       {error ? <Alert type="error" message={error} showIcon /> : null}
+      {canReadSettlement && batteryPayableState.queryKey === batteryPayableQueryKey && batteryPayableState.error ? (
+        <Alert
+          type="warning"
+          message="电池应付款暂时不可用"
+          description={`${batteryPayableState.error}；本页不会用0元代替，请刷新重试。`}
+          showIcon
+        />
+      ) : null}
 
       <div className="cockpit-metric-grid">
         <CockpitMetric icon={<WalletOutlined />} tone="green" label="期间营业额" value={compactMoney(dashboard.periodCollected)} detail={`续租 ${compactMoney(dashboard.periodRenewalAmount)} · ${dashboard.periodOrderCount} 笔订单`} change={dashboard.collectedChange} changeLabel="环比" />
@@ -599,7 +637,23 @@ export function MerchantDashboard({ account, storeId, stores }: MerchantPageProp
         )}
         <CockpitMetric icon={<CarOutlined />} tone="blue" label="当前资产投放率" value={percent(dashboard.deploymentRate)} detail={`${dashboard.rentingAssets.length} / ${dashboard.activeAssets.length} 台在租`} />
         <CockpitMetric icon={<ExclamationCircleOutlined />} tone="red" label="逾期未收" value={compactMoney(dashboard.openOverdueAmount)} detail={`${overdues.length} 个待跟进案件`} inverseChange />
-        {canReadSettlement ? <CockpitMetric icon={<ThunderboltOutlined />} tone="orange" label="月度应付电池公司" value={compactMoney(dashboard.batteryCostAmount)} detail={`${dashboard.batteryCostMonth} · 独立支付`} /> : null}
+        {canReadSettlement ? (
+          <CockpitMetric
+            icon={<ThunderboltOutlined />}
+            tone="orange"
+            label="月度应付电池公司"
+            value={batteryPayableState.queryKey !== batteryPayableQueryKey || (!batteryPayableState.data && !batteryPayableState.error)
+              ? '加载中…'
+              : batteryPayableState.error
+                ? '不可用'
+                : compactMoney(batteryPayableState.data?.totalAmount)}
+            detail={batteryPayableState.queryKey === batteryPayableQueryKey && batteryPayableState.data
+              ? `${batteryPayableMonth} · ${batteryPayableBreakdown(batteryPayableState.data, compactMoney)}`
+              : batteryPayableState.queryKey === batteryPayableQueryKey && batteryPayableState.error
+                ? '电池应付款接口加载失败，请刷新重试'
+                : `${batteryPayableMonth} · 独立支付`}
+          />
+        ) : null}
       </div>
 
       <div className="cockpit-layout cockpit-layout-main">

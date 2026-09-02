@@ -12,7 +12,7 @@ import {
   WalletOutlined
 } from '@ant-design/icons';
 import { Alert, Button, Empty, Progress, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BusinessOrderDialogs,
   canEditDashboardBusiness,
@@ -30,6 +30,7 @@ import {
 import { http } from '../services/request';
 import type {
   Asset,
+  BatteryPayableSummary,
   DeductRecord,
   ExternalOrderRenewal,
   ExternalRentalOrder,
@@ -43,6 +44,7 @@ import type {
   Store,
   StoreSku
 } from '../types/api';
+import { batteryPayableBreakdown, batteryPayableQueryParams } from '../utils/batteryPayable';
 import {
   buildTimeBuckets,
   dateTimeText,
@@ -75,7 +77,6 @@ type DashboardData = {
   storeSkus: StoreSku[];
   investors: Investor[];
   investorStatements: SettlementStatement[];
-  merchantStatements: SettlementStatement[];
   incomeEntries: SettlementIncomeEntry[];
 };
 
@@ -131,7 +132,6 @@ const initialData: DashboardData = {
   storeSkus: [],
   investors: [],
   investorStatements: [],
-  merchantStatements: [],
   incomeEntries: []
 };
 
@@ -148,12 +148,42 @@ export function Dashboard() {
   const [error, setError] = useState('');
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [incomeDataAvailable, setIncomeDataAvailable] = useState<boolean | null>(null);
+  const [batteryPayableState, setBatteryPayableState] = useState<{
+    queryKey: string;
+    data: BatteryPayableSummary | null;
+    error: string;
+  }>({ queryKey: '', data: null, error: '' });
+  const batteryPayableRequestId = useRef(0);
+  const batteryPayableMonth = monthKey(selectedMonth);
+  const batteryPayableQueryKey = `${batteryPayableMonth}:${selectedStoreId ?? 'ALL'}`;
 
   async function loadData() {
+    const requestId = ++batteryPayableRequestId.current;
+    const requestedMonth = monthKey(selectedMonth);
+    const requestedQueryKey = `${requestedMonth}:${selectedStoreId ?? 'ALL'}`;
     setLoading(true);
     setError('');
+    setBatteryPayableState((current) => current.queryKey === requestedQueryKey
+      ? { ...current, error: '' }
+      : { queryKey: requestedQueryKey, data: null, error: '' });
+    const batteryPayableRequest = http.get<unknown, BatteryPayableSummary>(
+      '/api/admin/settlement/statements/battery-payable',
+      { params: batteryPayableQueryParams(requestedMonth, selectedStoreId) }
+    ).then((value) => {
+      if (batteryPayableRequestId.current === requestId) {
+        setBatteryPayableState({ queryKey: requestedQueryKey, data: value, error: '' });
+      }
+    }).catch((requestError) => {
+      if (batteryPayableRequestId.current === requestId) {
+        setBatteryPayableState({
+          queryKey: requestedQueryKey,
+          data: null,
+          error: requestError instanceof Error ? requestError.message : '电池应付款加载失败'
+        });
+      }
+    });
     try {
-      const [orders, externalOrders, externalRenewals, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeResult] = await Promise.all([
+      const [orders, externalOrders, externalRenewals, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, incomeResult] = await Promise.all([
         http.get<unknown, RentalOrder[]>('/api/admin/orders'),
         http.get<unknown, ExternalRentalOrder[]>('/api/admin/external-orders'),
         http.get<unknown, ExternalOrderRenewal[]>('/api/admin/external-orders/renewals'),
@@ -166,16 +196,16 @@ export function Dashboard() {
         optionalGet<StoreSku[]>('/api/admin/products/store-skus', []),
         optionalGet<Investor[]>('/api/admin/investors', []),
         optionalGet<SettlementStatement[]>('/api/admin/settlement/statements?beneficiaryType=INVESTOR', []),
-        optionalGet<SettlementStatement[]>('/api/admin/settlement/statements?beneficiaryType=MERCHANT', []),
         optionalGetWithStatus<SettlementIncomeEntry[]>('/api/admin/settlement/income/entries', [])
       ]);
       setIncomeDataAvailable(incomeResult.available);
-      setData({ orders, externalOrders, externalRenewals, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, merchantStatements, incomeEntries: incomeResult.value });
+      setData({ orders, externalOrders, externalRenewals, bills, assets, overdues, payments, failedDeductions, stores, storeSkus, investors, investorStatements, incomeEntries: incomeResult.value });
       setLastUpdatedAt(new Date());
     } catch (requestError) {
       setIncomeDataAvailable(false);
       setError(requestError instanceof Error ? requestError.message : '经营驾驶舱数据加载失败');
     } finally {
+      await batteryPayableRequest;
       setLoading(false);
     }
   }
@@ -184,7 +214,7 @@ export function Dashboard() {
     void loadData();
     const timer = setInterval(() => void loadData(), 30_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [selectedMonth, selectedStoreId]);
 
   const window = useMemo(() => getDateWindow(period, new Date(), customRange, selectedMonth), [customRange, period, selectedMonth]);
   const selectedStore = useMemo(
@@ -210,7 +240,6 @@ export function Dashboard() {
       storeSkus: data.storeSkus.filter((item) => item.storeId === selectedStoreId),
       investors: data.investors,
       investorStatements: data.investorStatements,
-      merchantStatements: data.merchantStatements.filter((item) => item.storeId === selectedStoreId),
       incomeEntries: data.incomeEntries.filter((item) => item.storeId === selectedStoreId)
     };
   }, [data, selectedStoreId]);
@@ -253,7 +282,6 @@ export function Dashboard() {
     const startedOrders = periodOrders.filter((item) => Boolean(item.leaseStartedAt)).length + periodExternal.filter((item) => Boolean(item.rentStartedAt)).length;
     const fulfilledOrders = periodOrders.filter((item) => ['RENTING', 'PENDING_RETURN', 'OVERDUE', 'PENDING_SUPPLEMENT', 'COMPLETED'].includes(item.orderStatus)).length
       + periodExternal.filter((item) => ['ACTIVE', 'COMPLETED'].includes(item.orderStatus)).length;
-    const batteryCostMonth = monthKey(selectedMonth);
     return {
       periodCollected,
       periodRenewalAmount,
@@ -276,18 +304,12 @@ export function Dashboard() {
       verifiedOrders,
       startedOrders,
       fulfilledOrders,
-      batteryCostMonth,
-      batteryCostAmount: sumNumbers(scopedData.merchantStatements
-        .filter((item) => item.statementMonth === batteryCostMonth)
-        .map((item) => item.batteryCostAmount)) + sumNumbers(scopedData.externalRenewals
-        .filter((item) => !item.includedInMerchantStatement && item.occurredAt.slice(0, 7) === batteryCostMonth)
-        .map((item) => item.batteryCostAmount)),
       overdueAmount: sumNumbers(scopedData.overdues.map((item) => item.unpaidAmount)),
       repairAssets: activeAssets.filter((item) => ['PENDING_REPAIR', 'REPAIRING', 'EXCEPTION'].includes(item.status)).length,
       pendingPickup: scopedData.orders.filter((item) => item.orderStatus === 'PENDING_PICKUP').length,
       pendingReturn: scopedData.orders.filter((item) => item.orderStatus === 'PENDING_RETURN').length
     };
-  }, [scopedData, selectedMonth, window]);
+  }, [scopedData, window]);
 
   const trend = useMemo(() => {
     const buckets = buildTimeBuckets(window);
@@ -531,6 +553,14 @@ export function Dashboard() {
       />
 
       {error ? <Alert type="error" message={error} showIcon /> : null}
+      {batteryPayableState.queryKey === batteryPayableQueryKey && batteryPayableState.error ? (
+        <Alert
+          type="warning"
+          message="电池应付款暂时不可用"
+          description={`${batteryPayableState.error}；本页不会用0元代替，请刷新重试。`}
+          showIcon
+        />
+      ) : null}
 
       <div className="cockpit-metric-grid">
         <CockpitMetric icon={<WalletOutlined />} tone="green" label="期间营业额" value={fullMoney(dashboard.periodCollected)} detail={`续租 ${fullMoney(dashboard.periodRenewalAmount)} · ${dashboard.totalPeriodOrders} 笔订单`} change={dashboard.collectedChange} changeLabel="环比" />
@@ -548,7 +578,21 @@ export function Dashboard() {
         <CockpitMetric icon={<RiseOutlined />} tone="violet" label="平台期间收入" value={fullMoney(dashboard.platformIncome)} detail={`其中续租 ${fullMoney(dashboard.platformRenewalIncome)}`} change={dashboard.platformIncomeChange} changeLabel="环比" />
         <CockpitMetric icon={<CheckCircleOutlined />} tone="blue" label="到期账单回款率" value={percent(dashboard.collectionRate)} detail={`期间应收 ${fullMoney(dashboard.dueAmount)}`} change={dashboard.collectionRateChange} changeLabel="百分点" />
         <CockpitMetric icon={<CarOutlined />} tone="orange" label="当前资产投放率" value={percent(dashboard.deploymentRate)} detail={`${dashboard.rentingAssets.length} / ${dashboard.activeAssets.length} 台在租`} />
-        <CockpitMetric icon={<ThunderboltOutlined />} tone="orange" label="月度应付电池公司" value={fullMoney(dashboard.batteryCostAmount)} detail={`${dashboard.batteryCostMonth} · ${selectedStore?.storeName || '全部门店'}`} />
+        <CockpitMetric
+          icon={<ThunderboltOutlined />}
+          tone="orange"
+          label="月度应付电池公司"
+          value={batteryPayableState.queryKey !== batteryPayableQueryKey || (!batteryPayableState.data && !batteryPayableState.error)
+            ? '加载中…'
+            : batteryPayableState.error
+              ? '不可用'
+              : fullMoney(batteryPayableState.data?.totalAmount)}
+          detail={batteryPayableState.queryKey === batteryPayableQueryKey && batteryPayableState.data
+            ? `${batteryPayableMonth} · ${selectedStore?.storeName || '全部门店'} · ${batteryPayableBreakdown(batteryPayableState.data, fullMoney)}`
+            : batteryPayableState.queryKey === batteryPayableQueryKey && batteryPayableState.error
+              ? '电池应付款接口加载失败，请刷新重试'
+              : `${batteryPayableMonth} · ${selectedStore?.storeName || '全部门店'}`}
+        />
       </div>
 
       <CockpitPanel

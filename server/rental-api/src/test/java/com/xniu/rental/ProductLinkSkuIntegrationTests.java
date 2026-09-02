@@ -123,7 +123,12 @@ class ProductLinkSkuIntegrationTests {
 
         assertThat(link.skuCode()).startsWith("LINK-");
         assertThat(link.batteryCostDailyAmount()).isEqualByComparingTo("6.80");
-        assertThat(link.batteryCostMonthlyAmount()).isEqualByComparingTo("200.00");
+        assertThat(link.batteryCostMonthlyAmount()).isNull();
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT battery_cost_monthly_amount FROM product_sku WHERE id = ?",
+            BigDecimal.class,
+            link.id()
+        )).isNull();
         assertThat(monthlySku.packageCode()).startsWith("SKU-");
         assertThat(quarterlySku.packageCode()).startsWith("SKU-");
         assertThat(monthlySku.priceAmount()).isEqualByComparingTo("399.00");
@@ -170,6 +175,66 @@ class ProductLinkSkuIntegrationTests {
         )))
             .isInstanceOf(BusinessException.class)
             .hasMessageContaining("SKU 不能重复");
+    }
+
+    @Test
+    void batteryMonthlyCostMayBeOmittedWhenDailyCostIsConfigured() {
+        var suffix = UUID.randomUUID().toString().substring(0, 8);
+        var category = productService.createCategory(new CategoryRequest("日成本分类-" + suffix, 15));
+
+        var link = productService.createSku(new SkuRequest(
+            category.id(),
+            "纯日电池成本-" + suffix,
+            "RENTAL",
+            "daily battery cost only",
+            new BigDecimal("6.80"),
+            null,
+            false,
+            true,
+            false
+        ));
+
+        assertThat(link.batteryCostDailyAmount()).isEqualByComparingTo("6.80");
+        assertThat(link.batteryCostMonthlyAmount()).isNull();
+
+        assertThatThrownBy(() -> productService.updateSku(link.id(), new SkuRequest(
+            category.id(),
+            link.skuName(),
+            link.skuType(),
+            link.description(),
+            null,
+            new BigDecimal("200.00"),
+            link.needFrameAsset(),
+            link.needBatteryAsset(),
+            link.supportCrossStoreReturn()
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("电池月成本已停用");
+
+        assertThatThrownBy(() -> productService.updateSku(link.id(), new SkuRequest(
+            category.id(),
+            link.skuName(),
+            link.skuType(),
+            link.description(),
+            new BigDecimal("7.00"),
+            new BigDecimal("300.00"),
+            link.needFrameAsset(),
+            link.needBatteryAsset(),
+            link.supportCrossStoreReturn()
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("电池日成本固定为 6.80 元");
+
+        assertThat(productService.listSkus(category.id()).stream()
+            .filter(item -> item.id().equals(link.id()))
+            .findFirst()
+            .orElseThrow()
+            .batteryCostDailyAmount()).isEqualByComparingTo("6.80");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT battery_cost_monthly_amount FROM product_sku WHERE id = ?",
+            BigDecimal.class,
+            link.id()
+        )).isNull();
     }
 
     @Test

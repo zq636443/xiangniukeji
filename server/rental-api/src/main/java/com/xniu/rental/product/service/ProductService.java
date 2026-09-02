@@ -43,6 +43,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ProductService {
 
+    private static final BigDecimal BATTERY_DAILY_COST = new BigDecimal("6.80");
+
     private final ProductRepository productRepository;
     private final MerchantRepository merchantRepository;
     private final StoreRepository storeRepository;
@@ -105,7 +107,7 @@ public class ProductService {
             parseSkuType(request.skuType()),
             request.description(),
             normalizeNullableMoney(request.batteryCostDailyAmount()),
-            normalizeNullableMoney(request.batteryCostMonthlyAmount()),
+            null,
             request.needFrameAsset(),
             request.needBatteryAsset(),
             request.supportCrossStoreReturn()
@@ -130,7 +132,7 @@ public class ProductService {
             nextType,
             request.description(),
             normalizeNullableMoney(request.batteryCostDailyAmount()),
-            normalizeNullableMoney(request.batteryCostMonthlyAmount()),
+            null,
             request.needFrameAsset(),
             request.needBatteryAsset(),
             request.supportCrossStoreReturn()
@@ -451,11 +453,17 @@ public class ProductService {
     private void validateBatteryCost(SkuRequest request) {
         var dailyAmount = request.batteryCostDailyAmount();
         var monthlyAmount = request.batteryCostMonthlyAmount();
-        if ((dailyAmount == null) != (monthlyAmount == null)) {
-            throw BusinessException.badRequest("电池日成本和月成本必须同时填写");
-        }
-        if (dailyAmount != null && (dailyAmount.signum() < 0 || monthlyAmount.signum() < 0)) {
+        if ((dailyAmount != null && dailyAmount.signum() < 0)
+            || (monthlyAmount != null && monthlyAmount.signum() < 0)) {
             throw BusinessException.badRequest("电池成本不能小于 0");
+        }
+        if (monthlyAmount != null && monthlyAmount.signum() > 0
+            && (dailyAmount == null || dailyAmount.signum() == 0)) {
+            throw BusinessException.badRequest("电池月成本已停用，请按 6.80 元/天配置");
+        }
+        if (dailyAmount != null && dailyAmount.signum() > 0
+            && dailyAmount.compareTo(BATTERY_DAILY_COST) != 0) {
+            throw BusinessException.badRequest("当前电池日成本固定为 6.80 元");
         }
     }
 

@@ -1,6 +1,7 @@
 package com.xniu.rental.settlement.controller;
 
 import com.xniu.rental.common.ApiResponse;
+import com.xniu.rental.settlement.dto.BatteryPayableResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementLineResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementResponse;
 import com.xniu.rental.settlement.service.SettlementStatementService;
@@ -19,6 +20,14 @@ public class MerchantSettlementStatementController {
 
     public MerchantSettlementStatementController(SettlementStatementService settlementStatementService) {
         this.settlementStatementService = settlementStatementService;
+    }
+
+    @GetMapping("/battery-payable")
+    public ApiResponse<BatteryPayableResponse> batteryPayable(
+        @RequestParam(required = false) String month,
+        @RequestParam(required = false) Long storeId
+    ) {
+        return ApiResponse.ok(settlementStatementService.merchantBatteryPayable(month, storeId));
     }
 
     @GetMapping

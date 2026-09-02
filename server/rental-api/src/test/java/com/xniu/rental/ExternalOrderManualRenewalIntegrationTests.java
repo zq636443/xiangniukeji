@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.xniu.rental.auth.dto.CurrentAccountResponse;
+import com.xniu.rental.auth.dto.StoreScopeResponse;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.CurrentAccount;
 import com.xniu.rental.common.BusinessException;
@@ -12,6 +13,7 @@ import com.xniu.rental.externalorder.dto.ExternalRentalOrderCreateRequest;
 import com.xniu.rental.externalorder.service.ExternalOrderAutoRenewalService;
 import com.xniu.rental.externalorder.service.ExternalOrderManualRenewalService;
 import com.xniu.rental.externalorder.service.ExternalRentalOrderService;
+import com.xniu.rental.settlement.service.SettlementStatementService;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -37,6 +39,9 @@ class ExternalOrderManualRenewalIntegrationTests {
 
     @Autowired
     private ExternalRentalOrderService externalOrderService;
+
+    @Autowired
+    private SettlementStatementService settlementStatementService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -246,8 +251,69 @@ class ExternalOrderManualRenewalIntegrationTests {
             SELECT battery_cost_amount
             FROM external_order_renewal_event
             WHERE external_order_id = ?
-            """, BigDecimal.class, order.id())).isEqualByComparingTo("206.80");
+            """, BigDecimal.class, order.id())).isEqualByComparingTo("210.80");
         assertThat(expectedReturnAt(order.id())).isEqualTo(dueAt.plusDays(31));
+    }
+
+    @Test
+    void batteryPayableShouldIncludeInitialAndRenewalWithoutGeneratedStatements() {
+        var initialStart = LocalDateTime.of(2099, 8, 1, 10, 0);
+        var order = createBatteryOrder(initialStart, initialStart.plusDays(20).plusHours(12));
+        jdbcTemplate.update(
+            "UPDATE external_rental_order SET created_at = '2099-08-05 09:00:00' WHERE id = ?",
+            order.id()
+        );
+        var renewal = manualRenewalService.create(order.id(), new ExternalOrderManualRenewalRequest(
+            order.expectedReturnAt(),
+            order.expectedReturnAt().plusDays(7),
+            new BigDecimal("300.00"),
+            "七天续租电池费"
+        ));
+
+        var payable = settlementStatementService.adminBatteryPayable("2099-08", order.storeId());
+
+        assertThat(payable.statementMonth()).isEqualTo("2099-08");
+        assertThat(payable.storeId()).isEqualTo(order.storeId());
+        assertThat(payable.initialAmount()).isEqualByComparingTo("139.40");
+        assertThat(payable.renewalAmount()).isEqualByComparingTo("47.60");
+        assertThat(payable.billAmount()).isEqualByComparingTo("0.00");
+        assertThat(payable.totalAmount()).isEqualByComparingTo("187.00");
+        assertThat(payable.initialCount()).isEqualTo(1);
+        assertThat(payable.renewalCount()).isEqualTo(1);
+        assertThat(payable.billCount()).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(1) FROM settlement_statement WHERE statement_month = '2099-08'",
+            Integer.class
+        )).isZero();
+        assertThat(renewal.batteryCostAmount()).isEqualByComparingTo("47.60");
+
+        var otherStore = settlementStatementService.adminBatteryPayable("2099-08", 999L);
+        assertThat(otherStore.totalAmount()).isEqualByComparingTo("0.00");
+        assertThat(otherStore.initialCount()).isZero();
+        assertThat(otherStore.renewalCount()).isZero();
+
+        AuthContext.set(new CurrentAccount(
+            "merchant-battery-payable-token",
+            new CurrentAccountResponse(
+                3L,
+                "STORE_MANAGER",
+                "battery_store_manager",
+                "18800000003",
+                null,
+                "Battery Store Manager",
+                1L,
+                1L,
+                null,
+                List.of("STORE_MANAGER"),
+                List.of("settlement.read"),
+                List.of(new StoreScopeResponse(1L, 1L, "SINGLE_STORE"))
+            )
+        ));
+        assertThat(settlementStatementService.merchantBatteryPayable("2099-08", 1L).totalAmount())
+            .isEqualByComparingTo("187.00");
+        assertThatThrownBy(() -> settlementStatementService.merchantBatteryPayable("2099-08", 999L))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("没有该门店权限");
     }
 
     @Test

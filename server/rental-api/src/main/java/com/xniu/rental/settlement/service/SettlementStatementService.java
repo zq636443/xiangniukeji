@@ -6,6 +6,7 @@ import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.BusinessException;
+import com.xniu.rental.settlement.dto.BatteryPayableResponse;
 import com.xniu.rental.settlement.dto.SettlementOverviewResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementGenerateResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementLineResponse;
@@ -575,6 +576,164 @@ public class SettlementStatementService {
             overview.merchantStatementCount(),
             overview.investorStatementCount()
         );
+    }
+
+    @Transactional(readOnly = true)
+    public BatteryPayableResponse adminBatteryPayable(String statementMonth, Long storeId) {
+        authorizationService.requirePermission("settlement.read");
+        return batteryPayable(statementMonth, null, storeId, false);
+    }
+
+    @Transactional(readOnly = true)
+    public BatteryPayableResponse merchantBatteryPayable(String statementMonth, Long storeId) {
+        authorizationService.requirePermission("settlement.read");
+        var current = AuthContext.get();
+        if (current == null || current.account().merchantId() == null) {
+            throw BusinessException.forbidden("当前账号未绑定商户");
+        }
+        if (storeId != null) {
+            authorizationService.requireStoreAccess(current.account().merchantId(), storeId);
+        }
+        return batteryPayable(statementMonth, current.account().merchantId(), storeId, true);
+    }
+
+    /**
+     * Calculates the source-backed battery payable independently of generated
+     * statement rows. Its time attribution deliberately mirrors month-end:
+     * paid formal bills use paidAt, supplemental initial periods use createdAt
+     * and supplemental renewals use periodStartAt.
+     */
+    private BatteryPayableResponse batteryPayable(
+        String statementMonth,
+        Long merchantId,
+        Long storeId,
+        boolean enforceMerchantStoreScope
+    ) {
+        var month = normalizeMonth(statementMonth);
+        var range = monthRange(month);
+        var paidBillItems = statementRepository.listPaidBillItems(range.startAt(), range.endAt());
+        var externalOrderItems = statementRepository.listExternalOrderItems(range.startAt(), range.endAt());
+        var externalRenewalItems = statementRepository.listExternalRenewalItems(range.startAt(), range.endAt());
+
+        var snapshotIds = paidBillItems.stream()
+            .map(SettlementStatementRepository.PaidBillItemRow::settlementSnapshotId)
+            .filter(java.util.Objects::nonNull)
+            .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        externalOrderItems.stream()
+            .map(SettlementStatementRepository.ExternalOrderItemRow::settlementSnapshotId)
+            .filter(java.util.Objects::nonNull)
+            .forEach(snapshotIds::add);
+        externalRenewalItems.stream()
+            .map(SettlementStatementRepository.ExternalRenewalItemRow::settlementSnapshotId)
+            .filter(java.util.Objects::nonNull)
+            .forEach(snapshotIds::add);
+        var snapshotMap = settlementRepository.findSnapshotsByIds(snapshotIds).stream()
+            .collect(java.util.stream.Collectors.toMap(SettlementRuleSnapshot::id, item -> item));
+
+        var initialAmount = BigDecimal.ZERO;
+        var renewalAmount = BigDecimal.ZERO;
+        var billAmount = BigDecimal.ZERO;
+        var initialCount = 0;
+        var renewalCount = 0;
+        var billCount = 0;
+
+        var billGroups = paidBillItems.stream().collect(java.util.stream.Collectors.groupingBy(
+            SettlementStatementRepository.PaidBillItemRow::billId,
+            LinkedHashMap::new,
+            java.util.stream.Collectors.toList()
+        ));
+        for (var group : billGroups.values()) {
+            var first = group.getFirst();
+            if (!matchesBatteryPayableScope(
+                first.merchantId(), first.storeId(), merchantId, storeId, enforceMerchantStoreScope)) {
+                continue;
+            }
+            var rentAmount = money(sumItemAmount(group, "RENT").add(sumItemAmount(group, "RENEWAL_RENT")));
+            if (rentAmount.signum() <= 0) {
+                continue;
+            }
+            if (first.settlementSnapshotId() == null) {
+                throw BusinessException.badRequest("订单 " + first.orderId() + " 缺少分润快照，不能计算电池应付款");
+            }
+            var snapshot = snapshotMap.get(first.settlementSnapshotId());
+            if (snapshot == null) {
+                throw BusinessException.badRequest("订单 " + first.orderId() + " 的分润快照不存在");
+            }
+            var amount = snapshot.calculationVersion().usesProfitSharing()
+                ? calculateProfitV2(snapshot, rentAmount).batteryCostAmount()
+                : BigDecimal.ZERO;
+            if (amount.signum() > 0) {
+                billAmount = billAmount.add(amount);
+                billCount += 1;
+            }
+        }
+
+        for (var item : externalOrderItems) {
+            if (!matchesBatteryPayableScope(
+                item.merchantId(), item.storeId(), merchantId, storeId, enforceMerchantStoreScope)) {
+                continue;
+            }
+            var snapshot = snapshotMap.get(item.settlementSnapshotId());
+            if (snapshot == null
+                || snapshot.sourceType() != SnapshotSourceType.EXTERNAL_ORDER
+                || !item.externalOrderId().equals(snapshot.sourceId())) {
+                throw BusinessException.badRequest("补录订单 " + item.recordNo() + " 的分润快照不存在或不匹配");
+            }
+            if (snapshot.calculationVersion().usesProfitSharing()
+                && snapshot.settlementBaseAmount().signum() > 0
+                && snapshot.batteryCostAmount().signum() > 0) {
+                initialAmount = initialAmount.add(snapshot.batteryCostAmount());
+                initialCount += 1;
+            }
+        }
+
+        for (var item : externalRenewalItems) {
+            if (!matchesBatteryPayableScope(
+                item.merchantId(), item.storeId(), merchantId, storeId, enforceMerchantStoreScope)) {
+                continue;
+            }
+            var snapshot = snapshotMap.get(item.settlementSnapshotId());
+            if (snapshot == null
+                || snapshot.sourceType() != SnapshotSourceType.EXTERNAL_RENEWAL
+                || !item.renewalEventId().equals(snapshot.sourceId())) {
+                throw BusinessException.badRequest("补录订单 " + item.recordNo() + " 的续租分润快照不存在或不匹配");
+            }
+            if (snapshot.batteryCostAmount().signum() > 0) {
+                renewalAmount = renewalAmount.add(snapshot.batteryCostAmount());
+                renewalCount += 1;
+            }
+        }
+
+        initialAmount = money(initialAmount);
+        renewalAmount = money(renewalAmount);
+        billAmount = money(billAmount);
+        return new BatteryPayableResponse(
+            month,
+            storeId,
+            initialAmount,
+            renewalAmount,
+            billAmount,
+            money(initialAmount.add(renewalAmount).add(billAmount)),
+            initialCount,
+            renewalCount,
+            billCount
+        );
+    }
+
+    private boolean matchesBatteryPayableScope(
+        Long sourceMerchantId,
+        Long sourceStoreId,
+        Long merchantId,
+        Long storeId,
+        boolean enforceMerchantStoreScope
+    ) {
+        if (merchantId != null && !merchantId.equals(sourceMerchantId)) {
+            return false;
+        }
+        if (storeId != null && !storeId.equals(sourceStoreId)) {
+            return false;
+        }
+        return !enforceMerchantStoreScope || hasMerchantStoreAccess(sourceMerchantId, sourceStoreId);
     }
 
     public List<StoreProfitOverviewResponse> listStoreProfitOverview(String statementMonth, Long merchantId, Long storeId) {

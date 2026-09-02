@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 class BatteryCostCalculatorTests {
 
     @Test
-    void monthlyRentalShouldUseFixedMonthlyCost() {
+    void monthlyRentalShouldUseThirtyDailyCosts() {
         var cost = BatteryCostCalculator.calculate(
             new BigDecimal("6.80"),
             new BigDecimal("200.00"),
@@ -19,7 +19,7 @@ class BatteryCostCalculatorTests {
             1
         );
 
-        assertThat(cost).isEqualByComparingTo("200.00");
+        assertThat(cost).isEqualByComparingTo("204.00");
     }
 
     @Test
@@ -36,7 +36,7 @@ class BatteryCostCalculatorTests {
     }
 
     @Test
-    void thirtyDailyRentalDaysShouldUseMonthlyCap() {
+    void thirtyDailyRentalDaysShouldNotUseMonthlyCap() {
         var cost = BatteryCostCalculator.calculate(
             new BigDecimal("6.80"),
             new BigDecimal("200.00"),
@@ -45,11 +45,11 @@ class BatteryCostCalculatorTests {
             1
         );
 
-        assertThat(cost).isEqualByComparingTo("200.00");
+        assertThat(cost).isEqualByComparingTo("204.00");
     }
 
     @Test
-    void fullMonthsAndRemainingDaysShouldUseBothRates() {
+    void thirtyOneDaysShouldUseDailyCostForEveryDay() {
         var cost = BatteryCostCalculator.calculate(
             new BigDecimal("6.80"),
             new BigDecimal("200.00"),
@@ -58,11 +58,11 @@ class BatteryCostCalculatorTests {
             1
         );
 
-        assertThat(cost).isEqualByComparingTo("206.80");
+        assertThat(cost).isEqualByComparingTo("210.80");
     }
 
     @Test
-    void exactPeriodShouldUseMonthlyTierAndRemainingElapsedSeconds() {
+    void exactPeriodShouldUseDailyCostForAllElapsedSeconds() {
         var start = LocalDateTime.of(2026, 8, 1, 10, 0);
         var cost = BatteryCostCalculator.calculateExactPeriod(
             new BigDecimal("6.80"),
@@ -71,7 +71,7 @@ class BatteryCostCalculatorTests {
             start.plusDays(31)
         );
 
-        assertThat(cost).isEqualByComparingTo("206.80");
+        assertThat(cost).isEqualByComparingTo("210.80");
     }
 
     @Test
@@ -85,6 +85,26 @@ class BatteryCostCalculatorTests {
         );
 
         assertThat(cost).isEqualByComparingTo("139.40");
+    }
+
+    @Test
+    void monthlyAmountMayBeNullBecauseItIsNotPartOfBatteryCost() {
+        var fallbackCost = BatteryCostCalculator.calculate(
+            new BigDecimal("6.80"),
+            null,
+            LeaseUnit.MONTH,
+            1,
+            1
+        );
+        var exactCost = BatteryCostCalculator.calculateExactPeriod(
+            new BigDecimal("6.80"),
+            null,
+            LocalDateTime.of(2026, 8, 1, 10, 0),
+            LocalDateTime.of(2026, 8, 3, 22, 0)
+        );
+
+        assertThat(fallbackCost).isEqualByComparingTo("204.00");
+        assertThat(exactCost).isEqualByComparingTo("17.00");
     }
 
     @Test
