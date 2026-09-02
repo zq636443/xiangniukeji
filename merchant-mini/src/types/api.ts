@@ -367,7 +367,7 @@ export type SettlementSnapshot = {
   snapshotNo: string;
   sourceType: string;
   sourceId: number;
-  calculationVersion: 'LEGACY_V1' | 'PROFIT_V2';
+  calculationVersion: 'LEGACY_V1' | 'PROFIT_V2' | 'PROFIT_V3';
   sourceChannel: string;
   storeSkuId: number;
   skuId: number;
@@ -394,6 +394,7 @@ export type SettlementSnapshot = {
   channelFeeAmount: number;
   platformFeeRate: number;
   platformFeeAmount: number;
+  batteryCostAmount: number;
   distributableAmount: number;
   storeOperationRate: number;
   storeOperationAmount: number;

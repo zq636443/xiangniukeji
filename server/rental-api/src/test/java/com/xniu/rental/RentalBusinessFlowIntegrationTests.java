@@ -1131,10 +1131,10 @@ class RentalBusinessFlowIntegrationTests {
               AND beneficiary_id = 1
             """);
         assertThat(investorStatement.get("rent_base_amount")).isEqualTo(new BigDecimal("399.00"));
-        assertThat(investorStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("91.89"));
+        assertThat(investorStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("60.00"));
         assertThat(investorStatement.get("operation_fee_amount")).isEqualTo(new BigDecimal("0.00"));
         assertThat(investorStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("0.00"));
-        assertThat(investorStatement.get("payable_amount")).isEqualTo(new BigDecimal("91.89"));
+        assertThat(investorStatement.get("payable_amount")).isEqualTo(new BigDecimal("60.00"));
         assertThat(jdbcTemplate.queryForObject("""
             SELECT COUNT(1)
             FROM settlement_statement_line
@@ -1158,10 +1158,10 @@ class RentalBusinessFlowIntegrationTests {
             """);
         assertThat(merchantStatement.get("rent_base_amount")).isEqualTo(new BigDecimal("399.00"));
         assertThat(merchantStatement.get("sign_fee_income_amount")).isEqualTo(new BigDecimal("29.10"));
-        assertThat(merchantStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("41.77"));
+        assertThat(merchantStatement.get("rent_share_income_amount")).isEqualTo(new BigDecimal("27.28"));
         assertThat(merchantStatement.get("battery_cost_amount")).isEqualTo(new BigDecimal("200.00"));
         assertThat(merchantStatement.get("maintenance_deduct_amount")).isEqualTo(new BigDecimal("12.00"));
-        assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("58.87"));
+        assertThat(merchantStatement.get("payable_amount")).isEqualTo(new BigDecimal("44.38"));
         assertThat(jdbcTemplate.queryForObject("""
             SELECT COALESCE(SUM(amount), 0)
             FROM settlement_statement_line
@@ -1180,12 +1180,12 @@ class RentalBusinessFlowIntegrationTests {
                 assertThat(storeProfit.storeId()).isEqualTo(1L);
                 assertThat(storeProfit.settlementBaseAmount()).isEqualByComparingTo("399.00");
                 assertThat(storeProfit.signFeeAmount()).isEqualByComparingTo("29.10");
-                assertThat(storeProfit.storeOperationAmount()).isEqualByComparingTo("25.06");
-                assertThat(storeProfit.storeMaintenanceAmount()).isEqualByComparingTo("16.71");
+                assertThat(storeProfit.storeOperationAmount()).isEqualByComparingTo("16.37");
+                assertThat(storeProfit.storeMaintenanceAmount()).isEqualByComparingTo("10.91");
                 assertThat(storeProfit.batteryCostAmount()).isEqualByComparingTo("200.00");
                 assertThat(storeProfit.maintenanceReimburseAmount()).isEqualByComparingTo("0.00");
                 assertThat(storeProfit.maintenanceDeductAmount()).isEqualByComparingTo("12.00");
-                assertThat(storeProfit.payableAmount()).isEqualByComparingTo("58.87");
+                assertThat(storeProfit.payableAmount()).isEqualByComparingTo("44.38");
                 assertThat(storeProfit.orderCount()).isEqualTo(1);
                 assertThat(storeProfit.billCount()).isEqualTo(1);
                 assertThat(storeProfit.lineCount()).isEqualTo(5);

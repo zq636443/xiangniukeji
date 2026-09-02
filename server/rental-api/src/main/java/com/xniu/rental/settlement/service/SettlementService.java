@@ -198,7 +198,7 @@ public class SettlementService {
             request.rentalAmount(),
             request.sourceChannel(),
             null,
-            null,
+            request.batteryCostAmount(),
             false
         ));
     }
@@ -263,7 +263,11 @@ public class SettlementService {
                 batteryCostAmount
             ));
         }
+        var calculationVersion = original.calculationVersion().usesGrossChannelReferral()
+            ? original.calculationVersion()
+            : profitCalculationVersion(original.skuId(), batteryCostAmount);
         var allocation = ProfitSharingCalculator.calculate(
+            calculationVersion,
             renewalAmount,
             original.channelFeeRate(),
             original.platformFeeRate(),
@@ -279,7 +283,7 @@ public class SettlementService {
             nextCode("SNP"),
             SnapshotSourceType.EXTERNAL_RENEWAL,
             eventId,
-            SettlementCalculationVersion.PROFIT_V2,
+            calculationVersion,
             original.sourceChannel(),
             original.storeSkuId(),
             original.skuId(),
@@ -316,14 +320,14 @@ public class SettlementService {
             allocation.channelReferralAmount(),
             allocation.investorShareRate(),
             allocation.investorShareAmount(),
-            original.ruleSummary() + ";externalRenewal=true",
+            original.ruleSummary() + ";externalRenewal=true;calculationVersion=" + calculationVersion,
             null
         ));
         return toResponse(snapshot);
     }
 
     /** Keep a legacy event on its original calculation model when its mutable
-     * amount is rebuilt; migrating a historical event to PROFIT_V2 would change
+     * amount is rebuilt; migrating it to a current profit model would change
      * its contractual split in addition to the requested amount correction. */
     private SettlementRuleSnapshot createLegacyExternalRenewalSnapshot(
         Long eventId,
@@ -460,7 +464,9 @@ public class SettlementService {
         if (batteryCostAmount.signum() < 0) {
             throw BusinessException.badRequest("电池成本不能小于 0");
         }
+        var calculationVersion = profitCalculationVersion(storeSku.skuId(), batteryCostAmount);
         var allocation = ProfitSharingCalculator.calculate(
+            calculationVersion,
             rental,
             matchedRule.channelFeeRate(),
             matchedRule.platformFeeRate(),
@@ -476,7 +482,7 @@ public class SettlementService {
             nextCode("SNP"),
             sourceType,
             sourceId,
-            SettlementCalculationVersion.PROFIT_V2,
+            calculationVersion,
             normalizedChannel,
             storeSku.id(),
             storeSku.skuId(),
@@ -513,7 +519,8 @@ public class SettlementService {
             allocation.channelReferralAmount(),
             allocation.investorShareRate(),
             allocation.investorShareAmount(),
-            summary(matchedRule, storeSku, normalizedChannel, allocation.batteryCostAmount()),
+            summary(matchedRule, storeSku, normalizedChannel, allocation.batteryCostAmount())
+                + ";calculationVersion=" + calculationVersion,
             null
         );
         return persist ? settlementRepository.createSnapshot(snapshot) : snapshot;
@@ -523,11 +530,42 @@ public class SettlementService {
         var remaining = allocation.settlementBaseAmount()
             .subtract(allocation.channelFeeAmount())
             .subtract(allocation.platformFeeAmount())
+            .subtract(allocation.calculationVersion().usesGrossChannelReferral()
+                ? allocation.channelReferralAmount()
+                : BigDecimal.ZERO)
             .subtract(allocation.batteryCostAmount())
             .setScale(2, RoundingMode.HALF_UP);
         if (remaining.signum() < 0) {
-            throw BusinessException.badRequest("核销毛额不足以覆盖渠道费、平台费和全租期电池成本");
+            var message = allocation.calculationVersion().usesGrossChannelReferral()
+                ? "核销毛额不足以覆盖渠道费、平台费、渠道引流分润和全租期电池成本"
+                : "核销毛额不足以覆盖渠道费、平台费和全租期电池成本";
+            throw BusinessException.badRequest(message);
         }
+        if (allocation.calculationVersion().usesGrossChannelReferral()
+            && allocation.storeOperationRate()
+                .add(allocation.maintenanceFundRate())
+                .add(allocation.investorShareRate())
+                .signum() <= 0) {
+            throw BusinessException.badRequest("外卖车三方分配权重必须大于 0");
+        }
+        if (allocation.investorShareAmount().signum() < 0) {
+            throw BusinessException.badRequest("核销毛额不足以覆盖毛额级渠道引流分润、电池成本和其他分润");
+        }
+    }
+
+    private SettlementCalculationVersion profitCalculationVersion(Long skuId, BigDecimal batteryCostAmount) {
+        var sku = productRepository.findSku(skuId)
+            .orElseThrow(() -> BusinessException.badRequest("商品链接不存在"));
+        var hasBatteryCost = positive(sku.batteryCostDailyAmount())
+            || positive(sku.batteryCostMonthlyAmount())
+            || positive(batteryCostAmount);
+        return hasBatteryCost
+            ? SettlementCalculationVersion.PROFIT_V3
+            : SettlementCalculationVersion.PROFIT_V2;
+    }
+
+    private boolean positive(BigDecimal value) {
+        return value != null && value.signum() > 0;
     }
 
     private NormalizedRule normalizeRule(ProfitRuleRequest request, SettlementProfitRule existing) {

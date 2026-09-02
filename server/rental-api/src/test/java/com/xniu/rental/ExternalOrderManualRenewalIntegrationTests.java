@@ -92,7 +92,16 @@ class ExternalOrderManualRenewalIntegrationTests {
         assertThat(snapshotAmount(snapshotId, "channel_fee_amount")).isEqualByComparingTo("15.00");
         assertThat(snapshotAmount(snapshotId, "platform_fee_amount")).isEqualByComparingTo("9.00");
         assertThat(snapshotAmount(snapshotId, "battery_cost_amount")).isEqualByComparingTo("136.00");
-        assertThat(snapshotAmount(snapshotId, "distributable_amount")).isEqualByComparingTo("140.00");
+        assertThat(snapshotAmount(snapshotId, "channel_referral_amount")).isEqualByComparingTo("60.00");
+        assertThat(snapshotAmount(snapshotId, "distributable_amount")).isEqualByComparingTo("80.00");
+        assertThat(snapshotAmount(snapshotId, "store_operation_amount")).isEqualByComparingTo("15.00");
+        assertThat(snapshotAmount(snapshotId, "maintenance_fund_amount")).isEqualByComparingTo("10.00");
+        assertThat(snapshotAmount(snapshotId, "investor_share_amount")).isEqualByComparingTo("55.00");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT calculation_version FROM settlement_rule_snapshot WHERE id = ?",
+            String.class,
+            snapshotId
+        )).isEqualTo("PROFIT_V3");
         assertThat(jdbcTemplate.queryForObject("""
             SELECT COUNT(1)
             FROM settlement_income_entry

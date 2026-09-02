@@ -163,7 +163,7 @@
         </view>
         <view class="section-subtitle">分润快照</view>
         <view v-if="settlement" class="settlement-grid">
-          <template v-if="settlement.calculationVersion === 'PROFIT_V2'">
+          <template v-if="settlement.calculationVersion !== 'LEGACY_V1'">
             <view>
               <text>实际结算金额</text>
               <text>{{ money(settlement.settlementBaseAmount) }}</text>
@@ -193,11 +193,19 @@
               <text>{{ money(Number(settlement.storeOperationAmount || 0) + Number(settlement.maintenanceFundAmount || 0) + storeOrderFeeDisplay(settlement)) }}</text>
             </view>
             <view>
-              <text>渠道引流分润</text>
+              <text>{{ settlement.calculationVersion === 'PROFIT_V3' ? '渠道引流（毛额计）' : '渠道引流分润' }}</text>
               <text>{{ money(settlement.channelReferralAmount) }}</text>
             </view>
             <view>
-              <text>出资方分润</text>
+              <text>电池成本</text>
+              <text>{{ money(settlement.batteryCostAmount) }}</text>
+            </view>
+            <view>
+              <text>{{ settlement.calculationVersion === 'PROFIT_V3' ? '三方余额' : '剩余可分配' }}</text>
+              <text>{{ money(settlement.distributableAmount) }}</text>
+            </view>
+            <view>
+              <text>{{ settlement.calculationVersion === 'PROFIT_V3' ? `出资方（${profitWeightRatio(settlement)} 权重）` : '出资方分润' }}</text>
               <text>{{ money(settlement.investorShareAmount) }}</text>
             </view>
           </template>
@@ -1518,6 +1526,15 @@ function dateText(value?: string | null) {
 
 function money(value: number | string | null | undefined) {
   return `¥${Number(value || 0).toFixed(2)}`;
+}
+
+function profitWeightRatio(snapshot: SettlementSnapshot) {
+  return [snapshot.storeOperationRate, snapshot.maintenanceFundRate, snapshot.investorShareRate]
+    .map((rate) => {
+      const percentValue = Math.round(Number(rate || 0) * 10_000) / 100;
+      return percentValue.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    })
+    .join(':');
 }
 
 function storeOrderFeeDisplay(settlement: SettlementSnapshot) {

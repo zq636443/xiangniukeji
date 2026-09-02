@@ -38,6 +38,22 @@ export type StoreRevenueBreakdown = {
   total: number;
 };
 
+export type ProfitWeightSnapshot = {
+  storeOperationRate?: number | string | null;
+  maintenanceFundRate?: number | string | null;
+  investorShareRate?: number | string | null;
+};
+
+/** Format the three configurable V3 snapshot rates as percentage weights. */
+export function snapshotProfitWeightRatio(snapshot: ProfitWeightSnapshot) {
+  return [snapshot.storeOperationRate, snapshot.maintenanceFundRate, snapshot.investorShareRate]
+    .map((rate) => {
+      const percentValue = Math.round(Number(rate ?? 0) * 10_000) / 100;
+      return percentValue.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    })
+    .join(':');
+}
+
 /** Merchant entitlement for an order-handling fee: 97%, rounded to cents. */
 export function storeOrderFeeNetAmount(amount: number | string | null | undefined) {
   const cents = Math.round(Number(amount ?? 0) * 100);

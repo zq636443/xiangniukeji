@@ -21,7 +21,6 @@ import com.xniu.rental.settlement.model.IncomeBeneficiaryType;
 import com.xniu.rental.settlement.model.IncomeEntryStatus;
 import com.xniu.rental.settlement.model.IncomeLineType;
 import com.xniu.rental.settlement.model.IncomeSourceType;
-import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.model.SettlementIncomeEntry;
 import com.xniu.rental.settlement.model.SettlementRuleSnapshot;
 import com.xniu.rental.settlement.model.SnapshotSourceType;
@@ -252,7 +251,7 @@ public class SettlementIncomeService {
     }
 
     private List<SettlementIncomeEntry> createEntries(SettlementRuleSnapshot snapshot, IncomeSource source) {
-        if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2) {
+        if (snapshot.calculationVersion().usesProfitSharing()) {
             return createProfitV2Entries(snapshot, source);
         }
         return createLegacyEntries(snapshot, source);
@@ -263,6 +262,7 @@ public class SettlementIncomeService {
         var allocation = source.sourceType() == IncomeSourceType.BILL
             || source.sourceType() == IncomeSourceType.EXTERNAL_RENEWAL
             ? ProfitSharingCalculator.calculate(
+                snapshot.calculationVersion(),
                 source.rentAmount(),
                 snapshot.channelFeeRate(),
                 snapshot.platformFeeRate(),

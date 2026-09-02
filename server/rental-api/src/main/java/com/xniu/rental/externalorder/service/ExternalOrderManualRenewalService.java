@@ -11,8 +11,8 @@ import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
 import com.xniu.rental.externalorder.repository.ExternalOrderRenewalRepository;
 import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
 import com.xniu.rental.product.repository.ProductRepository;
-import com.xniu.rental.settlement.model.SnapshotSourceType;
 import com.xniu.rental.settlement.model.SettlementCalculationVersion;
+import com.xniu.rental.settlement.model.SnapshotSourceType;
 import com.xniu.rental.settlement.repository.SettlementRepository;
 import com.xniu.rental.settlement.repository.SettlementStatementRepository;
 import com.xniu.rental.settlement.service.BatteryCostCalculator;
@@ -108,8 +108,8 @@ public class ExternalOrderManualRenewalService {
             || !order.id().equals(sourceSnapshot.sourceId())) {
             throw BusinessException.badRequest("补录订单原始分润快照不存在");
         }
-        if (sourceSnapshot.calculationVersion() != SettlementCalculationVersion.PROFIT_V2) {
-            throw BusinessException.badRequest("补录订单分润快照不是 V2 口径，请先修复快照后再人工续租");
+        if (!sourceSnapshot.calculationVersion().usesProfitSharing()) {
+            throw BusinessException.badRequest("补录订单分润快照不是当前分润口径，请先修复快照后再人工续租");
         }
         var sku = productRepository.findSku(order.skuId())
             .orElseThrow(() -> BusinessException.badRequest("补录订单 SKU 不存在"));
@@ -125,7 +125,13 @@ public class ExternalOrderManualRenewalService {
         // clamps a negative distributable amount to zero, which is correct for
         // reporting but must not turn an underfunded manual renewal into a
         // silently accepted transaction.
+        var previewVersion = sourceSnapshot.calculationVersion().usesGrossChannelReferral()
+            ? sourceSnapshot.calculationVersion()
+            : batteryCost.signum() > 0
+                ? SettlementCalculationVersion.PROFIT_V3
+                : sourceSnapshot.calculationVersion();
         var preview = ProfitSharingCalculator.calculate(
+            previewVersion,
             renewalAmount,
             sourceSnapshot.channelFeeRate(),
             sourceSnapshot.platformFeeRate(),
@@ -138,10 +144,16 @@ public class ExternalOrderManualRenewalService {
         var amountAfterFixedDeductions = preview.settlementBaseAmount()
             .subtract(preview.channelFeeAmount())
             .subtract(preview.platformFeeAmount())
+            .subtract(previewVersion.usesGrossChannelReferral()
+                ? preview.channelReferralAmount()
+                : BigDecimal.ZERO)
             .subtract(preview.batteryCostAmount())
             .setScale(2, RoundingMode.HALF_UP);
         if (amountAfterFixedDeductions.signum() < 0) {
-            throw BusinessException.badRequest("本次续租毛额不足以覆盖渠道费、平台费和全租期电池成本");
+            throw BusinessException.badRequest("本次续租毛额不足以覆盖渠道费、平台费、渠道引流分润和全租期电池成本");
+        }
+        if (preview.investorShareAmount().signum() < 0) {
+            throw BusinessException.badRequest("本次续租毛额不足以覆盖毛额级渠道引流分润、电池成本和其他分润");
         }
 
         var operatorAccountId = currentAccountId();

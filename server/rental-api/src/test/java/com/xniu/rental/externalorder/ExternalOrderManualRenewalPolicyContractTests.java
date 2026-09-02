@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.xniu.rental.externalorder.model.ExternalOrderVerificationRevision;
 import com.xniu.rental.externalorder.model.ExternalOrderVerificationRevisionType;
 import com.xniu.rental.externalorder.service.ExternalOrderRenewalAmountCalculator;
+import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.service.BatteryCostCalculator;
 import com.xniu.rental.settlement.service.ProfitSharingCalculator;
 import java.math.BigDecimal;
@@ -60,7 +61,7 @@ class ExternalOrderManualRenewalPolicyContractTests {
     }
 
     @Test
-    void profitSharingDeductsBothFeesAndTheFullExactPeriodBatteryCostBeforeShares() {
+    void takeawayProfitV3TakesReferralFromGrossAndRedistributesTheRemainingWeights() {
         var batteryCost = BatteryCostCalculator.calculateExactPeriod(
             new BigDecimal("6.80"),
             new BigDecimal("200.00"),
@@ -68,6 +69,7 @@ class ExternalOrderManualRenewalPolicyContractTests {
             START.plusDays(31)
         );
         var allocation = ProfitSharingCalculator.calculate(
+            SettlementCalculationVersion.PROFIT_V3,
             new BigDecimal("397.30"),
             new BigDecimal("0.05"),
             new BigDecimal("0.03"),
@@ -81,11 +83,11 @@ class ExternalOrderManualRenewalPolicyContractTests {
         assertThat(allocation.channelFeeAmount()).isEqualByComparingTo("19.87");
         assertThat(allocation.platformFeeAmount()).isEqualByComparingTo("11.92");
         assertThat(allocation.batteryCostAmount()).isEqualByComparingTo("206.80");
-        assertThat(allocation.distributableAmount()).isEqualByComparingTo("158.71");
-        assertThat(allocation.storeOperationAmount()).isEqualByComparingTo("23.81");
-        assertThat(allocation.maintenanceFundAmount()).isEqualByComparingTo("15.87");
-        assertThat(allocation.channelReferralAmount()).isEqualByComparingTo("31.74");
-        assertThat(allocation.investorShareAmount()).isEqualByComparingTo("87.29");
+        assertThat(allocation.channelReferralAmount()).isEqualByComparingTo("79.46");
+        assertThat(allocation.distributableAmount()).isEqualByComparingTo("79.25");
+        assertThat(allocation.storeOperationAmount()).isEqualByComparingTo("14.86");
+        assertThat(allocation.maintenanceFundAmount()).isEqualByComparingTo("9.91");
+        assertThat(allocation.investorShareAmount()).isEqualByComparingTo("54.48");
     }
 
     @Test
@@ -110,6 +112,7 @@ class ExternalOrderManualRenewalPolicyContractTests {
     @Test
     void lowGrossDemonstratesWhyTheServiceMustRejectAnUnfundedBatteryPeriod() {
         var allocation = ProfitSharingCalculator.calculate(
+            SettlementCalculationVersion.PROFIT_V3,
             new BigDecimal("96.00"),
             new BigDecimal("0.05"),
             new BigDecimal("0.03"),
@@ -121,12 +124,13 @@ class ExternalOrderManualRenewalPolicyContractTests {
         );
         var requiredBeforeShares = allocation.channelFeeAmount()
             .add(allocation.platformFeeAmount())
+            .add(allocation.channelReferralAmount())
             .add(allocation.batteryCostAmount());
 
         assertThat(allocation.distributableAmount()).isZero();
-        assertThat(requiredBeforeShares).isEqualByComparingTo("143.68");
+        assertThat(requiredBeforeShares).isEqualByComparingTo("162.88");
         assertThat(requiredBeforeShares.subtract(allocation.settlementBaseAmount()))
-            .isEqualByComparingTo("47.68");
+            .isEqualByComparingTo("66.88");
     }
 
     private ExternalOrderVerificationRevision manualRevision(LocalDateTime effectiveAt, String amount) {

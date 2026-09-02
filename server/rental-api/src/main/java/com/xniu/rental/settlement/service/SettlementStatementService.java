@@ -11,7 +11,6 @@ import com.xniu.rental.settlement.dto.SettlementStatementGenerateResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementLineResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementResponse;
 import com.xniu.rental.settlement.dto.StoreProfitOverviewResponse;
-import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.model.SettlementRuleSnapshot;
 import com.xniu.rental.settlement.model.SettlementStatement;
 import com.xniu.rental.settlement.model.SettlementStatementLine;
@@ -198,7 +197,7 @@ public class SettlementStatementService {
             if (snapshot == null) {
                 throw BusinessException.badRequest("订单 " + first.orderId() + " 的分润快照不存在");
             }
-            var profitAllocation = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+            var profitAllocation = snapshot.calculationVersion().usesProfitSharing()
                 ? calculateProfitV2(snapshot, rentAmount)
                 : null;
             if (profitAllocation != null && profitAllocation.batteryCostAmount().signum() > 0) {
@@ -238,7 +237,7 @@ public class SettlementStatementService {
                         SettlementStatementLineType.MERCHANT_RENT_SHARE,
                         merchantShare,
                         first.paidAt(),
-                        snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2 ? "门店运营分润" : "租金分润"
+                        snapshot.calculationVersion().usesProfitSharing() ? "门店运营分润" : "租金分润"
                     ),
                     profitAllocation != null && profitAllocation.batteryCostAmount().signum() > 0 ? BigDecimal.ZERO : rentAmount
                 );
@@ -278,7 +277,7 @@ public class SettlementStatementService {
                             SettlementStatementLineType.INVESTOR_GROSS_RENT,
                             allocation.grossRentAmount(),
                             first.paidAt(),
-                            snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2 ? "出资方分润" : "出资方租金毛收益"
+                            snapshot.calculationVersion().usesProfitSharing() ? "出资方分润" : "出资方租金毛收益"
                         ),
                         allocation.rentBaseAmount()
                     );
@@ -324,7 +323,7 @@ public class SettlementStatementService {
             if (settlementBase.signum() <= 0) {
                 continue;
             }
-            if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+            if (snapshot.calculationVersion().usesProfitSharing()
                 && snapshot.batteryCostAmount().signum() > 0) {
                 merchantDraft(merchantDrafts, externalOrder.merchantId(), externalOrder.storeId()).register(
                     new LineDraft(
@@ -344,7 +343,7 @@ public class SettlementStatementService {
                     settlementBase
                 );
             }
-            var merchantShare = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+            var merchantShare = snapshot.calculationVersion().usesProfitSharing()
                 ? snapshot.storeOperationAmount()
                 : money(settlementBase.multiply(snapshot.merchantRentShareRate()));
             if (merchantShare.signum() > 0) {
@@ -363,11 +362,11 @@ public class SettlementStatementService {
                         externalOrder.createdAt(),
                         "补录订单 " + externalOrder.recordNo() + " 门店运营分润"
                     ),
-                    snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+                    snapshot.calculationVersion().usesProfitSharing()
                         && snapshot.batteryCostAmount().signum() > 0 ? BigDecimal.ZERO : settlementBase
                 );
             }
-            if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+            if (snapshot.calculationVersion().usesProfitSharing()
                 && snapshot.maintenanceFundAmount().signum() > 0) {
                 merchantDraft(merchantDrafts, externalOrder.merchantId(), externalOrder.storeId()).register(
                     new LineDraft(
@@ -432,11 +431,11 @@ public class SettlementStatementService {
                 );
             }
             /* Legacy renewal snapshots keep the store entitlement in
-             * merchantRentShareAmount; PROFIT_V2 stores it in the separate
+             * merchantRentShareAmount; current profit versions store it in the separate
              * operation/maintenance fields.  Use the frozen snapshot value so
              * the monthly statement agrees with the income ledger for both
              * calculation versions. */
-            var merchantShare = snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2
+            var merchantShare = snapshot.calculationVersion().usesProfitSharing()
                 ? money(snapshot.storeOperationAmount())
                 : money(snapshot.merchantRentShareAmount());
             if (merchantShare.signum() > 0) {
@@ -792,13 +791,13 @@ public class SettlementStatementService {
         }
         /* Formal BILL statements are built from each paid bill's actual rent
          * items and therefore retain the recalculation path.  External
-         * supplemental orders/renewal events already carry a frozen V2
+         * supplemental orders/renewal events already carry a frozen profit-model
          * investor allocation on their source snapshot.  Reuse that exact
          * amount so month-end statements stay cent-for-cent aligned with the
          * income ledger, including legacy/anomalous rows whose base fields may
          * not be identical. */
         BigDecimal grossAmount;
-        if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2) {
+        if (snapshot.calculationVersion().usesProfitSharing()) {
             grossAmount = externalFrozenInvestorShare(snapshot)
                 ? money(snapshot.investorShareAmount())
                 : money(calculateProfitV2(snapshot, rentAmount).investorShareAmount());
@@ -832,6 +831,7 @@ public class SettlementStatementService {
 
     private ProfitSharingCalculator.Allocation calculateProfitV2(SettlementRuleSnapshot snapshot, BigDecimal settlementBaseAmount) {
         return ProfitSharingCalculator.calculate(
+            snapshot.calculationVersion(),
             settlementBaseAmount,
             snapshot.channelFeeRate(),
             snapshot.platformFeeRate(),

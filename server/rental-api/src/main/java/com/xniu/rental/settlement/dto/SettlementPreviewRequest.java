@@ -8,6 +8,16 @@ public record SettlementPreviewRequest(
     Long frameAssetId,
     Long batteryAssetId,
     @NotNull(message = "请输入结算基数") BigDecimal rentalAmount,
-    String sourceChannel
+    String sourceChannel,
+    BigDecimal batteryCostAmount
 ) {
+    public SettlementPreviewRequest(
+        Long storeSkuId,
+        Long frameAssetId,
+        Long batteryAssetId,
+        BigDecimal rentalAmount,
+        String sourceChannel
+    ) {
+        this(storeSkuId, frameAssetId, batteryAssetId, rentalAmount, sourceChannel, null);
+    }
 }

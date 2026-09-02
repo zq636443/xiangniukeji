@@ -69,6 +69,7 @@ import {
 import {
   isStoreRevenueEntry,
   isStoreRevenueLine,
+  snapshotProfitWeightRatio,
   snapshotStoreOrderFeeAmount,
   storeRevenueEntryAmount,
   summarizeStoreRevenue
@@ -1423,7 +1424,7 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
               {settlement ? (
                 <Descriptions bordered size="small" column={3}>
                   <Descriptions.Item label="快照号">{settlement.snapshotNo}</Descriptions.Item>
-                  {settlement.calculationVersion === 'PROFIT_V2' ? (
+                  {settlement.calculationVersion !== 'LEGACY_V1' ? (
                     <>
                       <Descriptions.Item label="实际结算金额">{money(settlement.settlementBaseAmount)}</Descriptions.Item>
                       <Descriptions.Item label="来源渠道">{settlement.sourceChannel}</Descriptions.Item>
@@ -1433,8 +1434,10 @@ export function MerchantOrderWorkspace({ account, storeId, stores }: MerchantPag
                       <Descriptions.Item label="门店维修分润">{money(settlement.maintenanceFundAmount)}</Descriptions.Item>
                       <Descriptions.Item label="办单费门店净额（97%）">{money(snapshotStoreOrderFeeAmount(settlement))}</Descriptions.Item>
                       <Descriptions.Item label="门店收益合计">{money(Number(settlement.storeOperationAmount || 0) + Number(settlement.maintenanceFundAmount || 0) + snapshotStoreOrderFeeAmount(settlement))}</Descriptions.Item>
-                      <Descriptions.Item label="渠道引流分润">{money(settlement.channelReferralAmount)}</Descriptions.Item>
-                      <Descriptions.Item label="出资方分润">{money(settlement.investorShareAmount)}</Descriptions.Item>
+                      <Descriptions.Item label={settlement.calculationVersion === 'PROFIT_V3' ? '渠道引流（毛额计）' : '渠道引流分润'}>{money(settlement.channelReferralAmount)}</Descriptions.Item>
+                      <Descriptions.Item label="电池成本">{money(settlement.batteryCostAmount)}</Descriptions.Item>
+                      <Descriptions.Item label={settlement.calculationVersion === 'PROFIT_V3' ? '三方余额' : '剩余可分配'}>{money(settlement.distributableAmount)}</Descriptions.Item>
+                      <Descriptions.Item label={settlement.calculationVersion === 'PROFIT_V3' ? `出资方（${snapshotProfitWeightRatio(settlement)} 权重）` : '出资方分润'}>{money(settlement.investorShareAmount)}</Descriptions.Item>
                     </>
                   ) : (
                     <>

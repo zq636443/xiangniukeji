@@ -42,7 +42,6 @@ import com.xniu.rental.product.model.StoreSkuStatus;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SnapshotCreateRequest;
 import com.xniu.rental.settlement.model.IncomeSourceType;
-import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.model.SnapshotSourceType;
 import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
@@ -1384,7 +1383,7 @@ public class ExternalRentalOrderService {
         if (snapshot == null) {
             return ProfitSharingCalculator.calculateOrderFee(order.signFeeAmount()).merchantNetAmount();
         }
-        if (snapshot.calculationVersion() == SettlementCalculationVersion.PROFIT_V2) {
+        if (snapshot.calculationVersion().usesProfitSharing()) {
             var snapshotFee = money(snapshot.merchantOrderFeeAmount());
             var orderFee = money(order.signFeeAmount());
             /* Before the fee was frozen into V2 snapshots, old supplemental
@@ -1405,7 +1404,7 @@ public class ExternalRentalOrderService {
     ) {
         var operation = snapshot == null ? BigDecimal.ZERO : snapshot.storeOperationAmount();
         var maintenance = snapshot == null ? BigDecimal.ZERO : snapshot.maintenanceFundAmount();
-        if (snapshot != null && snapshot.calculationVersion() != SettlementCalculationVersion.PROFIT_V2) {
+        if (snapshot != null && !snapshot.calculationVersion().usesProfitSharing()) {
             operation = snapshot.merchantRentShareAmount();
             maintenance = BigDecimal.ZERO;
         }

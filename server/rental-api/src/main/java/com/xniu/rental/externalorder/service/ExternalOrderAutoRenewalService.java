@@ -339,10 +339,16 @@ public class ExternalOrderAutoRenewalService {
     ) {
         var original = settlementRepository.findSnapshot(originalSnapshotId)
             .orElseThrow(() -> BusinessException.badRequest("补录订单原始分润快照不存在"));
-        if (original.calculationVersion() != SettlementCalculationVersion.PROFIT_V2) {
+        if (!original.calculationVersion().usesProfitSharing()) {
             return;
         }
+        var calculationVersion = original.calculationVersion().usesGrossChannelReferral()
+            ? original.calculationVersion()
+            : batteryCost.signum() > 0
+                ? SettlementCalculationVersion.PROFIT_V3
+                : original.calculationVersion();
         var allocation = ProfitSharingCalculator.calculate(
+            calculationVersion,
             renewalAmount,
             original.channelFeeRate(),
             original.platformFeeRate(),
@@ -355,10 +361,16 @@ public class ExternalOrderAutoRenewalService {
         var remaining = allocation.settlementBaseAmount()
             .subtract(allocation.channelFeeAmount())
             .subtract(allocation.platformFeeAmount())
+            .subtract(calculationVersion.usesGrossChannelReferral()
+                ? allocation.channelReferralAmount()
+                : BigDecimal.ZERO)
             .subtract(allocation.batteryCostAmount())
             .setScale(2, RoundingMode.HALF_UP);
         if (remaining.signum() < 0) {
-            throw BusinessException.badRequest("系统续租金额不足以覆盖渠道费、平台费和全租期电池成本");
+            throw BusinessException.badRequest("系统续租金额不足以覆盖渠道费、平台费、渠道引流分润和全租期电池成本");
+        }
+        if (allocation.investorShareAmount().signum() < 0) {
+            throw BusinessException.badRequest("系统续租金额不足以覆盖毛额级渠道引流分润、电池成本和其他分润");
         }
     }
 

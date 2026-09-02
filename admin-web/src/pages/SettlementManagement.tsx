@@ -63,7 +63,7 @@ import type {
   StoreSku
 } from '../types/api';
 import { downloadCsv } from '../utils/csv';
-import { snapshotStoreOrderFeeAmount, storeRevenueEntryAmount } from '../utils/storeRevenue';
+import { snapshotProfitWeightRatio, snapshotStoreOrderFeeAmount, storeRevenueEntryAmount } from '../utils/storeRevenue';
 
 type RuleForm = {
   ruleName: string;
@@ -85,6 +85,7 @@ type PreviewForm = {
   frameAssetId?: number;
   batteryAssetId?: number;
   rentalAmount: number;
+  batteryCostAmount?: number;
   sourceChannel: string;
 };
 
@@ -1440,7 +1441,11 @@ export function SettlementManagement() {
                       placeholder="计算版本"
                       value={snapshotVersionFilter}
                       onChange={setSnapshotVersionFilter}
-                      options={[{ label: '当前分润', value: 'PROFIT_V2' }, { label: '历史规则', value: 'LEGACY_V1' }]}
+                      options={[
+                        { label: '外卖车毛额引流', value: 'PROFIT_V3' },
+                        { label: '当前分润 V2', value: 'PROFIT_V2' },
+                        { label: '历史规则', value: 'LEGACY_V1' }
+                      ]}
                       style={{ width: 145 }}
                     />
                     <Button onClick={() => {
@@ -1527,7 +1532,7 @@ export function SettlementManagement() {
                         )
                       },
                       { title: '出资方', dataIndex: 'investorShareAmount', width: 115, render: money },
-                      { title: '版本', dataIndex: 'calculationVersion', width: 110, render: (value) => <Tag color={value === 'PROFIT_V2' ? 'green' : 'default'}>{calculationVersionText(value)}</Tag> },
+                      { title: '版本', dataIndex: 'calculationVersion', width: 130, render: (value) => <Tag color={value === 'PROFIT_V3' ? 'green' : value === 'PROFIT_V2' ? 'blue' : 'default'}>{calculationVersionText(value)}</Tag> },
                       {
                         title: '操作',
                         fixed: 'right',
@@ -1568,12 +1573,12 @@ export function SettlementManagement() {
                   <Form
                     form={previewForm}
                     layout="vertical"
-                    initialValues={{ sourceChannel: 'DIRECT' }}
+                    initialValues={{ sourceChannel: 'DIRECT', batteryCostAmount: 0 }}
                     onFinish={previewSettlement}
                     onValuesChange={() => setPreview(null)}
                   >
                     <Row gutter={12} align="bottom">
-                      <Col span={6}>
+                      <Col span={5}>
                         <Form.Item name="storeSkuId" label="门店商品" rules={[{ required: true, message: '请选择门店商品' }]}>
                           <Select showSearch optionFilterProp="label" placeholder="选择门店商品" options={storeSkuOptions} />
                         </Form.Item>
@@ -1583,12 +1588,12 @@ export function SettlementManagement() {
                           <Select options={ruleChannelOptions} />
                         </Form.Item>
                       </Col>
-                      <Col span={4}>
+                      <Col span={3}>
                         <Form.Item name="frameAssetId" label="车架 / 车电一体">
                           <Select allowClear showSearch optionFilterProp="label" placeholder="可选" options={frameAssetOptions} />
                         </Form.Item>
                       </Col>
-                      <Col span={4}>
+                      <Col span={3}>
                         <Form.Item name="batteryAssetId" label="电池资产">
                           <Select
                             allowClear
@@ -1602,6 +1607,11 @@ export function SettlementManagement() {
                       </Col>
                       <Col span={3}>
                         <Form.Item name="rentalAmount" label="实际核销金额" rules={[{ required: true, message: '请输入实际核销金额' }]}>
+                          <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={3}>
+                        <Form.Item name="batteryCostAmount" label="本次电池成本" extra="外卖车按实际租期填写">
                           <InputNumber min={0} precision={2} prefix="¥" style={{ width: '100%' }} />
                         </Form.Item>
                       </Col>
@@ -1631,6 +1641,10 @@ export function SettlementManagement() {
                         <Descriptions.Item label="实际核销金额">{money(preview.settlementBaseAmount)}</Descriptions.Item>
                         <Descriptions.Item label="渠道核销扣点">{money(preview.channelFeeAmount)} / {percent(preview.channelFeeRate)}</Descriptions.Item>
                         <Descriptions.Item label="租赁平台扣点">{money(preview.platformFeeAmount)} / {percent(preview.platformFeeRate)}</Descriptions.Item>
+                        {preview.calculationVersion === 'PROFIT_V3' && (
+                          <Descriptions.Item label="渠道引流（毛额计）">{money(preview.channelReferralAmount)} / {percent(preview.channelReferralRate)}</Descriptions.Item>
+                        )}
+                        <Descriptions.Item label="本次电池成本">{money(preview.batteryCostAmount)}</Descriptions.Item>
                         <Descriptions.Item label="剩余可分配">{money(preview.distributableAmount)}</Descriptions.Item>
                         <Descriptions.Item label="门店收益">{money(Number(preview.storeOperationAmount || 0) + Number(preview.maintenanceFundAmount || 0) + snapshotStoreOrderFeeAmount(preview))}</Descriptions.Item>
                       </Descriptions>
@@ -1963,7 +1977,12 @@ export function SettlementManagement() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="channelReferralRate" label="剩余金额：渠道引流 (%)" rules={[{ required: true, message: '请输入比例' }]}>
+              <Form.Item
+                name="channelReferralRate"
+                label="渠道引流 (%)"
+                extra="外卖车按核销毛额计算；其他商品仍按 V2 口径"
+                rules={[{ required: true, message: '请输入比例' }]}
+              >
                 <InputNumber min={0} max={100} precision={2} step={1} suffix="%" style={{ width: '100%' }} />
               </Form.Item>
             </Col>
@@ -2020,6 +2039,12 @@ export function SettlementManagement() {
                 <div><span>渠道核销扣点</span><strong>{money(selectedSnapshot.channelFeeAmount)}</strong></div>
                 <span className="snapshot-equation-symbol">-</span>
                 <div><span>租赁平台扣点</span><strong>{money(selectedSnapshot.platformFeeAmount)}</strong></div>
+                {selectedSnapshot.calculationVersion === 'PROFIT_V3' && (
+                  <>
+                    <span className="snapshot-equation-symbol">-</span>
+                    <div><span>渠道引流（毛额计）</span><strong>{money(selectedSnapshot.channelReferralAmount)}</strong></div>
+                  </>
+                )}
                 <span className="snapshot-equation-symbol">-</span>
                 <div><span>外卖车电池成本</span><strong>{money(selectedSnapshot.batteryCostAmount)}</strong></div>
                 <span className="snapshot-equation-symbol">=</span>
@@ -2249,6 +2274,7 @@ function SettlementMetric({
 }
 
 function SnapshotAllocation({ snapshot }: { snapshot: SettlementSnapshot }) {
+  const grossReferralVersion = snapshot.calculationVersion === 'PROFIT_V3';
   const segments = [
     {
       key: 'store-operation',
@@ -2264,16 +2290,16 @@ function SnapshotAllocation({ snapshot }: { snapshot: SettlementSnapshot }) {
       amount: snapshot.maintenanceFundAmount,
       className: 'maintenance'
     },
-    {
+    ...(!grossReferralVersion ? [{
       key: 'channel',
       label: '渠道引流',
       rate: snapshot.channelReferralRate,
       amount: snapshot.channelReferralAmount,
       className: 'channel'
-    },
+    }] : []),
     {
       key: 'investor',
-      label: '出资方',
+      label: grossReferralVersion ? '出资方权重' : '出资方',
       rate: snapshot.investorShareRate,
       amount: snapshot.investorShareAmount,
       className: 'investor'
@@ -2285,17 +2311,24 @@ function SnapshotAllocation({ snapshot }: { snapshot: SettlementSnapshot }) {
     <div className="snapshot-allocation">
       <div className="snapshot-allocation-head">
         <div>
-          <Typography.Text strong>剩余金额分配</Typography.Text>
+          <Typography.Text strong>{grossReferralVersion ? `三方余额按 ${snapshotProfitWeightRatio(snapshot)} 权重分配` : '剩余金额分配'}</Typography.Text>
           <Typography.Text type="secondary">{money(snapshot.distributableAmount)}</Typography.Text>
         </div>
         <Typography.Text type="secondary">门店租金分成 {money(storeRentShareAmount)} · 办单费净额 {money(snapshotStoreOrderFeeAmount(snapshot))}</Typography.Text>
       </div>
       <div className="snapshot-allocation-bar">
         {segments.map((segment) => (
-          <Tooltip key={segment.key} title={`${segment.label} ${percent(segment.rate)} / ${money(segment.amount)}`}>
+          <Tooltip key={segment.key} title={`${segment.label} ${grossReferralVersion ? `权重 ${Number(segment.rate || 0) * 100}` : percent(segment.rate)} / ${money(segment.amount)}`}>
             <div
               className={`snapshot-allocation-segment ${segment.className}`}
-              style={{ width: `${Math.max(Number(segment.rate || 0) * 100, 0)}%` }}
+              style={{
+                width: `${Math.max(
+                  grossReferralVersion
+                    ? Number(segment.amount || 0) / Math.max(Number(snapshot.distributableAmount || 0), 0.01) * 100
+                    : Number(segment.rate || 0) * 100,
+                  0
+                )}%`
+              }}
             />
           </Tooltip>
         ))}
@@ -2306,7 +2339,7 @@ function SnapshotAllocation({ snapshot }: { snapshot: SettlementSnapshot }) {
             <span className={`snapshot-allocation-swatch ${segment.className}`} />
             <span>{segment.label}</span>
             <strong>{money(segment.amount)}</strong>
-            <Typography.Text type="secondary">{percent(segment.rate)}</Typography.Text>
+            <Typography.Text type="secondary">{grossReferralVersion ? `权重 ${Number(segment.rate || 0) * 100}` : percent(segment.rate)}</Typography.Text>
           </div>
         ))}
       </div>
@@ -2408,7 +2441,8 @@ function ruleScopeText(value: SettlementSnapshot['matchedRuleScope'] | ProfitRul
 }
 
 function calculationVersionText(value: SettlementSnapshot['calculationVersion']) {
-  return value === 'PROFIT_V2' ? '当前分润' : '历史规则';
+  if (value === 'PROFIT_V3') return '外卖车毛额引流';
+  return value === 'PROFIT_V2' ? '当前分润 V2' : '历史规则';
 }
 
 function incomeStatusText(value: SettlementIncomeEntry['entryStatus']) {

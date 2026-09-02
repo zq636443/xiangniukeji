@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   isStoreRevenueEntry,
   isStoreRevenueLine,
+  snapshotProfitWeightRatio,
   snapshotStoreOrderFeeAmount,
   storeOrderFeeNetAmount,
   storeRevenueEntryAmount,
@@ -39,6 +40,19 @@ test('store revenue uses operation + maintenance + 97% net order fee', () => {
 test('order handling fee applies 97% and rounds half up to cents', () => {
   assert.equal(storeOrderFeeNetAmount(20), 19.4);
   assert.equal(storeOrderFeeNetAmount(1.5), 1.46);
+});
+
+test('V3 allocation weight label comes from the immutable snapshot rates', () => {
+  assert.equal(snapshotProfitWeightRatio({
+    storeOperationRate: 0.15,
+    maintenanceFundRate: 0.1,
+    investorShareRate: 0.55
+  }), '15:10:55');
+  assert.equal(snapshotProfitWeightRatio({
+    storeOperationRate: 0.1875,
+    maintenanceFundRate: 0.0625,
+    investorShareRate: 0.55
+  }), '18.75:6.25:55');
 });
 
 test('historical snapshot fee is projected while current net snapshot stays unchanged', () => {

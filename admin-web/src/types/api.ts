@@ -660,7 +660,7 @@ export type SettlementSnapshot = {
   snapshotNo: string;
   sourceType: 'PREVIEW' | 'ORDER' | 'EXTERNAL_ORDER' | 'EXTERNAL_RENEWAL';
   sourceId?: number | null;
-  calculationVersion: 'LEGACY_V1' | 'PROFIT_V2';
+  calculationVersion: 'LEGACY_V1' | 'PROFIT_V2' | 'PROFIT_V3';
   sourceChannel: string;
   storeSkuId: number;
   skuId: number;

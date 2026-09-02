@@ -20,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +31,9 @@ class SettlementProfitRuleManagementIntegrationTests {
 
     @Autowired
     private SettlementService settlementService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void setPlatformAccount() {
@@ -111,6 +115,33 @@ class SettlementProfitRuleManagementIntegrationTests {
         settlementService.deleteRule(created.id());
         assertThat(settlementService.listRules("STORE", null))
             .noneMatch(rule -> rule.id().equals(created.id()));
+    }
+
+    @Test
+    void takeawayPreviewShouldUseTheEnteredPeriodBatteryCost() {
+        jdbcTemplate.update("""
+            UPDATE product_sku
+            SET battery_cost_daily_amount = 6.80,
+                battery_cost_monthly_amount = 200.00
+            WHERE id = 2
+            """);
+
+        var preview = settlementService.preview(new SettlementPreviewRequest(
+            2L,
+            null,
+            null,
+            new BigDecimal("399.00"),
+            "DIRECT",
+            new BigDecimal("200.00")
+        ));
+
+        assertThat(preview.calculationVersion()).isEqualTo("PROFIT_V3");
+        assertThat(preview.batteryCostAmount()).isEqualByComparingTo("200.00");
+        assertThat(preview.channelReferralAmount()).isEqualByComparingTo("79.80");
+        assertThat(preview.distributableAmount()).isEqualByComparingTo("87.28");
+        assertThat(preview.storeOperationAmount()).isEqualByComparingTo("16.37");
+        assertThat(preview.maintenanceFundAmount()).isEqualByComparingTo("10.91");
+        assertThat(preview.investorShareAmount()).isEqualByComparingTo("60.00");
     }
 
     @Test
