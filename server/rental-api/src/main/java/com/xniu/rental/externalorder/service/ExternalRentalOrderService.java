@@ -997,13 +997,21 @@ public class ExternalRentalOrderService {
             && previousSnapshot.sourceType() == SnapshotSourceType.EXTERNAL_ORDER
             && order.id().equals(previousSnapshot.sourceId())
             ? previousSnapshot.batteryCostAmount()
-            : BatteryCostCalculator.calculate(
-                sku.batteryCostDailyAmount(),
-                sku.batteryCostMonthlyAmount(),
-                packageTemplate.leaseUnit(),
-                packageTemplate.leaseValue(),
-                order.leaseMultiplier()
-            );
+            : order.rentStartedAt() != null && order.expectedReturnAt() != null
+                && order.expectedReturnAt().isAfter(order.rentStartedAt())
+                ? BatteryCostCalculator.calculateExactPeriod(
+                    sku.batteryCostDailyAmount(),
+                    sku.batteryCostMonthlyAmount(),
+                    order.rentStartedAt(),
+                    order.expectedReturnAt()
+                )
+                : BatteryCostCalculator.calculate(
+                    sku.batteryCostDailyAmount(),
+                    sku.batteryCostMonthlyAmount(),
+                    packageTemplate.leaseUnit(),
+                    packageTemplate.leaseValue(),
+                    order.leaseMultiplier()
+                );
         var snapshot = settlementService.createOrderSnapshot(new SnapshotCreateRequest(
             "EXTERNAL_ORDER",
             order.id(),
@@ -1356,6 +1364,9 @@ public class ExternalRentalOrderService {
             event.renewalAmount(),
             event.batteryCostAmount(),
             event.eventStatus(),
+            event.renewalSource().name(),
+            event.operatorAccountId(),
+            event.remark(),
             view.includedInMerchantStatement(),
             event.periodStartAt()
         );

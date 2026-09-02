@@ -866,6 +866,13 @@ class ExternalRentalOrderIntegrationTests {
     @Test
     void editingActiveExternalOrderShouldReleaseOldAssetsAndOccupyNewAssets() {
         var suffix = String.valueOf(System.nanoTime());
+        // Keep this asset-editing fixture active regardless of the wall-clock
+        // date on which the suite runs. Static 2026-07 dates eventually made
+        // it an expired order and exercised the dedicated renewal guard
+        // instead of the asset replacement behavior this test owns.
+        var originalRentStartedAt = LocalDateTime.now().plusDays(10).withNano(0);
+        var correctedRentStartedAt = originalRentStartedAt.minusDays(1);
+        var correctedExpectedReturnAt = correctedRentStartedAt.plusMonths(1);
         jdbcTemplate.update("""
             INSERT INTO asset_item
             (asset_code, asset_type, asset_type_id, serial_no, investor_id, current_merchant_id, current_store_id, status,
@@ -893,7 +900,7 @@ class ExternalRentalOrderIntegrationTests {
             2L,
             "补录错误客户",
             "13800132221",
-            LocalDateTime.of(2026, 7, 19, 10, 0),
+            originalRentStartedAt,
             null,
             oldFrameId,
             oldBatteryId,
@@ -911,7 +918,7 @@ class ExternalRentalOrderIntegrationTests {
             2L,
             "仅更正客户资料",
             "13800132220",
-            LocalDateTime.of(2026, 7, 19, 10, 0),
+            originalRentStartedAt,
             null,
             oldFrameId,
             oldBatteryId,
@@ -933,8 +940,8 @@ class ExternalRentalOrderIntegrationTests {
             2L,
             "补录已更正客户",
             "13800132222",
-            LocalDateTime.of(2026, 7, 18, 9, 0),
-            LocalDateTime.of(2026, 8, 18, 9, 0),
+            correctedRentStartedAt,
+            correctedExpectedReturnAt,
             newFrameId,
             newBatteryId,
             new BigDecimal("420.00"),
@@ -971,7 +978,7 @@ class ExternalRentalOrderIntegrationTests {
             2L,
             "已结束订单",
             "13800132223",
-            LocalDateTime.of(2026, 7, 18, 9, 0),
+            correctedRentStartedAt,
             null,
             newFrameId,
             newBatteryId,

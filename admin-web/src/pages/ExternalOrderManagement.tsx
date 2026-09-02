@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { http } from '../services/request';
 import type {
   Asset,
+  ExternalOrderRenewal,
   ExternalRentalOrder,
   ExternalRentalOrderBatchImportResult,
   ExternalOrderPricingBatchResult,
@@ -56,6 +57,12 @@ type ConfirmPricingForm = {
   confirmationMethod: 'WECHAT' | 'PHONE' | 'PAPER' | 'OTHER';
   confirmationReference: string;
   customerConfirmedAt?: Dayjs;
+};
+
+type ManualRenewalForm = {
+  periodEndAt: Dayjs;
+  verificationAmount: number;
+  remark: string;
 };
 
 type CreateForm = {
@@ -117,6 +124,7 @@ const returnStatusOptions = [
 
 export function ExternalOrderManagement({ scope, storeId }: Props) {
   const [orders, setOrders] = useState<ExternalRentalOrder[]>([]);
+  const [renewals, setRenewals] = useState<ExternalOrderRenewal[]>([]);
   const [storeSkus, setStoreSkus] = useState<StoreSku[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -129,6 +137,8 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   const [importOpen, setImportOpen] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [terminateOpen, setTerminateOpen] = useState(false);
+  const [manualRenewalOpen, setManualRenewalOpen] = useState(false);
+  const [manualRenewalOrder, setManualRenewalOrder] = useState<ExternalRentalOrder | null>(null);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [batchPricingOpen, setBatchPricingOpen] = useState(false);
   const [confirmPricingOpen, setConfirmPricingOpen] = useState(false);
@@ -144,6 +154,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   const [createForm] = Form.useForm<CreateForm>();
   const [completeForm] = Form.useForm<CompleteForm>();
   const [terminateForm] = Form.useForm<TerminateForm>();
+  const [manualRenewalForm] = Form.useForm<ManualRenewalForm>();
   const [pricingForm] = Form.useForm<PricingForm>();
   const [batchPricingForm] = Form.useForm<PricingForm>();
   const [confirmPricingForm] = Form.useForm<ConfirmPricingForm>();
@@ -164,10 +175,15 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     () => selectedStoreSku?.packages.find((item) => item.packageId === selectedPackageId),
     [selectedStoreSku, selectedPackageId]
   );
+  const selectedOrderRenewals = useMemo(
+    () => selectedOrder ? renewals.filter((item) => item.externalOrderId === selectedOrder.id) : [],
+    [renewals, selectedOrder]
+  );
 
   useEffect(() => {
     if (scope === 'merchant' && !storeId) {
       setOrders([]);
+      setRenewals([]);
       setAssets([]);
       setStoreSkus([]);
       return;
@@ -245,7 +261,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       const storeRequest = scope === 'merchant'
         ? http.get<unknown, Store[]>('/api/merchant/workbench/stores')
         : http.get<unknown, Store[]>('/api/admin/stores');
-      const [orderData, storeSkuData, assetData, storeData] = await Promise.all([
+      const [orderData, renewalData, storeSkuData, assetData, storeData] = await Promise.all([
         http.get<unknown, ExternalRentalOrder[]>(orderUrl, {
           params: {
             storeId: scope === 'merchant' ? storeId : filters.storeId,
@@ -260,6 +276,9 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             keyword: filters.keyword
           }
         }),
+        http.get<unknown, ExternalOrderRenewal[]>(`${orderUrl}/renewals`, {
+          params: { storeId: scope === 'merchant' ? storeId : filters.storeId }
+        }),
         http.get<unknown, StoreSku[]>(scope === 'merchant' ? '/api/merchant/products/store-skus' : '/api/admin/products/store-skus', {
           params: scope === 'merchant' ? { storeId } : {}
         }),
@@ -267,6 +286,10 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
         storeRequest
       ]);
       setOrders(orderData);
+      setRenewals(renewalData);
+      setSelectedOrder((current) => current
+        ? orderData.find((item) => item.id === current.id) ?? current
+        : current);
       setSelectedOrderIds((previous) => {
         const visibleOrderIds = new Set(orderData.map((item) => item.id));
         return previous.filter((id) => visibleOrderIds.has(id));
@@ -534,6 +557,48 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
     setTerminateOpen(true);
   }
 
+  function openManualRenewal(record: ExternalRentalOrder) {
+    if (!record.expectedReturnAt) {
+      message.error('当前订单没有预计归还时间，无法确定本次续租起点');
+      return;
+    }
+    manualRenewalForm.resetFields();
+    setManualRenewalOrder(record);
+    setManualRenewalOpen(true);
+  }
+
+  function closeManualRenewal() {
+    setManualRenewalOpen(false);
+    setManualRenewalOrder(null);
+    manualRenewalForm.resetFields();
+  }
+
+  async function submitManualRenewal(values: ManualRenewalForm) {
+    if (!manualRenewalOrder) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const endpoint = scope === 'merchant' ? '/api/merchant/external-orders' : '/api/admin/external-orders';
+      await http.post<unknown, ExternalOrderRenewal>(
+        `${endpoint}/${manualRenewalOrder.id}/manual-renewals`,
+        {
+          expectedPeriodStartAt: dayjs(manualRenewalOrder.expectedReturnAt).format('YYYY-MM-DDTHH:mm:ss'),
+          periodEndAt: values.periodEndAt.format('YYYY-MM-DDTHH:mm:ss'),
+          verificationAmount: values.verificationAmount,
+          remark: values.remark.trim()
+        }
+      );
+      message.success('一次性人工续租已记账，预计归还时间和续租收益已更新');
+      closeManualRenewal();
+      await loadAll();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '一次性人工续租失败，请核对时间和核销金额');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function submitCreate(values: CreateForm) {
     setSubmitting(true);
     try {
@@ -763,7 +828,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             { title: '预计归还', dataIndex: 'expectedReturnAt', width: 170, render: dateText },
             {
               title: '操作',
-              width: 470,
+              width: 570,
               fixed: 'right',
               render: (_, record) => (
                 <Space>
@@ -772,6 +837,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
                   {record.orderStatus === 'ACTIVE' ? (
                     <>
                       <Button size="small" icon={<DollarOutlined />} onClick={() => openPricing(record)}>续租调价</Button>
+                      <Button size="small" type="primary" ghost onClick={() => openManualRenewal(record)}>人工续租</Button>
                       <Button size="small" onClick={() => openComplete(record)}>完结</Button>
                       <Button size="small" danger onClick={() => openTerminate(record)}>提前终止</Button>
                     </>
@@ -797,7 +863,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               )
             }
           ]}
-          scroll={{ x: 2200 }}
+          scroll={{ x: 2300 }}
         />
       </div>
 
@@ -976,6 +1042,89 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       </Modal>
 
       <Modal
+        title="一次性人工续租"
+        open={manualRenewalOpen}
+        onCancel={closeManualRenewal}
+        onOk={() => manualRenewalForm.submit()}
+        okText="确认续租"
+        cancelText="取消"
+        confirmLoading={submitting}
+        width={640}
+        destroyOnHidden
+      >
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Alert
+            type="warning"
+            showIcon
+            message="请按本次实际续租区间和核销毛额记录"
+            description="核销毛额会先按订单冻结费率扣除渠道核销费和平台服务费（当前默认 5% / 3%）；外卖车还会按本次精确租期扣除全租期电池成本，余额再按订单冻结的分润规则分配。本操作只生成一次续租，不修改标准自动续租规则。"
+          />
+          <Descriptions size="small" bordered column={1}>
+            <Descriptions.Item label="补录订单">
+              {manualRenewalOrder ? `${manualRenewalOrder.recordNo} / ${manualRenewalOrder.customerName}` : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="本次续租起点">
+              {preciseDateText(manualRenewalOrder?.expectedReturnAt)}
+            </Descriptions.Item>
+          </Descriptions>
+          <Form form={manualRenewalForm} layout="vertical" onFinish={submitManualRenewal}>
+            <Form.Item
+              name="periodEndAt"
+              label="精确新到期时间"
+              extra="必须晚于当前预计归还时间，时长会直接决定本次电池成本。"
+              rules={[
+                { required: true, message: '请选择本次续租的精确新到期时间' },
+                {
+                  validator: (_, value: Dayjs | undefined) => {
+                    const periodStartAt = manualRenewalOrder?.expectedReturnAt
+                      ? dayjs(manualRenewalOrder.expectedReturnAt)
+                      : null;
+                    if (!value || !periodStartAt || value.isAfter(periodStartAt)) {
+                      return Promise.resolve();
+                    }
+                    return Promise.reject(new Error('新到期时间必须晚于本次续租起点'));
+                  }
+                }
+              ]}
+            >
+              <DatePicker
+                showTime={{ format: 'HH:mm:ss' }}
+                format="YYYY-MM-DD HH:mm:ss"
+                style={{ width: '100%' }}
+                disabledDate={(current) => {
+                  const periodStartAt = manualRenewalOrder?.expectedReturnAt
+                    ? dayjs(manualRenewalOrder.expectedReturnAt)
+                    : null;
+                  return Boolean(periodStartAt && current.endOf('day').isBefore(periodStartAt));
+                }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="verificationAmount"
+              label="本次核销毛额"
+              extra="请填写按订单冻结费率扣除渠道费、平台费和电池成本之前的金额。"
+              rules={[
+                { required: true, message: '请输入本次核销毛额' },
+                { type: 'number', min: 0.01, message: '本次核销毛额必须大于 0' }
+              ]}
+            >
+              <InputNumber min={0.01} precision={2} prefix="¥" style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item
+              name="remark"
+              label="备注"
+              rules={[
+                { required: true, whitespace: true, message: '请填写线下核销或凭证说明' },
+                { max: 255, message: '备注不能超过 255 个字' }
+              ]}
+            >
+              <Input.TextArea rows={3} maxLength={255} showCount placeholder="可填写线下核销凭证、沟通记录或其他说明" />
+            </Form.Item>
+          </Form>
+        </Space>
+      </Modal>
+
+      <Modal
         title="正常完结补录订单"
         open={completeOpen}
         onCancel={() => setCompleteOpen(false)}
@@ -1071,6 +1220,30 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               <Descriptions.Item label="终止原因" span={2}>{selectedOrder.terminationReason || '-'}</Descriptions.Item>
               <Descriptions.Item label="备注" span={2}>{selectedOrder.remark || '-'}</Descriptions.Item>
             </Descriptions>
+            <div>
+              <Typography.Title level={5}>续租记录</Typography.Title>
+              <Table
+                rowKey="id"
+                size="small"
+                dataSource={selectedOrderRenewals}
+                pagination={false}
+                locale={{ emptyText: '暂无续租记录' }}
+                columns={[
+                  { title: '期次', dataIndex: 'periodNo', width: 70 },
+                  { title: '来源', dataIndex: 'renewalSource', width: 90, render: renewalSourceTag },
+                  { title: '续租事件', dataIndex: 'eventNo', width: 180 },
+                  {
+                    title: '续租区间',
+                    width: 310,
+                    render: (_, record) => `${preciseDateText(record.periodStartAt)} 至 ${preciseDateText(record.periodEndAt)}`
+                  },
+                  { title: '核销毛额', dataIndex: 'renewalAmount', width: 110, render: moneyText },
+                  { title: '电池成本', dataIndex: 'batteryCostAmount', width: 110, render: moneyText },
+                  { title: '记账时间', dataIndex: 'occurredAt', width: 170, render: preciseDateText }
+                ]}
+                scroll={{ x: 1040 }}
+              />
+            </div>
             <div>
               <Typography.Title level={5}>操作记录</Typography.Title>
               <Table
@@ -1268,6 +1441,9 @@ function operationText(value?: string | null) {
   if (value === 'RENEWAL_PRICING_ADJUSTMENT') {
     return '续租调价';
   }
+  if (value === 'MANUAL_RENEW') {
+    return '一次性人工续租';
+  }
   if (value === 'COMPLETE') {
     return '正常完结';
   }
@@ -1294,6 +1470,13 @@ function dateText(value?: string | null) {
     return '-';
   }
   return dayjs(value).format('YYYY-MM-DD HH:mm');
+}
+
+function preciseDateText(value?: string | null) {
+  if (!value) {
+    return '-';
+  }
+  return dayjs(value).format('YYYY-MM-DD HH:mm:ss');
 }
 
 function textOrDash(value?: string | null) {
@@ -1491,6 +1674,12 @@ function pricingRevisionTag(value?: string | null) {
   if (value === 'APPLIED') return <Tag color="success">已生效</Tag>;
   if (value === 'PENDING_CUSTOMER_CONFIRMATION') return <Tag color="warning">待客户确认</Tag>;
   if (value === 'CANCELLED') return <Tag>已取消</Tag>;
+  return <Tag>{value || '-'}</Tag>;
+}
+
+function renewalSourceTag(value?: ExternalOrderRenewal['renewalSource'] | null) {
+  if (value === 'MANUAL') return <Tag color="purple">人工</Tag>;
+  if (value === 'SYSTEM') return <Tag color="blue">系统</Tag>;
   return <Tag>{value || '-'}</Tag>;
 }
 

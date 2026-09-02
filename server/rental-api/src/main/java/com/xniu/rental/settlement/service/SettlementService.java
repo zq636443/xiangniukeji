@@ -273,6 +273,7 @@ public class SettlementService {
             original.channelReferralRate(),
             original.investorShareRate()
         );
+        ensureFixedDeductionsCovered(allocation);
         var snapshot = settlementRepository.createSnapshot(new SettlementRuleSnapshot(
             null,
             nextCode("SNP"),
@@ -469,6 +470,7 @@ public class SettlementService {
             matchedRule.channelReferralRate(),
             matchedRule.investorShareRate()
         );
+        ensureFixedDeductionsCovered(allocation);
         var snapshot = new SettlementRuleSnapshot(
             null,
             nextCode("SNP"),
@@ -515,6 +517,17 @@ public class SettlementService {
             null
         );
         return persist ? settlementRepository.createSnapshot(snapshot) : snapshot;
+    }
+
+    private void ensureFixedDeductionsCovered(ProfitSharingCalculator.Allocation allocation) {
+        var remaining = allocation.settlementBaseAmount()
+            .subtract(allocation.channelFeeAmount())
+            .subtract(allocation.platformFeeAmount())
+            .subtract(allocation.batteryCostAmount())
+            .setScale(2, RoundingMode.HALF_UP);
+        if (remaining.signum() < 0) {
+            throw BusinessException.badRequest("核销毛额不足以覆盖渠道费、平台费和全租期电池成本");
+        }
     }
 
     private NormalizedRule normalizeRule(ProfitRuleRequest request, SettlementProfitRule existing) {

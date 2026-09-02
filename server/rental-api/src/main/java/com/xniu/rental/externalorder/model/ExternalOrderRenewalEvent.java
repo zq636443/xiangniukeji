@@ -15,6 +15,9 @@ public record ExternalOrderRenewalEvent(
     BigDecimal batteryCostAmount,
     Long settlementSnapshotId,
     String eventStatus,
+    ExternalOrderRenewalSource renewalSource,
+    Long operatorAccountId,
+    String remark,
     LocalDateTime createdAt,
     LocalDateTime updatedAt
 ) {

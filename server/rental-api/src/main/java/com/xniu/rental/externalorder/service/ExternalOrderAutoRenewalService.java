@@ -1,19 +1,23 @@
 package com.xniu.rental.externalorder.service;
 
+import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.externalorder.model.ExternalOrderOperationType;
+import com.xniu.rental.externalorder.model.ExternalOrderRenewalSource;
 import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
 import com.xniu.rental.externalorder.repository.ExternalOrderRenewalRepository;
 import com.xniu.rental.externalorder.repository.ExternalOrderVerificationRevisionRepository;
 import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
-import com.xniu.rental.product.model.LeaseUnit;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.service.BatteryCostCalculator;
+import com.xniu.rental.settlement.service.ProfitSharingCalculator;
 import com.xniu.rental.settlement.service.SettlementIncomeService;
 import com.xniu.rental.settlement.service.SettlementService;
 import com.xniu.rental.settlement.service.SettlementStatementService;
 import com.xniu.rental.settlement.model.IncomeSourceType;
+import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.model.SnapshotSourceType;
 import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
+import com.xniu.rental.settlement.repository.SettlementRepository;
 import com.xniu.rental.settlement.repository.SettlementStatementRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -42,6 +46,7 @@ public class ExternalOrderAutoRenewalService {
     private final SettlementIncomeService settlementIncomeService;
     private final SettlementStatementService settlementStatementService;
     private final SettlementIncomeRepository settlementIncomeRepository;
+    private final SettlementRepository settlementRepository;
     private final SettlementStatementRepository settlementStatementRepository;
     private final TransactionTemplate transactionTemplate;
 
@@ -54,6 +59,7 @@ public class ExternalOrderAutoRenewalService {
         SettlementIncomeService settlementIncomeService,
         SettlementStatementService settlementStatementService,
         SettlementIncomeRepository settlementIncomeRepository,
+        SettlementRepository settlementRepository,
         SettlementStatementRepository settlementStatementRepository,
         TransactionTemplate transactionTemplate
     ) {
@@ -65,6 +71,7 @@ public class ExternalOrderAutoRenewalService {
         this.settlementIncomeService = settlementIncomeService;
         this.settlementStatementService = settlementStatementService;
         this.settlementIncomeRepository = settlementIncomeRepository;
+        this.settlementRepository = settlementRepository;
         this.settlementStatementRepository = settlementStatementRepository;
         this.transactionTemplate = transactionTemplate;
     }
@@ -112,14 +119,13 @@ public class ExternalOrderAutoRenewalService {
                 revisions
             );
             var sku = productRepository.findSku(order.skuId()).orElseThrow();
-            var periodUnit = LeaseUnit.valueOf(order.renewalUnit());
-            var batteryCost = BatteryCostCalculator.calculate(
+            var batteryCost = BatteryCostCalculator.calculateExactPeriod(
                 sku.batteryCostDailyAmount(),
                 sku.batteryCostMonthlyAmount(),
-                periodUnit,
-                order.renewalValue(),
-                1
+                periodStartAt,
+                periodEndAt
             );
+            ensureFixedDeductionsCovered(order.settlementSnapshotId(), renewalAmount, batteryCost);
             var event = renewalRepository.create(
                 order.id(),
                 nextEventNo(),
@@ -200,7 +206,8 @@ public class ExternalOrderAutoRenewalService {
         var changed = 0;
         var draftMonthsToRegenerate = new LinkedHashSet<String>();
         for (var event : events) {
-            if (!"ACCRUED".equals(event.eventStatus())) {
+            if (!"ACCRUED".equals(event.eventStatus())
+                || event.renewalSource() != ExternalOrderRenewalSource.SYSTEM) {
                 continue;
             }
             var systemAmount = event.systemRenewalAmount() == null
@@ -323,6 +330,36 @@ public class ExternalOrderAutoRenewalService {
 
     private BigDecimal money(BigDecimal value) {
         return value.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private void ensureFixedDeductionsCovered(
+        Long originalSnapshotId,
+        BigDecimal renewalAmount,
+        BigDecimal batteryCost
+    ) {
+        var original = settlementRepository.findSnapshot(originalSnapshotId)
+            .orElseThrow(() -> BusinessException.badRequest("补录订单原始分润快照不存在"));
+        if (original.calculationVersion() != SettlementCalculationVersion.PROFIT_V2) {
+            return;
+        }
+        var allocation = ProfitSharingCalculator.calculate(
+            renewalAmount,
+            original.channelFeeRate(),
+            original.platformFeeRate(),
+            batteryCost,
+            original.storeOperationRate(),
+            original.maintenanceFundRate(),
+            original.channelReferralRate(),
+            original.investorShareRate()
+        );
+        var remaining = allocation.settlementBaseAmount()
+            .subtract(allocation.channelFeeAmount())
+            .subtract(allocation.platformFeeAmount())
+            .subtract(allocation.batteryCostAmount())
+            .setScale(2, RoundingMode.HALF_UP);
+        if (remaining.signum() < 0) {
+            throw BusinessException.badRequest("系统续租金额不足以覆盖渠道费、平台费和全租期电池成本");
+        }
     }
 
     private String nextEventNo() {

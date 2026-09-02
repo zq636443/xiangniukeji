@@ -70,7 +70,7 @@ export type ExternalRentalOrderLog = {
   externalOrderId: number;
   fromStatus?: ExternalRentalOrderStatus | null;
   toStatus: ExternalRentalOrderStatus;
-  operationType: 'CREATE' | 'EDIT' | 'RENEWAL_PRICING_ADJUSTMENT' | 'COMPLETE' | 'TERMINATE';
+  operationType: 'CREATE' | 'EDIT' | 'RENEWAL_PRICING_ADJUSTMENT' | 'MANUAL_RENEW' | 'COMPLETE' | 'TERMINATE';
   operatorAccountId?: number | null;
   remark?: string | null;
   createdAt: string;
@@ -154,6 +154,7 @@ export type ExternalOrderRenewal = {
   periodEndAt: string;
   renewalAmount: number;
   batteryCostAmount: number;
+  renewalSource: 'SYSTEM' | 'MANUAL';
   eventStatus: 'ACCRUED';
   includedInMerchantStatement: boolean;
   occurredAt: string;

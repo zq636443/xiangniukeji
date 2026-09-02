@@ -16,6 +16,9 @@ public record ExternalOrderRenewalResponse(
     BigDecimal renewalAmount,
     BigDecimal batteryCostAmount,
     String eventStatus,
+    String renewalSource,
+    Long operatorAccountId,
+    String remark,
     Boolean includedInMerchantStatement,
     LocalDateTime occurredAt
 ) {

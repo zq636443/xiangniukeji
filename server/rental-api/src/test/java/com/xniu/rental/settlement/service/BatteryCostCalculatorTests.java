@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.xniu.rental.product.model.LeaseUnit;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
 
 class BatteryCostCalculatorTests {
@@ -58,6 +59,32 @@ class BatteryCostCalculatorTests {
         );
 
         assertThat(cost).isEqualByComparingTo("206.80");
+    }
+
+    @Test
+    void exactPeriodShouldUseMonthlyTierAndRemainingElapsedSeconds() {
+        var start = LocalDateTime.of(2026, 8, 1, 10, 0);
+        var cost = BatteryCostCalculator.calculateExactPeriod(
+            new BigDecimal("6.80"),
+            new BigDecimal("200.00"),
+            start,
+            start.plusDays(31)
+        );
+
+        assertThat(cost).isEqualByComparingTo("206.80");
+    }
+
+    @Test
+    void exactPeriodShouldRetainFractionalDayCostUntilFinalRounding() {
+        var start = LocalDateTime.of(2026, 8, 1, 10, 0);
+        var cost = BatteryCostCalculator.calculateExactPeriod(
+            new BigDecimal("6.80"),
+            new BigDecimal("200.00"),
+            start,
+            start.plusDays(20).plusHours(12)
+        );
+
+        assertThat(cost).isEqualByComparingTo("139.40");
     }
 
     @Test

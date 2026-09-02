@@ -15,6 +15,8 @@ import com.xniu.rental.externalorder.dto.ExternalOrderPricingConfirmRequest;
 import com.xniu.rental.externalorder.dto.ExternalOrderPricingPreviewResponse;
 import com.xniu.rental.externalorder.dto.ExternalOrderPricingRevisionResponse;
 import com.xniu.rental.externalorder.dto.ExternalOrderRenewalResponse;
+import com.xniu.rental.externalorder.dto.ExternalOrderManualRenewalRequest;
+import com.xniu.rental.externalorder.service.ExternalOrderManualRenewalService;
 import com.xniu.rental.externalorder.service.ExternalOrderRenewalPricingService;
 import com.xniu.rental.externalorder.service.ExternalRentalOrderService;
 import com.xniu.rental.merchant.service.MerchantService;
@@ -39,15 +41,18 @@ public class MerchantExternalRentalOrderController {
     private final ExternalRentalOrderService externalRentalOrderService;
     private final MerchantService merchantService;
     private final ExternalOrderRenewalPricingService pricingService;
+    private final ExternalOrderManualRenewalService manualRenewalService;
 
     public MerchantExternalRentalOrderController(
         ExternalRentalOrderService externalRentalOrderService,
         MerchantService merchantService,
-        ExternalOrderRenewalPricingService pricingService
+        ExternalOrderRenewalPricingService pricingService,
+        ExternalOrderManualRenewalService manualRenewalService
     ) {
         this.externalRentalOrderService = externalRentalOrderService;
         this.merchantService = merchantService;
         this.pricingService = pricingService;
+        this.manualRenewalService = manualRenewalService;
     }
 
     @GetMapping
@@ -115,6 +120,14 @@ public class MerchantExternalRentalOrderController {
         @Valid @RequestBody ExternalOrderPricingAdjustmentRequest request
     ) {
         return ApiResponse.ok(pricingService.adjust(id, request));
+    }
+
+    @PostMapping("/{id}/manual-renewals")
+    public ApiResponse<ExternalOrderRenewalResponse> createManualRenewal(
+        @PathVariable Long id,
+        @Valid @RequestBody ExternalOrderManualRenewalRequest request
+    ) {
+        return ApiResponse.ok(manualRenewalService.create(id, request));
     }
 
     @PostMapping("/renewal-pricing-revisions/{revisionId}/confirm")

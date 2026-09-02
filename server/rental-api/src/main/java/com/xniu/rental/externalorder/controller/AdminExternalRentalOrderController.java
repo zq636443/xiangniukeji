@@ -15,6 +15,8 @@ import com.xniu.rental.externalorder.dto.ExternalOrderPricingConfirmRequest;
 import com.xniu.rental.externalorder.dto.ExternalOrderPricingPreviewResponse;
 import com.xniu.rental.externalorder.dto.ExternalOrderPricingRevisionResponse;
 import com.xniu.rental.externalorder.dto.ExternalOrderRenewalResponse;
+import com.xniu.rental.externalorder.dto.ExternalOrderManualRenewalRequest;
+import com.xniu.rental.externalorder.service.ExternalOrderManualRenewalService;
 import com.xniu.rental.externalorder.service.ExternalOrderRenewalPricingService;
 import com.xniu.rental.externalorder.service.ExternalRentalOrderService;
 import jakarta.validation.Valid;
@@ -37,13 +39,16 @@ public class AdminExternalRentalOrderController {
 
     private final ExternalRentalOrderService externalRentalOrderService;
     private final ExternalOrderRenewalPricingService pricingService;
+    private final ExternalOrderManualRenewalService manualRenewalService;
 
     public AdminExternalRentalOrderController(
         ExternalRentalOrderService externalRentalOrderService,
-        ExternalOrderRenewalPricingService pricingService
+        ExternalOrderRenewalPricingService pricingService,
+        ExternalOrderManualRenewalService manualRenewalService
     ) {
         this.externalRentalOrderService = externalRentalOrderService;
         this.pricingService = pricingService;
+        this.manualRenewalService = manualRenewalService;
     }
 
     @GetMapping
@@ -112,6 +117,14 @@ public class AdminExternalRentalOrderController {
         @Valid @RequestBody ExternalOrderPricingAdjustmentRequest request
     ) {
         return ApiResponse.ok(pricingService.adjust(id, request));
+    }
+
+    @PostMapping("/{id}/manual-renewals")
+    public ApiResponse<ExternalOrderRenewalResponse> createManualRenewal(
+        @PathVariable Long id,
+        @Valid @RequestBody ExternalOrderManualRenewalRequest request
+    ) {
+        return ApiResponse.ok(manualRenewalService.create(id, request));
     }
 
     @PostMapping("/renewal-pricing-revisions/{revisionId}/confirm")

@@ -1,6 +1,7 @@
 package com.xniu.rental.externalorder.repository;
 
 import com.xniu.rental.externalorder.model.ExternalOrderRenewalEvent;
+import com.xniu.rental.externalorder.model.ExternalOrderRenewalSource;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
@@ -61,13 +62,42 @@ public class ExternalOrderRenewalRepository {
         java.math.BigDecimal systemRenewalAmount,
         java.math.BigDecimal batteryCostAmount
     ) {
+        return create(
+            externalOrderId,
+            eventNo,
+            periodNo,
+            periodStartAt,
+            periodEndAt,
+            renewalAmount,
+            systemRenewalAmount,
+            batteryCostAmount,
+            ExternalOrderRenewalSource.SYSTEM,
+            null,
+            null
+        );
+    }
+
+    public ExternalOrderRenewalEvent create(
+        Long externalOrderId,
+        String eventNo,
+        int periodNo,
+        LocalDateTime periodStartAt,
+        LocalDateTime periodEndAt,
+        java.math.BigDecimal renewalAmount,
+        java.math.BigDecimal systemRenewalAmount,
+        java.math.BigDecimal batteryCostAmount,
+        ExternalOrderRenewalSource renewalSource,
+        Long operatorAccountId,
+        String remark
+    ) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             var statement = connection.prepareStatement("""
                 INSERT INTO external_order_renewal_event
                 (external_order_id, event_no, period_no, period_start_at, period_end_at,
-                 renewal_amount, system_renewal_amount, battery_cost_amount, event_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACCRUED')
+                 renewal_amount, system_renewal_amount, battery_cost_amount, event_status,
+                 renewal_source, operator_account_id, remark)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACCRUED', ?, ?, ?)
                 """, new String[] {"id"});
             statement.setLong(1, externalOrderId);
             statement.setString(2, eventNo);
@@ -77,6 +107,13 @@ public class ExternalOrderRenewalRepository {
             statement.setBigDecimal(6, renewalAmount);
             statement.setBigDecimal(7, systemRenewalAmount);
             statement.setBigDecimal(8, batteryCostAmount);
+            statement.setString(9, renewalSource.name());
+            if (operatorAccountId == null) {
+                statement.setObject(10, null);
+            } else {
+                statement.setLong(10, operatorAccountId);
+            }
+            statement.setString(11, remark);
             return statement;
         }, keyHolder);
         return findById(keyHolder.getKey().longValue()).orElseThrow();
@@ -351,6 +388,9 @@ public class ExternalOrderRenewalRepository {
                 rs.getBigDecimal("battery_cost_amount"),
                 nullableLong(rs, "settlement_snapshot_id"),
                 rs.getString("event_status"),
+                ExternalOrderRenewalSource.valueOf(rs.getString("renewal_source")),
+                nullableLong(rs, "operator_account_id"),
+                rs.getString("remark"),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class)
             );
