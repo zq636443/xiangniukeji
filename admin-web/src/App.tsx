@@ -644,7 +644,7 @@ function renderPage(
       case 'merchantOrders':
         return <MerchantOrderWorkspace account={account} storeId={activeStoreId} stores={merchantStores} />;
       case 'merchantExternalOrders':
-        return <ExternalOrderManagement scope="merchant" storeId={activeStoreId} />;
+        return <ExternalOrderManagement account={account} scope="merchant" storeId={activeStoreId} />;
       case 'merchantAssets':
         return <MerchantAssetWorkspace account={account} storeId={activeStoreId} stores={merchantStores} />;
       case 'merchantSpareParts':
@@ -695,7 +695,7 @@ function renderPage(
     case 'orders':
       return <OrderManagement />;
     case 'externalOrders':
-      return <ExternalOrderManagement scope="admin" />;
+      return <ExternalOrderManagement account={account} scope="admin" />;
     case 'bills':
       return <BillManagement />;
     case 'payments':
@@ -723,7 +723,7 @@ function renderPage(
     case 'ops':
       return <OpsManagement />;
     default:
-      return <Dashboard />;
+      return <Dashboard account={account} />;
   }
 }
 

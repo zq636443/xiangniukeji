@@ -930,7 +930,9 @@ export function AssetManagement({ account, mode = 'all' }: AssetManagementProps)
 
       <Modal title="状态变更" open={statusOpen} onCancel={() => setStatusOpen(false)} onOk={() => statusForm.submit()} destroyOnHidden>
         <Form form={statusForm} layout="vertical" onFinish={submitStatus}>
-          <Form.Item name="status" label="资产状态" rules={[{ required: true, message: '请选择状态' }]}><Select options={assetStatusOptions} /></Form.Item>
+          <Form.Item name="status" label="资产状态" rules={[{ required: true, message: '请选择状态' }]}>
+            <Select options={assetStatusOptions.filter((item) => item.value !== 'RENTING')} />
+          </Form.Item>
           <Form.Item name="remark" label="备注"><Input /></Form.Item>
         </Form>
       </Modal>

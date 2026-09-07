@@ -864,7 +864,7 @@ class ExternalRentalOrderIntegrationTests {
     }
 
     @Test
-    void editingActiveExternalOrderShouldReleaseOldAssetsAndOccupyNewAssets() {
+    void editingActiveExternalOrderShouldRequireDedicatedAssetReplacement() {
         var suffix = String.valueOf(System.nanoTime());
         // Keep this asset-editing fixture active regardless of the wall-clock
         // date on which the suite runs. Static 2026-07 dates eventually made
@@ -933,7 +933,9 @@ class ExternalRentalOrderIntegrationTests {
         assertThat(assetStatus(oldFrameId)).isEqualTo("RENTING");
         assertThat(assetStatus(oldBatteryId)).isEqualTo("RENTING");
 
-        var updated = externalRentalOrderService.updateOrder(sameAssetsUpdated.id(), new ExternalRentalOrderUpdateRequest(
+        assertThatThrownBy(() -> externalRentalOrderService.updateOrder(
+            sameAssetsUpdated.id(),
+            new ExternalRentalOrderUpdateRequest(
             "MEITUAN",
             "EDIT-AFTER-" + suffix,
             1L,
@@ -949,21 +951,16 @@ class ExternalRentalOrderIntegrationTests {
             new BigDecimal("35.00"),
             new BigDecimal("50.00"),
             "修改后"
-        ));
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("更换资产”专用操作");
 
-        assertThat(updated.sourcePlatform()).isEqualTo("MEITUAN");
-        assertThat(updated.externalOrderNo()).isEqualTo("EDIT-AFTER-" + suffix);
-        assertThat(updated.customerName()).isEqualTo("补录已更正客户");
-        assertThat(updated.verificationAmount()).isEqualByComparingTo("388.88");
-        assertThat(updated.frameAssetId()).isEqualTo(newFrameId);
-        assertThat(updated.batteryAssetId()).isEqualTo(newBatteryId);
-        assertThat(updated.logs()).extracting("operationType").contains("CREATE", "EDIT");
-        assertThat(assetStatus(oldFrameId)).isEqualTo("IDLE");
-        assertThat(assetStatus(oldBatteryId)).isEqualTo("IDLE");
-        assertThat(assetStatus(newFrameId)).isEqualTo("RENTING");
-        assertThat(assetStatus(newBatteryId)).isEqualTo("RENTING");
+        assertThat(assetStatus(oldFrameId)).isEqualTo("RENTING");
+        assertThat(assetStatus(oldBatteryId)).isEqualTo("RENTING");
+        assertThat(assetStatus(newFrameId)).isEqualTo("IDLE");
+        assertThat(assetStatus(newBatteryId)).isEqualTo("IDLE");
 
-        var terminated = externalRentalOrderService.terminate(updated.id(), new ExternalRentalOrderTerminateRequest(
+        var terminated = externalRentalOrderService.terminate(sameAssetsUpdated.id(), new ExternalRentalOrderTerminateRequest(
             1L,
             "IDLE",
             "IDLE",
@@ -971,21 +968,21 @@ class ExternalRentalOrderIntegrationTests {
             null
         ));
 
-        var closedUpdated = externalRentalOrderService.updateOrder(updated.id(), new ExternalRentalOrderUpdateRequest(
+        var closedUpdated = externalRentalOrderService.updateOrder(sameAssetsUpdated.id(), new ExternalRentalOrderUpdateRequest(
             "OFFLINE",
             "EDIT-CLOSED-" + suffix,
             1L,
             2L,
             "已结束订单",
             "13800132223",
-            correctedRentStartedAt,
+            originalRentStartedAt,
             null,
-            newFrameId,
-            newBatteryId,
-            new BigDecimal("420.00"),
+            oldFrameId,
+            oldBatteryId,
+            sameAssetsUpdated.externalRentalAmount(),
             new BigDecimal("399.99"),
-            new BigDecimal("35.00"),
-            new BigDecimal("50.00"),
+            sameAssetsUpdated.signFeeAmount(),
+            sameAssetsUpdated.depositAmount(),
             "已结束后修正"
         ));
 
@@ -997,14 +994,14 @@ class ExternalRentalOrderIntegrationTests {
         // edit is recorded as a future renewal override only.
         assertThat(closedUpdated.settlementSnapshotId()).isEqualTo(terminated.settlementSnapshotId());
         assertThat(closedUpdated.settlementBaseAmount()).isEqualByComparingTo(terminated.settlementBaseAmount());
-        assertThat(assetStatus(newFrameId)).isEqualTo("IDLE");
-        assertThat(assetStatus(newBatteryId)).isEqualTo("IDLE");
+        assertThat(assetStatus(oldFrameId)).isEqualTo("IDLE");
+        assertThat(assetStatus(oldBatteryId)).isEqualTo("IDLE");
         assertThat(jdbcTemplate.queryForObject("""
             SELECT COUNT(1)
             FROM settlement_income_entry
             WHERE source_type = 'EXTERNAL_ORDER' AND source_id = ?
-            """, Integer.class, updated.id())).isZero();
-        assertThatThrownBy(() -> externalRentalOrderService.updateOrder(updated.id(), new ExternalRentalOrderUpdateRequest(
+            """, Integer.class, sameAssetsUpdated.id())).isZero();
+        assertThatThrownBy(() -> externalRentalOrderService.updateOrder(sameAssetsUpdated.id(), new ExternalRentalOrderUpdateRequest(
             closedUpdated.sourcePlatform(),
             closedUpdated.externalOrderNo(),
             closedUpdated.storeSkuId(),

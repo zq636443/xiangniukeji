@@ -1,6 +1,7 @@
 import { Alert, DatePicker, Descriptions, Form, Input, InputNumber, Modal, Select, Space, Table, Typography, message } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
+import { ExternalOrderAssetReplacementModal } from './ExternalOrderAssetReplacementModal';
 import { http } from '../services/request';
 import type { Asset, ExternalRentalOrder, RentalOrder, StoreSku } from '../types/api';
 import { storeOrderFeeNetAmount } from '../utils/storeRevenue';
@@ -12,10 +13,12 @@ export type DashboardBusinessRecord =
 type Props = {
   detailRecord: DashboardBusinessRecord | null;
   editingRecord: DashboardBusinessRecord | null;
+  replacementOrder: ExternalRentalOrder | null;
   storeSkus: StoreSku[];
   assets: Asset[];
   onCloseDetail: () => void;
   onCloseEdit: () => void;
+  onCloseReplacement: () => void;
   onUpdated: () => Promise<void> | void;
 };
 
@@ -205,6 +208,8 @@ export function BusinessOrderDialogs(props: Props) {
       message.success('订单资料、账单和分润快照已同步更新');
       props.onCloseEdit();
       await props.onUpdated();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '正式订单保存失败');
     } finally {
       setSubmitting(false);
     }
@@ -224,6 +229,8 @@ export function BusinessOrderDialogs(props: Props) {
         : '已结束补录订单资料已更新；首期分润保持原快照，终态不会再产生后续续租收益');
       props.onCloseEdit();
       await props.onUpdated();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '补录订单保存失败');
     } finally {
       setSubmitting(false);
     }
@@ -324,8 +331,8 @@ export function BusinessOrderDialogs(props: Props) {
                 externalForm.setFieldsValue({
                   packageId: nextPackage?.packageId,
                   leaseMultiplier: 1,
-                  frameAssetId: undefined,
-                  batteryAssetId: undefined,
+                  frameAssetId: externalOrder?.frameAssetId ?? undefined,
+                  batteryAssetId: externalOrder?.batteryAssetId ?? undefined,
                   signFeeAmount: Number(nextStoreSku?.signFeeAmount || 0),
                   externalRentalAmount: Number(nextPackage?.rentalAmount || 0),
                   verificationAmount: Number(nextPackage?.rentalAmount || 0),
@@ -377,12 +384,21 @@ export function BusinessOrderDialogs(props: Props) {
             <Form.Item name="depositAmount" label="押金" style={{ flex: 1 }}><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item>
           </Space>
           <Space size={12} style={{ width: '100%' }} align="start">
-            {externalStoreSku?.needFrameAsset !== false ? <Form.Item name="frameAssetId" label="主资产（不限类型）" rules={externalStoreSku?.needFrameAsset ? [{ required: true, message: '请选择主资产' }] : undefined} style={{ flex: 1 }}><Select showSearch allowClear optionFilterProp="label" options={externalFrameOptions} /></Form.Item> : null}
-            {externalStoreSku?.needBatteryAsset !== false ? <Form.Item name="batteryAssetId" label="第二资产（不限类型）" rules={externalStoreSku?.needBatteryAsset ? [{ required: true, message: '请选择第二资产' }] : undefined} style={{ flex: 1 }}><Select showSearch allowClear optionFilterProp="label" options={externalBatteryOptions} /></Form.Item> : null}
+            {externalStoreSku?.needFrameAsset !== false ? <Form.Item name="frameAssetId" label="主资产（不限类型）" rules={externalStoreSku?.needFrameAsset ? [{ required: true, message: '请选择主资产' }] : undefined} style={{ flex: 1 }}><Select showSearch allowClear disabled optionFilterProp="label" options={externalFrameOptions} /></Form.Item> : null}
+            {externalStoreSku?.needBatteryAsset !== false ? <Form.Item name="batteryAssetId" label="第二资产（不限类型）" rules={externalStoreSku?.needBatteryAsset ? [{ required: true, message: '请选择第二资产' }] : undefined} style={{ flex: 1 }}><Select showSearch allowClear disabled optionFilterProp="label" options={externalBatteryOptions} /></Form.Item> : null}
           </Space>
+          <Typography.Text type="secondary">补录订单的资产变更请使用业务明细中的“更换资产”，系统会保留更换时间和历史归属。</Typography.Text>
           <Form.Item name="remark" label="备注"><Input.TextArea rows={3} /></Form.Item>
         </Form>
       </Modal>
+
+      <ExternalOrderAssetReplacementModal
+        scope="admin"
+        order={props.replacementOrder}
+        assets={props.assets}
+        onClose={props.onCloseReplacement}
+        onReplaced={props.onUpdated}
+      />
     </>
   );
 }
@@ -479,7 +495,7 @@ function ExternalOrderDetail({ order }: { order: ExternalRentalOrder }) {
       <div>
         <Typography.Title level={5}>操作记录</Typography.Title>
         <Table rowKey="id" size="small" dataSource={order.logs} pagination={false} locale={{ emptyText: '暂无操作记录' }} columns={[
-          { title: '操作', dataIndex: 'operationType' },
+          { title: '操作', dataIndex: 'operationType', render: externalOperationText },
           { title: '原状态', dataIndex: 'fromStatus', render: externalStatusText },
           { title: '新状态', dataIndex: 'toStatus', render: externalStatusText },
           { title: '备注', dataIndex: 'remark', render: textOrDash },
@@ -492,6 +508,19 @@ function ExternalOrderDetail({ order }: { order: ExternalRentalOrder }) {
 
 function canEditFormalOrder(order: RentalOrder) {
   return order.orderStatus === 'PENDING_PAYMENT' && Number(order.paidAmount || 0) === 0;
+}
+
+function externalOperationText(value?: string | null) {
+  const labels: Record<string, string> = {
+    CREATE: '创建',
+    EDIT: '编辑',
+    REPLACE_ASSET: '更换资产',
+    RENEWAL_PRICING_ADJUSTMENT: '续租调价',
+    MANUAL_RENEW: '一次性人工续租',
+    COMPLETE: '正常完结',
+    TERMINATE: '提前终止'
+  };
+  return value ? labels[value] || value : '-';
 }
 
 function formalEditDisabledReason(order: RentalOrder) {

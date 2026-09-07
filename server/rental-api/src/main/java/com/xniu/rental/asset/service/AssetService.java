@@ -162,14 +162,14 @@ public class AssetService {
     public AssetResponse updateAsset(Long assetId, AssetUpdateRequest request) {
         authorizationService.requirePermission("asset.manage");
         authorizationService.requirePlatformAccount();
-        return updateAssetInternal(ensureAssetExists(assetId), request);
+        return updateAssetInternal(ensureAssetExistsForUpdate(assetId), request);
     }
 
     @Transactional
     public AssetResponse updateMerchantAsset(Long storeId, Long assetId, AssetUpdateRequest request) {
         authorizationService.requirePermission("asset.manage");
         var store = requireActiveAccessibleStore(storeId);
-        var asset = ensureAssetExists(assetId);
+        var asset = ensureAssetExistsForUpdate(assetId);
         if (!store.merchantId().equals(asset.currentMerchantId()) || !store.id().equals(asset.currentStoreId())) {
             throw BusinessException.forbidden("只能编辑当前门店的资产");
         }
@@ -180,14 +180,14 @@ public class AssetService {
     public void deleteAsset(Long assetId) {
         authorizationService.requirePermission("asset.manage");
         authorizationService.requirePlatformAccount();
-        deleteAssetInternal(ensureAssetExists(assetId));
+        deleteAssetInternal(ensureAssetExistsForUpdate(assetId));
     }
 
     @Transactional
     public void deleteMerchantAsset(Long storeId, Long assetId) {
         authorizationService.requirePermission("asset.manage");
         var store = requireActiveAccessibleStore(storeId);
-        var asset = ensureAssetExists(assetId);
+        var asset = ensureAssetExistsForUpdate(assetId);
         if (!store.merchantId().equals(asset.currentMerchantId()) || !store.id().equals(asset.currentStoreId())) {
             throw BusinessException.forbidden("只能删除当前门店的资产");
         }
@@ -209,7 +209,7 @@ public class AssetService {
     @Transactional
     public AssetResponse transferAsset(Long assetId, AssetTransferRequest request) {
         authorizationService.requirePermission("asset.operate");
-        var asset = ensureAssetExists(assetId);
+        var asset = ensureAssetExistsForUpdate(assetId);
         ensureAssetStoreAccess(asset);
         ensureStoreBelongsToMerchant(request.merchantId(), request.storeId());
         authorizationService.requireStoreAccess(request.merchantId(), request.storeId());
@@ -220,7 +220,7 @@ public class AssetService {
     public AssetResponse transferMerchantAsset(Long sourceStoreId, Long assetId, AssetTransferRequest request) {
         authorizationService.requirePermission("asset.operate");
         var sourceStore = requireActiveAccessibleStore(sourceStoreId);
-        var asset = ensureAssetExists(assetId);
+        var asset = ensureAssetExistsForUpdate(assetId);
         if (!sourceStore.merchantId().equals(asset.currentMerchantId()) || !sourceStore.id().equals(asset.currentStoreId())) {
             throw BusinessException.forbidden("只能调拨当前门店的资产");
         }
@@ -248,11 +248,17 @@ public class AssetService {
     @Transactional
     public AssetResponse updateAssetStatus(Long assetId, AssetStatusRequest request) {
         authorizationService.requirePermission("asset.operate");
-        var asset = ensureAssetExists(assetId);
+        var asset = ensureAssetExistsForUpdate(assetId);
         ensureAssetStoreAccess(asset);
         var nextStatus = parseAssetStatus(request.status());
+        if (asset.status() == AssetStatus.RENTING) {
+            throw BusinessException.badRequest("租赁中的资产不能手工变更状态");
+        }
         if (asset.status() == AssetStatus.SCRAPPED || asset.status() == AssetStatus.SOLD) {
             throw BusinessException.badRequest("已报废或已售出的资产不能继续变更状态");
+        }
+        if (nextStatus == AssetStatus.RENTING) {
+            throw BusinessException.badRequest("租赁中状态只能由订单履约自动更新");
         }
         var updated = assetRepository.updateStatus(assetId, nextStatus, LocalDateTime.now());
         assetRepository.insertStatusLog(
@@ -268,7 +274,7 @@ public class AssetService {
     @Transactional
     public AssetResponse changeInvestor(Long assetId, AssetInvestorChangeRequest request) {
         authorizationService.requirePermission("asset.operate");
-        var asset = ensureAssetExists(assetId);
+        var asset = ensureAssetExistsForUpdate(assetId);
         ensureAssetStoreAccess(asset);
         ensureInvestorExists(request.investorId());
         if (asset.status() == AssetStatus.RENTING) {
@@ -350,7 +356,7 @@ public class AssetService {
     public AssetResponse updateInvestorAsset(Long assetId, InvestorAssetUpdateRequest request) {
         authorizationService.requirePermission("asset.manage");
         var investorId = currentInvestorId();
-        var asset = ensureInvestorOwnedAsset(assetId, investorId);
+        var asset = ensureInvestorOwnedAssetForUpdate(assetId, investorId);
         return updateAssetInternal(asset, new AssetUpdateRequest(
             request.assetTypeId(),
             request.serialNo(),
@@ -365,7 +371,7 @@ public class AssetService {
     @Transactional
     public AssetResponse transferInvestorAsset(Long assetId, AssetTransferRequest request) {
         authorizationService.requirePermission("asset.operate");
-        var asset = ensureInvestorOwnedAsset(assetId, currentInvestorId());
+        var asset = ensureInvestorOwnedAssetForUpdate(assetId, currentInvestorId());
         ensureStoreBelongsToMerchant(request.merchantId(), request.storeId());
         return transferAssetInternal(asset, request.merchantId(), request.storeId(), request.remark());
     }
@@ -373,7 +379,7 @@ public class AssetService {
     @Transactional
     public AssetResponse updateInvestorAssetStatus(Long assetId, AssetStatusRequest request) {
         authorizationService.requirePermission("asset.operate");
-        var asset = ensureInvestorOwnedAsset(assetId, currentInvestorId());
+        var asset = ensureInvestorOwnedAssetForUpdate(assetId, currentInvestorId());
         if (asset.status() == AssetStatus.RENTING) {
             throw BusinessException.badRequest("租赁中的资产不能手工变更状态");
         }
@@ -398,7 +404,7 @@ public class AssetService {
     @Transactional
     public void deleteInvestorAsset(Long assetId) {
         authorizationService.requirePermission("asset.manage");
-        deleteAssetInternal(ensureInvestorOwnedAsset(assetId, currentInvestorId()));
+        deleteAssetInternal(ensureInvestorOwnedAssetForUpdate(assetId, currentInvestorId()));
     }
 
     public List<AssetMerchantOptionResponse> listInvestorMerchantOptions() {
@@ -423,8 +429,19 @@ public class AssetService {
         return assetRepository.findById(assetId).orElseThrow(() -> BusinessException.badRequest("资产不存在"));
     }
 
-    private AssetItem ensureInvestorOwnedAsset(Long assetId, Long investorId) {
-        var asset = ensureAssetExists(assetId);
+    /**
+     * Every asset mutation must validate against the current locked row.  In
+     * particular, an editor that observed IDLE before a concurrent order
+     * replacement must not wake up afterwards and overwrite the new RENTING
+     * status, investor or location (or delete the now-bound asset).
+     */
+    private AssetItem ensureAssetExistsForUpdate(Long assetId) {
+        return assetRepository.findByIdForUpdate(assetId)
+            .orElseThrow(() -> BusinessException.badRequest("资产不存在"));
+    }
+
+    private AssetItem ensureInvestorOwnedAssetForUpdate(Long assetId, Long investorId) {
+        var asset = ensureAssetExistsForUpdate(assetId);
         if (!investorId.equals(asset.investorId())) {
             throw BusinessException.forbidden("只能操作当前出资方名下的资产");
         }

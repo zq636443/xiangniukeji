@@ -19,4 +19,11 @@ http.interceptors.response.use((response) => {
     return body.data as never;
   }
   return Promise.reject(new Error(body?.message || '请求失败'));
+}, (error: unknown) => {
+  if (!axios.isAxiosError(error)) {
+    return Promise.reject(error);
+  }
+  const body = error.response?.data as { message?: string; error?: string } | string | undefined;
+  const serverMessage = typeof body === 'string' ? body : body?.message || body?.error;
+  return Promise.reject(new Error(serverMessage || error.message || '请求失败'));
 });

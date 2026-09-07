@@ -13,6 +13,9 @@ import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.externalorder.model.ExternalRentalOrder;
 import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
 import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
+import com.xniu.rental.externalorder.repository.ExternalOrderRenewalAllocationRepository;
+import com.xniu.rental.externalorder.repository.ExternalOrderAssetChangeRepository;
+import com.xniu.rental.externalorder.repository.ExternalOrderInitialInvestorAllocationRepository;
 import com.xniu.rental.merchant.repository.StoreRepository;
 import com.xniu.rental.order.repository.OrderRepository;
 import com.xniu.rental.settlement.dto.SettlementEntryGenerateResponse;
@@ -50,6 +53,8 @@ public class SettlementIncomeService {
     private final AssetFulfillmentRepository assetFulfillmentRepository;
     private final StoreRepository storeRepository;
     private final ExternalRentalOrderRepository externalRentalOrderRepository;
+    private final ExternalOrderAssetChangeRepository externalOrderAssetChangeRepository;
+    private final ExternalOrderInitialInvestorAllocationRepository externalOrderInitialInvestorAllocationRepository;
     private final AuthorizationService authorizationService;
 
     public SettlementIncomeService(
@@ -61,6 +66,8 @@ public class SettlementIncomeService {
         AssetFulfillmentRepository assetFulfillmentRepository,
         StoreRepository storeRepository,
         ExternalRentalOrderRepository externalRentalOrderRepository,
+        ExternalOrderAssetChangeRepository externalOrderAssetChangeRepository,
+        ExternalOrderInitialInvestorAllocationRepository externalOrderInitialInvestorAllocationRepository,
         AuthorizationService authorizationService
     ) {
         this.incomeRepository = incomeRepository;
@@ -71,6 +78,8 @@ public class SettlementIncomeService {
         this.assetFulfillmentRepository = assetFulfillmentRepository;
         this.storeRepository = storeRepository;
         this.externalRentalOrderRepository = externalRentalOrderRepository;
+        this.externalOrderAssetChangeRepository = externalOrderAssetChangeRepository;
+        this.externalOrderInitialInvestorAllocationRepository = externalOrderInitialInvestorAllocationRepository;
         this.authorizationService = authorizationService;
     }
 
@@ -176,10 +185,10 @@ public class SettlementIncomeService {
          * this transaction commits, including the terminated-order cleanup
          * branch below.
          */
-        if (incomeRepository.hasNonPendingBySourceForUpdate(
-            IncomeSourceType.EXTERNAL_ORDER,
-            lockedOrder.id()
-        )) {
+        var existingEntries = incomeRepository.listBySourceForUpdate(
+            IncomeSourceType.EXTERNAL_ORDER, lockedOrder.id()
+        );
+        if (existingEntries.stream().anyMatch(entry -> entry.entryStatus() != IncomeEntryStatus.PENDING)) {
             throw BusinessException.badRequest("补录订单收益已结算或冻结，不能重建");
         }
         if (lockedOrder.orderStatus() == ExternalRentalOrderStatus.TERMINATED) {
@@ -194,6 +203,7 @@ public class SettlementIncomeService {
         if (snapshot.sourceType() != SnapshotSourceType.EXTERNAL_ORDER || !lockedOrder.id().equals(snapshot.sourceId())) {
             throw BusinessException.badRequest("补录订单与分润快照不匹配");
         }
+        var frozenInvestorAllocations = preserveExternalOrderInvestorAllocations(lockedOrder, snapshot);
         incomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_ORDER, lockedOrder.id());
         return createEntries(snapshot, new IncomeSource(
             IncomeSourceType.EXTERNAL_ORDER,
@@ -203,7 +213,7 @@ public class SettlementIncomeService {
             lockedOrder.createdAt() == null ? LocalDateTime.now() : lockedOrder.createdAt(),
             lockedOrder.signFeeAmount(),
             snapshot.settlementBaseAmount()
-        )).size();
+        ), frozenInvestorAllocations).size();
     }
 
     @Transactional
@@ -213,6 +223,20 @@ public class SettlementIncomeService {
         Long snapshotId,
         LocalDateTime occurredAt,
         BigDecimal renewalAmount
+    ) {
+        return createExternalRenewalEntries(
+            eventId, eventNo, snapshotId, occurredAt, renewalAmount, List.of()
+        );
+    }
+
+    @Transactional
+    public int createExternalRenewalEntries(
+        Long eventId,
+        String eventNo,
+        Long snapshotId,
+        LocalDateTime occurredAt,
+        BigDecimal renewalAmount,
+        List<ExternalOrderRenewalAllocationRepository.InvestorAllocationTotal> investorAllocations
     ) {
         var snapshot = settlementRepository.findSnapshot(snapshotId)
             .orElseThrow(() -> BusinessException.badRequest("补录续租分润快照不存在"));
@@ -227,7 +251,40 @@ public class SettlementIncomeService {
             occurredAt,
             BigDecimal.ZERO,
             renewalAmount
-        )).size();
+        ), investorAllocations).size();
+    }
+
+    @Transactional
+    public int createExternalRenewalInvestorEntries(
+        Long eventId,
+        String eventNo,
+        Long snapshotId,
+        LocalDateTime occurredAt,
+        List<ExternalOrderRenewalAllocationRepository.InvestorAllocationTotal> investorAllocations
+    ) {
+        var snapshot = settlementRepository.findSnapshot(snapshotId)
+            .orElseThrow(() -> BusinessException.badRequest("补录续租分润快照不存在"));
+        if (snapshot.sourceType() != SnapshotSourceType.EXTERNAL_RENEWAL || !eventId.equals(snapshot.sourceId())) {
+            throw BusinessException.badRequest("补录续租事件与分润快照不匹配");
+        }
+        var source = new IncomeSource(
+            IncomeSourceType.EXTERNAL_RENEWAL,
+            eventId,
+            eventNo,
+            null,
+            occurredAt,
+            BigDecimal.ZERO,
+            snapshot.rentalAmount()
+        );
+        var lineType = snapshot.calculationVersion().usesProfitSharing()
+            ? IncomeLineType.INVESTOR_SHARE
+            : IncomeLineType.INVESTOR_NET_RENT;
+        var created = new ArrayList<SettlementIncomeEntry>();
+        for (var allocation : investorAllocations) {
+            add(created, snapshot, source, IncomeBeneficiaryType.INVESTOR, allocation.investorId(),
+                lineType, allocation.investorShareAmount(), "出资方分润（按资产有效时长）");
+        }
+        return created.size();
     }
 
     @Transactional
@@ -251,13 +308,25 @@ public class SettlementIncomeService {
     }
 
     private List<SettlementIncomeEntry> createEntries(SettlementRuleSnapshot snapshot, IncomeSource source) {
-        if (snapshot.calculationVersion().usesProfitSharing()) {
-            return createProfitV2Entries(snapshot, source);
-        }
-        return createLegacyEntries(snapshot, source);
+        return createEntries(snapshot, source, List.of());
     }
 
-    private List<SettlementIncomeEntry> createProfitV2Entries(SettlementRuleSnapshot snapshot, IncomeSource source) {
+    private List<SettlementIncomeEntry> createEntries(
+        SettlementRuleSnapshot snapshot,
+        IncomeSource source,
+        List<ExternalOrderRenewalAllocationRepository.InvestorAllocationTotal> investorAllocations
+    ) {
+        if (snapshot.calculationVersion().usesProfitSharing()) {
+            return createProfitV2Entries(snapshot, source, investorAllocations);
+        }
+        return createLegacyEntries(snapshot, source, investorAllocations);
+    }
+
+    private List<SettlementIncomeEntry> createProfitV2Entries(
+        SettlementRuleSnapshot snapshot,
+        IncomeSource source,
+        List<ExternalOrderRenewalAllocationRepository.InvestorAllocationTotal> investorAllocations
+    ) {
         var created = new ArrayList<SettlementIncomeEntry>();
         var allocation = source.sourceType() == IncomeSourceType.BILL
             || source.sourceType() == IncomeSourceType.EXTERNAL_RENEWAL
@@ -284,7 +353,7 @@ public class SettlementIncomeService {
         add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.STORE_OPERATION_SHARE, storeOperationAmount, "门店运营分润");
         add(created, snapshot, source, IncomeBeneficiaryType.MERCHANT, snapshot.storeId(), IncomeLineType.MAINTENANCE_FUND_SHARE, maintenanceFundAmount, "门店维修分润");
         add(created, snapshot, source, IncomeBeneficiaryType.CHANNEL, PLATFORM_BENEFICIARY_ID, IncomeLineType.CHANNEL_REFERRAL_SHARE, channelReferralAmount, snapshot.sourceChannel() + "渠道引流分润");
-        addV2InvestorEntries(created, snapshot, source, investorShareAmount);
+        addV2InvestorEntries(created, snapshot, source, investorShareAmount, investorAllocations);
         if (source.signFeeAmount().signum() > 0) {
             var remark = source.sourceType() == IncomeSourceType.EXTERNAL_ORDER ? "补录订单签单费" : "签单费实收";
             var orderFeeAllocation = ProfitSharingCalculator.calculateOrderFee(source.signFeeAmount());
@@ -296,7 +365,11 @@ public class SettlementIncomeService {
         return created;
     }
 
-    private List<SettlementIncomeEntry> createLegacyEntries(SettlementRuleSnapshot snapshot, IncomeSource source) {
+    private List<SettlementIncomeEntry> createLegacyEntries(
+        SettlementRuleSnapshot snapshot,
+        IncomeSource source,
+        List<ExternalOrderRenewalAllocationRepository.InvestorAllocationTotal> investorAllocations
+    ) {
         var created = new ArrayList<SettlementIncomeEntry>();
         var actualSource = source.sourceType() != IncomeSourceType.ORDER;
         var orderFeeAllocation = actualSource
@@ -323,7 +396,16 @@ public class SettlementIncomeService {
         if (!actualSource) {
             add(created, snapshot, source, IncomeBeneficiaryType.PLATFORM, PLATFORM_BENEFICIARY_ID, IncomeLineType.MAINTENANCE_FEE, totalMaintenanceFee(allocations, snapshot), "资产维保费用");
         }
-        addInvestorEntries(created, snapshot, source, allocations);
+        if ((source.sourceType() == IncomeSourceType.EXTERNAL_RENEWAL
+            || source.sourceType() == IncomeSourceType.EXTERNAL_ORDER) && investorAllocations != null
+            && !investorAllocations.isEmpty()) {
+            for (var allocation : investorAllocations) {
+                add(created, snapshot, source, IncomeBeneficiaryType.INVESTOR, allocation.investorId(),
+                    IncomeLineType.INVESTOR_NET_RENT, allocation.investorShareAmount(), "出资方分润（按资产有效时长）");
+            }
+        } else {
+            addInvestorEntries(created, snapshot, source, allocations);
+        }
         return created;
     }
 
@@ -331,8 +413,18 @@ public class SettlementIncomeService {
         List<SettlementIncomeEntry> created,
         SettlementRuleSnapshot snapshot,
         IncomeSource source,
-        BigDecimal investorShareAmount
+        BigDecimal investorShareAmount,
+        List<ExternalOrderRenewalAllocationRepository.InvestorAllocationTotal> investorAllocations
     ) {
+        if ((source.sourceType() == IncomeSourceType.EXTERNAL_RENEWAL
+            || source.sourceType() == IncomeSourceType.EXTERNAL_ORDER) && investorAllocations != null
+            && !investorAllocations.isEmpty()) {
+            for (var allocation : investorAllocations) {
+                add(created, snapshot, source, IncomeBeneficiaryType.INVESTOR, allocation.investorId(),
+                    IncomeLineType.INVESTOR_SHARE, allocation.investorShareAmount(), "出资方分润（按资产有效时长）");
+            }
+            return;
+        }
         var allocations = buildV2InvestorAllocations(snapshot, investorShareAmount);
         if (allocations.isEmpty()) {
             if (source.sourceType() != IncomeSourceType.BILL) {
@@ -371,6 +463,146 @@ public class SettlementIncomeService {
         return amountByInvestor.entrySet().stream()
             .map(entry -> new V2InvestorAllocation(entry.getKey(), money(entry.getValue())))
             .toList();
+    }
+
+    public List<ExternalOrderInitialInvestorAllocationRepository.InitialAllocation>
+        ensureExternalOrderInitialInvestorAllocation(
+            ExternalRentalOrder order,
+            SettlementRuleSnapshot snapshot
+        ) {
+        if (snapshot.sourceType() != SnapshotSourceType.EXTERNAL_ORDER
+            || !order.id().equals(snapshot.sourceId())) {
+            throw BusinessException.badRequest("补录订单与初始分润快照不匹配");
+        }
+        var expectedSlots = java.util.stream.Stream.of(
+                snapshot.frameAssetId() == null ? null
+                    : new InitialAssetSlot(com.xniu.rental.asset.model.AssetType.VEHICLE_FRAME, snapshot.frameAssetId()),
+                snapshot.batteryAssetId() == null ? null
+                    : new InitialAssetSlot(com.xniu.rental.asset.model.AssetType.BATTERY, snapshot.batteryAssetId())
+            )
+            .filter(java.util.Objects::nonNull)
+            .toList();
+        var frozen = externalOrderInitialInvestorAllocationRepository.listByExternalOrder(order.id());
+        if (frozen.isEmpty() && !expectedSlots.isEmpty()) {
+            if (externalOrderAssetChangeRepository.existsByExternalOrder(order.id())) {
+                throw BusinessException.badRequest("补录订单初始资产槽位冻结记录缺失，不能继续重建或更换资产");
+            }
+            var remainingWeight = BigDecimal.ONE.setScale(12, RoundingMode.HALF_UP);
+            var averageWeight = BigDecimal.ONE.divide(
+                BigDecimal.valueOf(expectedSlots.size()), 12, RoundingMode.DOWN
+            );
+            var lockedAssets = expectedSlots.stream()
+                .map(InitialAssetSlot::assetId)
+                .distinct()
+                .sorted()
+                .map(assetId -> assetRepository.findByIdForUpdate(assetId)
+                    .orElseThrow(() -> BusinessException.badRequest("补录订单初始资产不存在")))
+                .collect(java.util.stream.Collectors.toMap(AssetItem::id, asset -> asset));
+            for (var index = 0; index < expectedSlots.size(); index += 1) {
+                var slot = expectedSlots.get(index);
+                var asset = lockedAssets.get(slot.assetId());
+                if (asset.investorId() == null || asset.investorId() <= 0) {
+                    throw BusinessException.badRequest("补录订单初始资产未绑定出资方");
+                }
+                var weight = index == expectedSlots.size() - 1 ? remainingWeight : averageWeight;
+                remainingWeight = remainingWeight.subtract(weight);
+                externalOrderInitialInvestorAllocationRepository.createIfAbsent(
+                    new ExternalOrderInitialInvestorAllocationRepository.InitialAllocation(
+                        order.id(), snapshot.id(), slot.assetType(), slot.assetId(), asset.investorId(), weight
+                    )
+                );
+            }
+            frozen = externalOrderInitialInvestorAllocationRepository.listByExternalOrder(order.id());
+        }
+        if (frozen.size() != expectedSlots.size()
+            || frozen.stream().anyMatch(row -> row.investorId() == null || row.investorId() <= 0
+                || row.allocationWeight() == null || row.allocationWeight().signum() <= 0)
+            || frozen.stream().anyMatch(row -> expectedSlots.stream().noneMatch(slot ->
+                slot.assetType() == row.assetType() && slot.assetId().equals(row.assetId())
+            ))) {
+            throw BusinessException.badRequest("补录订单初始资产槽位冻结记录不完整，请先人工核对");
+        }
+        var totalWeight = frozen.stream().map(
+            ExternalOrderInitialInvestorAllocationRepository.InitialAllocation::allocationWeight
+        ).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (!frozen.isEmpty() && totalWeight.compareTo(BigDecimal.ONE) != 0) {
+            throw BusinessException.badRequest("补录订单初始出资方权重不守恒，请先人工核对");
+        }
+        return List.copyOf(frozen);
+    }
+
+    private List<ExternalOrderRenewalAllocationRepository.InvestorAllocationTotal>
+        preserveExternalOrderInvestorAllocations(
+            ExternalRentalOrder order,
+            SettlementRuleSnapshot snapshot
+        ) {
+        var frozenSlots = ensureExternalOrderInitialInvestorAllocation(order, snapshot);
+        var nextTotal = money(snapshot.calculationVersion().usesProfitSharing()
+            ? snapshot.investorShareAmount()
+            : snapshot.settlementBaseAmount().multiply(snapshot.investorRentShareRate()));
+        if (nextTotal.signum() <= 0) {
+            return List.of();
+        }
+        if (frozenSlots.isEmpty()) {
+            return List.of();
+        }
+        /* Preserve the historical frame -> battery tie order used by the old
+         * initial-income writer.  Allocate cents per frozen slot first, then
+         * aggregate by investor; grouping first would move a one-cent pool to
+         * whichever investor happened to have the smaller database id. */
+        var sortedSlots = frozenSlots.stream()
+            .sorted(java.util.Comparator
+                .comparingInt((ExternalOrderInitialInvestorAllocationRepository.InitialAllocation row) ->
+                    row.assetType() == com.xniu.rental.asset.model.AssetType.VEHICLE_FRAME ? 0 : 1)
+                .thenComparing(ExternalOrderInitialInvestorAllocationRepository.InitialAllocation::assetId))
+            .toList();
+        var slotAmounts = largestRemainderAmounts(
+            nextTotal,
+            sortedSlots.stream().map(
+                ExternalOrderInitialInvestorAllocationRepository.InitialAllocation::allocationWeight
+            ).toList()
+        );
+        var amountByInvestor = new LinkedHashMap<Long, BigDecimal>();
+        for (var index = 0; index < sortedSlots.size(); index += 1) {
+            amountByInvestor.merge(
+                sortedSlots.get(index).investorId(), slotAmounts.get(index), BigDecimal::add
+            );
+        }
+        var result = new ArrayList<ExternalOrderRenewalAllocationRepository.InvestorAllocationTotal>();
+        for (var item : amountByInvestor.entrySet()) {
+            result.add(new ExternalOrderRenewalAllocationRepository.InvestorAllocationTotal(
+                item.getKey(), BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP), money(item.getValue())
+            ));
+        }
+        return List.copyOf(result);
+    }
+
+    private List<BigDecimal> largestRemainderAmounts(
+        BigDecimal total,
+        List<BigDecimal> weights
+    ) {
+        var result = new ArrayList<BigDecimal>();
+        var remainders = new ArrayList<IndexedRemainder>();
+        var allocated = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        for (var index = 0; index < weights.size(); index += 1) {
+            var exact = total.multiply(weights.get(index));
+            var floor = exact.setScale(2, RoundingMode.DOWN);
+            result.add(floor);
+            allocated = allocated.add(floor);
+            remainders.add(new IndexedRemainder(index, exact.subtract(floor)));
+        }
+        var remainingCents = total.subtract(allocated).movePointRight(2).intValueExact();
+        remainders.sort(java.util.Comparator.comparing(IndexedRemainder::remainder).reversed()
+            .thenComparingInt(IndexedRemainder::index));
+        for (var index = 0; index < remainingCents; index += 1) {
+            var target = remainders.get(index % remainders.size()).index();
+            result.set(target, result.get(target).add(new BigDecimal("0.01")));
+        }
+        var resultTotal = result.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (resultTotal.compareTo(total) != 0 || result.stream().anyMatch(amount -> amount.signum() < 0)) {
+            throw BusinessException.badRequest("补录订单初始出资方分配不守恒，不能重建");
+        }
+        return List.copyOf(result);
     }
 
     private void addInvestorEntries(List<SettlementIncomeEntry> created, SettlementRuleSnapshot snapshot, IncomeSource source, List<InvestorIncomeAllocation> allocations) {
@@ -598,5 +830,11 @@ public class SettlementIncomeService {
     }
 
     private record V2InvestorAllocation(Long investorId, BigDecimal amount) {
+    }
+
+    private record InitialAssetSlot(com.xniu.rental.asset.model.AssetType assetType, Long assetId) {
+    }
+
+    private record IndexedRemainder(int index, BigDecimal remainder) {
     }
 }

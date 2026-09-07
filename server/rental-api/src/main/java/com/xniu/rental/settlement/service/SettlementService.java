@@ -226,7 +226,31 @@ public class SettlementService {
         if (original.sourceType() != SnapshotSourceType.EXTERNAL_ORDER) {
             throw BusinessException.badRequest("补录订单原始分润快照类型不匹配");
         }
-        return createExternalRenewalSnapshotFromTemplate(eventId, original, renewalAmount, batteryCostAmount);
+        return createExternalRenewalSnapshotFromTemplate(
+            eventId, original, renewalAmount, batteryCostAmount,
+            original.frameAssetId(), original.batteryAssetId()
+        );
+    }
+
+    /** Create a renewal snapshot with the assets bound when the period begins. */
+    @Transactional
+    public SettlementSnapshotResponse createExternalRenewalSnapshot(
+        Long eventId,
+        Long originalSnapshotId,
+        BigDecimal renewalAmount,
+        BigDecimal batteryCostAmount,
+        Long frameAssetId,
+        Long batteryAssetId
+    ) {
+        var original = settlementRepository.findSnapshot(originalSnapshotId)
+            .orElseThrow(() -> BusinessException.badRequest("补录订单原始分润快照不存在"));
+        if (original.sourceType() != SnapshotSourceType.EXTERNAL_ORDER) {
+            throw BusinessException.badRequest("补录订单原始分润快照类型不匹配");
+        }
+        return createExternalRenewalSnapshotFromTemplate(
+            eventId, original, renewalAmount, batteryCostAmount,
+            frameAssetId, batteryAssetId
+        );
     }
 
     /**
@@ -246,21 +270,127 @@ public class SettlementService {
         if (previous.sourceType() != SnapshotSourceType.EXTERNAL_RENEWAL) {
             throw BusinessException.badRequest("补录续租原分润快照类型不匹配");
         }
-        return createExternalRenewalSnapshotFromTemplate(eventId, previous, renewalAmount, batteryCostAmount);
+        return createExternalRenewalSnapshotFromTemplate(
+            eventId, previous, renewalAmount, batteryCostAmount,
+            previous.frameAssetId(), previous.batteryAssetId()
+        );
+    }
+
+    /** Rebuild a mutable renewal snapshot while switching its current asset pointers. */
+    @Transactional
+    public SettlementSnapshotResponse rebuildExternalRenewalSnapshot(
+        Long eventId,
+        Long previousSnapshotId,
+        BigDecimal renewalAmount,
+        BigDecimal batteryCostAmount,
+        Long frameAssetId,
+        Long batteryAssetId
+    ) {
+        var previous = settlementRepository.findSnapshot(previousSnapshotId)
+            .orElseThrow(() -> BusinessException.badRequest("补录续租原分润快照不存在"));
+        if (previous.sourceType() != SnapshotSourceType.EXTERNAL_RENEWAL) {
+            throw BusinessException.badRequest("补录续租原分润快照类型不匹配");
+        }
+        return createExternalRenewalSnapshotFromTemplate(
+            eventId, previous, renewalAmount, batteryCostAmount,
+            frameAssetId, batteryAssetId
+        );
+    }
+
+    /**
+     * Copy a mutable renewal fact byte-for-byte while changing only its asset
+     * pointers.  Asset replacement must not recalculate channel, platform or
+     * store amounts merely because today's rule engine differs from the rule
+     * frozen when the renewal was accrued.
+     */
+    @Transactional
+    public SettlementSnapshotResponse cloneExternalRenewalAssetAttribution(
+        Long eventId,
+        Long previousSnapshotId,
+        Long frameAssetId,
+        Long batteryAssetId
+    ) {
+        var previous = settlementRepository.findSnapshot(previousSnapshotId)
+            .orElseThrow(() -> BusinessException.badRequest("补录续租原分润快照不存在"));
+        if (previous.sourceType() != SnapshotSourceType.EXTERNAL_RENEWAL
+            || !eventId.equals(previous.sourceId())) {
+            throw BusinessException.badRequest("补录续租事件与原分润快照不匹配");
+        }
+        var replacement = settlementRepository.createSnapshot(new SettlementRuleSnapshot(
+            null,
+            nextCode("SNP"),
+            previous.sourceType(),
+            previous.sourceId(),
+            previous.calculationVersion(),
+            previous.sourceChannel(),
+            previous.storeSkuId(),
+            previous.skuId(),
+            previous.merchantId(),
+            previous.storeId(),
+            frameAssetId,
+            batteryAssetId,
+            previous.matchedRuleId(),
+            previous.matchedRuleScope(),
+            previous.rentalAmount(),
+            previous.settlementBaseAmount(),
+            previous.signFeeAmount(),
+            previous.merchantOrderFeeAmount(),
+            previous.merchantRentShareRate(),
+            previous.merchantRentShareAmount(),
+            previous.platformRentShareRate(),
+            previous.platformRentShareAmount(),
+            previous.investorRentShareRate(),
+            previous.investorGrossShareAmount(),
+            previous.investorOperationFeeAmount(),
+            previous.maintenanceFeeAmount(),
+            previous.investorNetShareAmount(),
+            previous.channelFeeRate(),
+            previous.channelFeeAmount(),
+            previous.platformFeeRate(),
+            previous.platformFeeAmount(),
+            previous.batteryCostAmount(),
+            previous.distributableAmount(),
+            previous.storeOperationRate(),
+            previous.storeOperationAmount(),
+            previous.maintenanceFundRate(),
+            previous.maintenanceFundAmount(),
+            previous.channelReferralRate(),
+            previous.channelReferralAmount(),
+            previous.investorShareRate(),
+            previous.investorShareAmount(),
+            appendAuditMarker(previous.ruleSummary(), "assetReplacement=true"),
+            null
+        ));
+        return toResponse(replacement);
+    }
+
+    private String appendAuditMarker(String summary, String marker) {
+        var normalized = summary == null ? "" : summary;
+        var token = ";" + marker;
+        if (normalized.contains(marker)) {
+            return normalized.length() <= 1024 ? normalized : normalized.substring(0, 1024);
+        }
+        var bodyLimit = 1024 - token.length();
+        var body = normalized.length() <= bodyLimit ? normalized : normalized.substring(0, bodyLimit);
+        return body + token;
     }
 
     private SettlementSnapshotResponse createExternalRenewalSnapshotFromTemplate(
         Long eventId,
         SettlementRuleSnapshot original,
         BigDecimal renewalAmount,
-        BigDecimal batteryCostAmount
+        BigDecimal batteryCostAmount,
+        Long frameAssetId,
+        Long batteryAssetId
     ) {
         if (original.calculationVersion() == SettlementCalculationVersion.LEGACY_V1) {
             return toResponse(createLegacyExternalRenewalSnapshot(
                 eventId,
                 original,
                 renewalAmount,
-                batteryCostAmount
+                batteryCostAmount,
+                frameAssetId,
+                batteryAssetId
             ));
         }
         var calculationVersion = original.calculationVersion().usesGrossChannelReferral()
@@ -289,8 +419,8 @@ public class SettlementService {
             original.skuId(),
             original.merchantId(),
             original.storeId(),
-            original.frameAssetId(),
-            original.batteryAssetId(),
+            frameAssetId,
+            batteryAssetId,
             original.matchedRuleId(),
             original.matchedRuleScope(),
             money(renewalAmount),
@@ -333,7 +463,9 @@ public class SettlementService {
         Long eventId,
         SettlementRuleSnapshot original,
         BigDecimal renewalAmount,
-        BigDecimal batteryCostAmount
+        BigDecimal batteryCostAmount,
+        Long frameAssetId,
+        Long batteryAssetId
     ) {
         var base = money(renewalAmount);
         var merchantShare = amountByRate(base, original.merchantRentShareRate());
@@ -356,8 +488,8 @@ public class SettlementService {
             original.skuId(),
             original.merchantId(),
             original.storeId(),
-            original.frameAssetId(),
-            original.batteryAssetId(),
+            frameAssetId,
+            batteryAssetId,
             original.matchedRuleId(),
             original.matchedRuleScope(),
             base,

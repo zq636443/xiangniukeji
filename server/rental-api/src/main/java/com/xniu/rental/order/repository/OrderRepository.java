@@ -100,6 +100,72 @@ public class OrderRepository {
             """, orderMapper, assetId, assetId);
     }
 
+    public boolean hasActiveByAssetForUpdate(Long assetId) {
+        var statuses = jdbcTemplate.queryForList("""
+            SELECT order_status
+            FROM rental_order
+            WHERE frame_asset_id = ? OR battery_asset_id = ?
+            FOR UPDATE
+            """, String.class, assetId, assetId);
+        return statuses.stream().anyMatch(status -> !"COMPLETED".equals(status) && !"CANCELLED".equals(status));
+    }
+
+    /**
+     * Lock every active formal order which already references one of the
+     * supplied assets.  Callers deliberately take these order locks before
+     * locking asset_item rows, matching pickup/return's order -> asset lock
+     * order and preventing a cross-domain deadlock with supplemental orders.
+     */
+    public List<RentalOrder> lockActiveByAssetIdsForUpdate(List<Long> assetIds) {
+        var ids = assetIds == null ? List.<Long>of() : assetIds.stream()
+            .filter(java.util.Objects::nonNull)
+            .distinct()
+            .sorted()
+            .toList();
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        var placeholders = String.join(", ", java.util.Collections.nCopies(ids.size(), "?"));
+        var params = new ArrayList<Object>(ids.size() * 2);
+        params.addAll(ids);
+        params.addAll(ids);
+        var candidateIds = jdbcTemplate.queryForList("""
+            SELECT id
+            FROM rental_order
+            WHERE order_status NOT IN ('COMPLETED', 'CANCELLED')
+              AND (frame_asset_id IN (%s) OR battery_asset_id IN (%s))
+            ORDER BY id
+            """.formatted(placeholders, placeholders), Long.class, params.toArray());
+        /* Do not rely on the optimizer's scan/lock order for a multi-row
+         * SELECT ... FOR UPDATE.  Lock explicit primary keys in ascending
+         * order, then recheck the predicate on the current locked row. */
+        return candidateIds.stream()
+            .distinct()
+            .sorted()
+            .map(this::findByIdForUpdate)
+            .flatMap(Optional::stream)
+            .filter(order -> order.orderStatus() != OrderStatus.COMPLETED
+                && order.orderStatus() != OrderStatus.CANCELLED)
+            .filter(order -> ids.contains(order.frameAssetId()) || ids.contains(order.batteryAssetId()))
+            .toList();
+    }
+
+    /**
+     * Non-locking occupancy recheck.  Replacement calls this only under
+     * READ_COMMITTED after it owns the asset row lock.  Formal create/edit
+     * must acquire that same asset lock before binding, so the result is both
+     * fresh and stable without taking an order lock in the reverse direction.
+     */
+    public boolean hasActiveByAsset(Long assetId) {
+        var count = jdbcTemplate.queryForObject("""
+            SELECT COUNT(1)
+            FROM rental_order
+            WHERE (frame_asset_id = ? OR battery_asset_id = ?)
+              AND order_status NOT IN ('COMPLETED', 'CANCELLED')
+            """, Integer.class, assetId, assetId);
+        return count != null && count > 0;
+    }
+
     public RentalOrder create(OrderCreateRow row) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {

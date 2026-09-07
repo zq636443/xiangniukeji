@@ -42,6 +42,7 @@ public class ExternalOrderManualRenewalService {
     private final SettlementStatementRepository settlementStatementRepository;
     private final SettlementStatementService settlementStatementService;
     private final AuthorizationService authorizationService;
+    private final ExternalOrderRenewalAllocationService renewalAllocationService;
 
     public ExternalOrderManualRenewalService(
         ExternalRentalOrderRepository orderRepository,
@@ -52,7 +53,8 @@ public class ExternalOrderManualRenewalService {
         SettlementIncomeService settlementIncomeService,
         SettlementStatementRepository settlementStatementRepository,
         SettlementStatementService settlementStatementService,
-        AuthorizationService authorizationService
+        AuthorizationService authorizationService,
+        ExternalOrderRenewalAllocationService renewalAllocationService
     ) {
         this.orderRepository = orderRepository;
         this.renewalRepository = renewalRepository;
@@ -63,6 +65,7 @@ public class ExternalOrderManualRenewalService {
         this.settlementStatementRepository = settlementStatementRepository;
         this.settlementStatementService = settlementStatementService;
         this.authorizationService = authorizationService;
+        this.renewalAllocationService = renewalAllocationService;
     }
 
     @Transactional
@@ -96,10 +99,10 @@ public class ExternalOrderManualRenewalService {
         var remark = normalizeRemark(request.remark());
         var statementMonth = periodStartAt.format(STATEMENT_MONTH_FORMAT);
         settlementStatementRepository.lockStatementsByMonthForUpdate(statementMonth);
-        if (settlementStatementRepository.hasLockedStatements(statementMonth)) {
+        if (settlementStatementRepository.hasLockedStatementsForUpdate(statementMonth)) {
             throw BusinessException.badRequest("本次续租起点所在月份已锁定，不能直接补记；请通过结算调整单处理");
         }
-        var regenerateDraftStatement = settlementStatementRepository.hasDraftStatements(statementMonth);
+        var regenerateDraftStatement = settlementStatementRepository.hasDraftStatementsForUpdate(statementMonth);
         var sourceSnapshot = order.settlementSnapshotId() == null
             ? null
             : settlementRepository.findSnapshot(order.settlementSnapshotId()).orElse(null);
@@ -174,15 +177,19 @@ public class ExternalOrderManualRenewalService {
             event.id(),
             order.settlementSnapshotId(),
             event.renewalAmount(),
-            event.batteryCostAmount()
+            event.batteryCostAmount(),
+            order.frameAssetId(),
+            order.batteryAssetId()
         );
         event = renewalRepository.attachSnapshot(event.id(), snapshot.id());
+        var investorAllocations = renewalAllocationService.freezeCurrentAssets(event, snapshot.id());
         settlementIncomeService.createExternalRenewalEntries(
             event.id(),
             event.eventNo(),
             snapshot.id(),
             event.periodStartAt(),
-            event.renewalAmount()
+            event.renewalAmount(),
+            investorAllocations
         );
         orderRepository.advanceExpectedReturnAt(order.id(), periodEndAt);
         orderRepository.addLog(

@@ -12,6 +12,8 @@ import static org.mockito.Mockito.when;
 import com.xniu.rental.asset.repository.AssetFulfillmentRepository;
 import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.auth.security.AuthorizationService;
+import com.xniu.rental.externalorder.repository.ExternalOrderRenewalAllocationRepository;
+import com.xniu.rental.externalorder.repository.ExternalOrderAssetChangeRepository;
 import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
 import com.xniu.rental.settlement.repository.SettlementStatementRepository;
@@ -40,7 +42,7 @@ class SettlementStatementLockingTests {
         var assetRepository = mock(AssetRepository.class);
         var authorizationService = mock(AuthorizationService.class);
 
-        when(statementRepository.hasLockedStatements(anyString())).thenReturn(false);
+        when(statementRepository.hasLockedStatementsForUpdate(anyString())).thenReturn(false);
         when(statementRepository.listPaidBillItems(any(), any())).thenReturn(List.of());
         when(statementRepository.listExternalOrderItems(any(), any())).thenReturn(List.of());
         when(statementRepository.listExternalRenewalItems(any(), any())).thenReturn(List.of());
@@ -55,7 +57,9 @@ class SettlementStatementLockingTests {
             incomeService,
             fulfillmentRepository,
             assetRepository,
-            authorizationService
+            authorizationService,
+            mock(ExternalOrderRenewalAllocationRepository.class),
+            mock(ExternalOrderAssetChangeRepository.class)
         );
     }
 

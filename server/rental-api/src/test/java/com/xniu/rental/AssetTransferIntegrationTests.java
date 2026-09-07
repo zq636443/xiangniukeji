@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doAnswer;
 
 import com.xniu.rental.asset.dto.AssetTransferRequest;
+import com.xniu.rental.asset.dto.AssetStatusRequest;
 import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.asset.service.AssetService;
 import com.xniu.rental.auth.dto.CurrentAccountResponse;
@@ -14,7 +15,6 @@ import com.xniu.rental.auth.security.CurrentAccount;
 import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.merchant.service.MerchantService;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -199,15 +199,11 @@ class AssetTransferIntegrationTests {
     @Test
     void storeManagerShouldNotTransferAssetThatStopsBeingIdleAfterRead() {
         var assetId = createAsset("IDLE");
-        var idleAsset = assetRepository.findById(assetId);
-        var firstRead = new AtomicBoolean(true);
         doAnswer(invocation -> {
-            if (firstRead.compareAndSet(true, false)) {
-                jdbcTemplate.update("UPDATE asset_item SET status = 'RENTING' WHERE id = ?", assetId);
-                return idleAsset;
-            }
-            return invocation.callRealMethod();
-        }).when(assetRepository).findById(assetId);
+            var lockedIdleAsset = invocation.callRealMethod();
+            jdbcTemplate.update("UPDATE asset_item SET status = 'RENTING' WHERE id = ?", assetId);
+            return lockedIdleAsset;
+        }).when(assetRepository).findByIdForUpdate(assetId);
 
         assertThatThrownBy(() -> assetService.transferMerchantAsset(1L, assetId, new AssetTransferRequest(
             1L,
@@ -227,6 +223,23 @@ class AssetTransferIntegrationTests {
             Integer.class,
             assetId
         )).isZero();
+    }
+
+    @Test
+    void storeManagerCannotManuallyCreateAnOrphanRentingAsset() {
+        var assetId = createAsset("IDLE");
+
+        assertThatThrownBy(() -> assetService.updateAssetStatus(
+            assetId,
+            new AssetStatusRequest("RENTING", "人工设为租赁中")
+        ))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("只能由订单履约自动更新");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT status FROM asset_item WHERE id = ?",
+            String.class,
+            assetId
+        )).isEqualTo("IDLE");
     }
 
     @Test

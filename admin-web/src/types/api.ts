@@ -70,7 +70,7 @@ export type ExternalRentalOrderLog = {
   externalOrderId: number;
   fromStatus?: ExternalRentalOrderStatus | null;
   toStatus: ExternalRentalOrderStatus;
-  operationType: 'CREATE' | 'EDIT' | 'RENEWAL_PRICING_ADJUSTMENT' | 'MANUAL_RENEW' | 'COMPLETE' | 'TERMINATE';
+  operationType: 'CREATE' | 'EDIT' | 'REPLACE_ASSET' | 'RENEWAL_PRICING_ADJUSTMENT' | 'MANUAL_RENEW' | 'COMPLETE' | 'TERMINATE';
   operatorAccountId?: number | null;
   remark?: string | null;
   createdAt: string;

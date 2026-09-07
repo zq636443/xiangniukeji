@@ -85,6 +85,16 @@ public class SettlementIncomeRepository {
             """, mapper, sourceType.name(), sourceId);
     }
 
+    public List<SettlementIncomeEntry> listBySourceForUpdate(IncomeSourceType sourceType, Long sourceId) {
+        return jdbcTemplate.query("""
+            SELECT *
+            FROM settlement_income_entry
+            WHERE source_type = ? AND source_id = ?
+            ORDER BY id
+            FOR UPDATE
+            """, mapper, sourceType.name(), sourceId);
+    }
+
     public boolean hasNonPendingBySource(IncomeSourceType sourceType, Long sourceId) {
         var count = jdbcTemplate.queryForObject("""
             SELECT COUNT(1)
@@ -133,6 +143,31 @@ public class SettlementIncomeRepository {
             sourceType.name(),
             sourceId
         );
+    }
+
+    public void deletePendingInvestorBySource(IncomeSourceType sourceType, Long sourceId) {
+        jdbcTemplate.update("""
+            DELETE FROM settlement_income_entry
+            WHERE source_type = ?
+              AND source_id = ?
+              AND beneficiary_type = 'INVESTOR'
+              AND entry_status = 'PENDING'
+            """, sourceType.name(), sourceId);
+    }
+
+    public void relinkPendingNonInvestorSnapshot(
+        IncomeSourceType sourceType,
+        Long sourceId,
+        Long snapshotId
+    ) {
+        jdbcTemplate.update("""
+            UPDATE settlement_income_entry
+            SET snapshot_id = ?
+            WHERE source_type = ?
+              AND source_id = ?
+              AND beneficiary_type <> 'INVESTOR'
+              AND entry_status = 'PENDING'
+            """, snapshotId, sourceType.name(), sourceId);
     }
 
     public boolean exists(

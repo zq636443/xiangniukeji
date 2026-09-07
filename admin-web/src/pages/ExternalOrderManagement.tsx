@@ -1,10 +1,12 @@
-import { DeleteOutlined, DollarOutlined, EditOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DollarOutlined, EditOutlined, SwapOutlined } from '@ant-design/icons';
 import { Alert, Button, Checkbox, DatePicker, Descriptions, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
+import { ExternalOrderAssetReplacementModal } from '../components/ExternalOrderAssetReplacementModal';
 import { http } from '../services/request';
 import type {
   Asset,
+  CurrentAccount,
   ExternalOrderRenewal,
   ExternalRentalOrder,
   ExternalRentalOrderBatchImportResult,
@@ -21,6 +23,7 @@ import { storeOrderFeeNetAmount } from '../utils/storeRevenue';
 type Scope = 'admin' | 'merchant';
 
 type Props = {
+  account: CurrentAccount;
   scope: Scope;
   storeId?: number;
 };
@@ -122,7 +125,7 @@ const returnStatusOptions = [
   { label: '异常', value: 'EXCEPTION' }
 ] as const;
 
-export function ExternalOrderManagement({ scope, storeId }: Props) {
+export function ExternalOrderManagement({ account, scope, storeId }: Props) {
   const [orders, setOrders] = useState<ExternalRentalOrder[]>([]);
   const [renewals, setRenewals] = useState<ExternalOrderRenewal[]>([]);
   const [storeSkus, setStoreSkus] = useState<StoreSku[]>([]);
@@ -132,6 +135,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   const [loading, setLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<ExternalRentalOrder | null>(null);
   const [editingOrder, setEditingOrder] = useState<ExternalRentalOrder | null>(null);
+  const [replacementOrder, setReplacementOrder] = useState<ExternalRentalOrder | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -158,6 +162,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   const [pricingForm] = Form.useForm<PricingForm>();
   const [batchPricingForm] = Form.useForm<PricingForm>();
   const [confirmPricingForm] = Form.useForm<ConfirmPricingForm>();
+  const canOperate = account.permissions.includes('order.operate') || account.permissions.includes('system.admin');
 
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
   const selectedPackageId = Form.useWatch('packageId', createForm);
@@ -357,14 +362,11 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
   function handleStoreSkuChange(value: number) {
     const nextStoreSku = storeSkus.find((item) => item.id === value);
     const nextPackage = nextStoreSku?.packages.find((item) => item.status === 'ENABLED') ?? nextStoreSku?.packages[0];
-    const retainCurrentAssets = editingOrder?.orderStatus === 'ACTIVE'
-      && editingOrder.skuId === nextStoreSku?.skuId
-      && editingOrder.merchantId === nextStoreSku?.merchantId;
     createForm.setFieldsValue({
       packageId: nextPackage?.packageId,
       leaseMultiplier: 1,
-      frameAssetId: retainCurrentAssets ? editingOrder.frameAssetId ?? undefined : undefined,
-      batteryAssetId: retainCurrentAssets ? editingOrder.batteryAssetId ?? undefined : undefined,
+      frameAssetId: editingOrder ? editingOrder.frameAssetId ?? undefined : undefined,
+      batteryAssetId: editingOrder ? editingOrder.batteryAssetId ?? undefined : undefined,
       signFeeAmount: Number(nextStoreSku?.signFeeAmount || 0),
       externalRentalAmount: Number(nextPackage?.rentalAmount || 0),
       depositAmount: Number(nextPackage?.depositAmount || 0),
@@ -619,6 +621,8 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
       }
       closeOrderForm();
       await loadAll();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : (editingOrder ? '补录订单保存失败' : '补录订单创建失败'));
     } finally {
       setSubmitting(false);
     }
@@ -828,7 +832,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
             { title: '预计归还', dataIndex: 'expectedReturnAt', width: 170, render: dateText },
             {
               title: '操作',
-              width: 570,
+              width: 660,
               fixed: 'right',
               render: (_, record) => (
                 <Space>
@@ -838,6 +842,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
                     <>
                       <Button size="small" icon={<DollarOutlined />} onClick={() => openPricing(record)}>续租调价</Button>
                       <Button size="small" type="primary" ghost onClick={() => openManualRenewal(record)}>人工续租</Button>
+                      {canOperate ? <Button size="small" icon={<SwapOutlined />} onClick={() => setReplacementOrder(record)}>更换资产</Button> : null}
                       <Button size="small" onClick={() => openComplete(record)}>完结</Button>
                       <Button size="small" danger onClick={() => openTerminate(record)}>提前终止</Button>
                     </>
@@ -883,6 +888,15 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
               showIcon
               message="正在修正已结束补录订单"
               description="终态不会再产生后续续租收益；修改核销金额只记录为历史时间线，首期分润保持原快照。可修正客户资料和来源平台，不能修改门店、资产、办单费或租期结构。"
+              style={{ marginBottom: 16 }}
+            />
+          ) : null}
+          {editingOrder && editingOrder.orderStatus === 'ACTIVE' ? (
+            <Alert
+              type="info"
+              showIcon
+              message="资产变更已改用独立流程"
+              description="如需更换主资产或第二资产，请关闭本窗口后使用列表中的“更换资产”，系统会保留更换时间和历史归属。"
               style={{ marginBottom: 16 }}
             />
           ) : null}
@@ -969,6 +983,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
                 <Select
                   showSearch
                   allowClear
+                  disabled={Boolean(editingOrder)}
                   optionFilterProp="label"
                   placeholder="输入序列号、资产编号或类型搜索"
                   notFoundContent={selectedStoreSku ? '该门店暂无可用空闲资产' : '请先选择门店商品'}
@@ -981,6 +996,7 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
                 <Select
                   showSearch
                   allowClear
+                  disabled={Boolean(editingOrder)}
                   optionFilterProp="label"
                   placeholder="输入序列号、资产编号或类型搜索"
                   notFoundContent={selectedStoreSku ? '该门店暂无其他可用空闲资产' : '请先选择门店商品'}
@@ -994,6 +1010,14 @@ export function ExternalOrderManagement({ scope, storeId }: Props) {
           </Form.Item>
         </Form>
       </Modal>
+
+      <ExternalOrderAssetReplacementModal
+        scope={scope}
+        order={replacementOrder}
+        assets={assets}
+        onClose={() => setReplacementOrder(null)}
+        onReplaced={loadAll}
+      />
 
       <Modal
         title="批量导入补录订单"
@@ -1437,6 +1461,9 @@ function operationText(value?: string | null) {
   }
   if (value === 'EDIT') {
     return '编辑';
+  }
+  if (value === 'REPLACE_ASSET') {
+    return '更换资产';
   }
   if (value === 'RENEWAL_PRICING_ADJUSTMENT') {
     return '续租调价';

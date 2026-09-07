@@ -17,6 +17,7 @@ import com.xniu.rental.externalorder.repository.ExternalOrderRenewalRepository;
 import com.xniu.rental.externalorder.repository.ExternalOrderVerificationRevisionRepository;
 import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
 import com.xniu.rental.externalorder.service.ExternalOrderAutoRenewalService;
+import com.xniu.rental.externalorder.service.ExternalOrderRenewalAllocationService;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
@@ -78,6 +79,9 @@ class ExternalOrderManualRenewalReconciliationContractTests {
     private SettlementStatementRepository settlementStatementRepository;
 
     @Mock
+    private ExternalOrderRenewalAllocationService renewalAllocationService;
+
+    @Mock
     private TransactionTemplate transactionTemplate;
 
     @Mock
@@ -99,7 +103,6 @@ class ExternalOrderManualRenewalReconciliationContractTests {
         when(renewalRepository.listByExternalOrder(1L)).thenReturn(List.of(manual));
         when(settlementStatementRepository.listDraftStatementMonthsBySource("EXTERNAL_RENEWAL", 41L))
             .thenReturn(List.of());
-        when(settlementStatementRepository.hasDraftStatements("2026-08")).thenReturn(false);
 
         assertThat(service.reconcilePendingEvents(1L)).isZero();
 
@@ -115,7 +118,6 @@ class ExternalOrderManualRenewalReconciliationContractTests {
         when(renewalRepository.listByExternalOrder(1L)).thenReturn(List.of(system));
         when(settlementStatementRepository.listDraftStatementMonthsBySource("EXTERNAL_RENEWAL", 42L))
             .thenReturn(List.of());
-        when(settlementStatementRepository.hasDraftStatements("2026-08")).thenReturn(false);
         when(renewalRepository.hasLockedStatementLinesByEventForUpdate(42L)).thenReturn(false);
         when(renewalRepository.hasNonPendingIncomeByEventForUpdate(42L)).thenReturn(true);
 

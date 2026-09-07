@@ -48,6 +48,7 @@ public class ExternalOrderAutoRenewalService {
     private final SettlementIncomeRepository settlementIncomeRepository;
     private final SettlementRepository settlementRepository;
     private final SettlementStatementRepository settlementStatementRepository;
+    private final ExternalOrderRenewalAllocationService renewalAllocationService;
     private final TransactionTemplate transactionTemplate;
 
     public ExternalOrderAutoRenewalService(
@@ -61,6 +62,7 @@ public class ExternalOrderAutoRenewalService {
         SettlementIncomeRepository settlementIncomeRepository,
         SettlementRepository settlementRepository,
         SettlementStatementRepository settlementStatementRepository,
+        ExternalOrderRenewalAllocationService renewalAllocationService,
         TransactionTemplate transactionTemplate
     ) {
         this.orderRepository = orderRepository;
@@ -73,6 +75,7 @@ public class ExternalOrderAutoRenewalService {
         this.settlementIncomeRepository = settlementIncomeRepository;
         this.settlementRepository = settlementRepository;
         this.settlementStatementRepository = settlementStatementRepository;
+        this.renewalAllocationService = renewalAllocationService;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -140,15 +143,19 @@ public class ExternalOrderAutoRenewalService {
                 event.id(),
                 order.settlementSnapshotId(),
                 event.renewalAmount(),
-                event.batteryCostAmount()
+                event.batteryCostAmount(),
+                order.frameAssetId(),
+                order.batteryAssetId()
             );
             renewalRepository.attachSnapshot(event.id(), snapshot.id());
+            var investorAllocations = renewalAllocationService.freezeCurrentAssets(event, snapshot.id());
             settlementIncomeService.createExternalRenewalEntries(
                 event.id(),
                 event.eventNo(),
                 snapshot.id(),
                 event.periodStartAt(),
-                event.renewalAmount()
+                event.renewalAmount(),
+                investorAllocations
             );
             orderRepository.advanceExpectedReturnAt(order.id(), periodEndAt);
             orderRepository.addLog(
@@ -195,10 +202,9 @@ public class ExternalOrderAutoRenewalService {
             }
             affectedMonths.addAll(settlementStatementRepository.listDraftStatementMonthsBySource(
                 SnapshotSourceType.EXTERNAL_RENEWAL.name(), event.id()));
-            var eventMonth = event.periodStartAt().format(STATEMENT_MONTH_FORMAT);
-            if (settlementStatementRepository.hasDraftStatements(eventMonth)) {
-                affectedMonths.add(eventMonth);
-            }
+            /* Always lock the occurrence month. A pre-lock consistent read
+             * can miss a concurrently committed DRAFT under MySQL RR. */
+            affectedMonths.add(event.periodStartAt().format(STATEMENT_MONTH_FORMAT));
         }
         affectedMonths.stream()
             .sorted()
@@ -245,13 +251,13 @@ public class ExternalOrderAutoRenewalService {
             var draftMonths = settlementStatementRepository.listDraftStatementMonthsBySource(
                 SnapshotSourceType.EXTERNAL_RENEWAL.name(), event.id());
             var eventMonth = event.periodStartAt().format(STATEMENT_MONTH_FORMAT);
-            if (settlementStatementRepository.hasDraftStatements(eventMonth)) {
+            if (settlementStatementRepository.hasDraftStatementsForUpdate(eventMonth)) {
                 draftMonths = new java.util.ArrayList<>(draftMonths);
                 if (!draftMonths.contains(eventMonth)) {
                     draftMonths.add(eventMonth);
                 }
             }
-            if (draftMonths.stream().anyMatch(settlementStatementRepository::hasLockedStatements)) {
+            if (draftMonths.stream().anyMatch(settlementStatementRepository::hasLockedStatementsForUpdate)) {
                 log.warn(
                     "补录订单 {} 的续租事件 {} 所在月份已有锁定月结，保留原金额 {}",
                     externalOrderId,
@@ -268,6 +274,14 @@ public class ExternalOrderAutoRenewalService {
                 expectedAmount,
                 event.batteryCostAmount()
             );
+            /* Clone the frozen attribution before deleting the old income
+             * ledger. V67 has no allocation backfill, so an older event may
+             * need those rows to prove its original investor ownership. */
+            var investorAllocations = renewalAllocationService.cloneForRepricedSnapshot(
+                event,
+                previousSnapshotId,
+                replacement.id()
+            );
             settlementIncomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_RENEWAL, event.id());
             // Keep the previous snapshot as an immutable audit record.  The
             // event now points to the replacement; no historical snapshot is
@@ -279,7 +293,8 @@ public class ExternalOrderAutoRenewalService {
                 event.eventNo(),
                 replacement.id(),
                 event.periodStartAt(),
-                expectedAmount
+                expectedAmount,
+                investorAllocations
             );
             draftMonthsToRegenerate.addAll(draftMonths);
             changed++;

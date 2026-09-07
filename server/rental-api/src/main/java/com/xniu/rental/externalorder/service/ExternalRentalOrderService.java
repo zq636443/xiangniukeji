@@ -60,6 +60,8 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -214,7 +216,7 @@ public class ExternalRentalOrderService {
         return toResponse(view);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public ExternalRentalOrderResponse createOrder(ExternalRentalOrderCreateRequest request) {
         authorizationService.requirePermission("order.operate");
         return createOrderInternal(request);
@@ -236,6 +238,10 @@ public class ExternalRentalOrderService {
         if (order.orderStatus() != ExternalRentalOrderStatus.ACTIVE) {
             return updateTerminalOrderMetadata(order, request);
         }
+        if (!java.util.Objects.equals(order.frameAssetId(), request.frameAssetId())
+            || !java.util.Objects.equals(order.batteryAssetId(), request.batteryAssetId())) {
+            throw BusinessException.badRequest("进行中的补录订单不能通过普通编辑更换资产；请使用“更换资产”专用操作");
+        }
 
         var storeSku = ensureStoreSku(request.storeSkuId());
         authorizationService.requireStoreAccess(storeSku.merchantId(), storeSku.storeId());
@@ -246,6 +252,10 @@ public class ExternalRentalOrderService {
             ? normalizeLeaseMultiplier(order.leaseMultiplier())
             : normalizeLeaseMultiplier(request.leaseMultiplier());
         validateRequestAssets(request.frameAssetId(), request.batteryAssetId(), sku);
+        lockAssetRows(
+            order.frameAssetId(), order.batteryAssetId(),
+            request.frameAssetId(), request.batteryAssetId()
+        );
         /* For a terminal order, omitted optional date/amount fields mean
          * "keep the historical value".  Recomputing them from today's SKU
          * would otherwise turn a harmless customer-info edit into a free
@@ -707,7 +717,9 @@ public class ExternalRentalOrderService {
         int successCount = 0;
         for (var row : request.rows()) {
             try {
-                var created = transactionTemplate.execute(status -> createOrderInternal(toCreateRequest(row)));
+                var readCommittedTemplate = new TransactionTemplate(transactionTemplate.getTransactionManager());
+                readCommittedTemplate.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+                var created = readCommittedTemplate.execute(status -> createOrderInternal(toCreateRequest(row)));
                 if (created == null) {
                     throw BusinessException.badRequest("导入失败");
                 }
@@ -750,6 +762,7 @@ public class ExternalRentalOrderService {
             ? packagePricing.periodAmount()
             : packagePricing.renewalAmount();
         validateRequestAssets(request.frameAssetId(), request.batteryAssetId(), sku);
+        lockAssetRows(request.frameAssetId(), request.batteryAssetId());
         var expectedReturnAt = request.expectedReturnAt() == null
             ? calculateExpectedReturnAt(request.rentStartedAt(), packageTemplate, leaseMultiplier)
             : request.expectedReturnAt();
@@ -937,7 +950,8 @@ public class ExternalRentalOrderService {
         if (assetId == null) {
             return;
         }
-        var asset = ensureAsset(assetId);
+        var asset = assetRepository.findByIdForUpdate(assetId)
+            .orElseThrow(() -> BusinessException.badRequest("资产不存在"));
         if (assetId.equals(currentAssetId)) {
             var activeOrder = externalRentalOrderRepository.findActiveByAsset(assetId).orElse(null);
             if (asset.status() != AssetStatus.RENTING || activeOrder == null || !activeOrder.id().equals(order.id())) {
@@ -957,9 +971,11 @@ public class ExternalRentalOrderService {
         if (externalRentalOrderRepository.findActiveByAsset(assetId).isPresent()) {
             throw BusinessException.badRequest("所选资产已被其他补录订单占用");
         }
-        var formalOrderOccupied = orderRepository.listByAsset(assetId).stream()
-            .anyMatch(item -> item.orderStatus() != OrderStatus.COMPLETED && item.orderStatus() != OrderStatus.CANCELLED);
-        if (formalOrderOccupied) {
+        /* The asset row is already locked and every formal bind now takes the
+         * same lock. Under READ_COMMITTED this non-locking query is a fresh,
+         * stable occupancy recheck and avoids asset -> formal-order lock
+         * inversion with pickup. */
+        if (orderRepository.hasActiveByAsset(assetId)) {
             throw BusinessException.badRequest("所选资产已被正式订单占用");
         }
     }
@@ -1035,12 +1051,22 @@ public class ExternalRentalOrderService {
                     packageTemplate.leaseValue(),
                     order.leaseMultiplier()
                 );
+        /* The initial-period asset attribution is a creation-time financial
+         * fact.  A dedicated in-service replacement changes the order's
+         * current binding, but a later structural/date edit must not make the
+         * rebuilt initial snapshot point at the replacement asset. */
+        var initialFrameAssetId = previousSnapshot == null
+            ? order.frameAssetId()
+            : previousSnapshot.frameAssetId();
+        var initialBatteryAssetId = previousSnapshot == null
+            ? order.batteryAssetId()
+            : previousSnapshot.batteryAssetId();
         var snapshot = settlementService.createOrderSnapshot(new SnapshotCreateRequest(
             "EXTERNAL_ORDER",
             order.id(),
             order.storeSkuId(),
-            order.frameAssetId(),
-            order.batteryAssetId(),
+            initialFrameAssetId,
+            initialBatteryAssetId,
             initialSettlementBase == null ? order.verificationAmount() : initialSettlementBase,
             order.sourcePlatform().name(),
             order.signFeeAmount(),
@@ -1121,7 +1147,7 @@ public class ExternalRentalOrderService {
 
     private void ensureDraftMonthsRegenerable(java.util.Set<String> months) {
         for (var month : months) {
-            if (settlementStatementRepository.hasLockedStatements(month)) {
+            if (settlementStatementRepository.hasLockedStatementsForUpdate(month)) {
                 throw BusinessException.badRequest(
                     "补录订单关联月份含已锁定月结单，不能自动清理草稿，请先人工核对 " + month
                 );
@@ -1229,7 +1255,8 @@ public class ExternalRentalOrderService {
     }
 
     private AssetItem occupyAsset(Long assetId, StoreSku storeSku, String remark) {
-        var asset = ensureAsset(assetId);
+        var asset = assetRepository.findByIdForUpdate(assetId)
+            .orElseThrow(() -> BusinessException.badRequest("资产不存在"));
         if (asset.status() != AssetStatus.IDLE) {
             throw BusinessException.badRequest("所选资产不是空闲状态");
         }
@@ -1239,14 +1266,21 @@ public class ExternalRentalOrderService {
         if (externalRentalOrderRepository.findActiveByAsset(assetId).isPresent()) {
             throw BusinessException.badRequest("所选资产已被其他补录订单占用");
         }
-        var formalOrderOccupied = orderRepository.listByAsset(assetId).stream()
-            .anyMatch(item -> item.orderStatus() != OrderStatus.COMPLETED && item.orderStatus() != OrderStatus.CANCELLED);
-        if (formalOrderOccupied) {
+        if (orderRepository.hasActiveByAsset(assetId)) {
             throw BusinessException.badRequest("所选资产已被正式订单占用");
         }
         assetRepository.updateStatus(assetId, AssetStatus.RENTING, LocalDateTime.now());
         assetRepository.insertStatusLog(assetId, asset.status(), AssetStatus.RENTING, currentAccountId(), remark);
         return assetRepository.findById(assetId).orElseThrow();
+    }
+
+    private void lockAssetRows(Long... assetIds) {
+        java.util.Arrays.stream(assetIds)
+            .filter(java.util.Objects::nonNull)
+            .distinct()
+            .sorted()
+            .forEach(assetId -> assetRepository.findByIdForUpdate(assetId)
+                .orElseThrow(() -> BusinessException.badRequest("资产不存在")));
     }
 
     private void returnAssetToStore(Long assetId, AssetStatus nextStatus, Long returnMerchantId, Long returnStoreId, String remark) {

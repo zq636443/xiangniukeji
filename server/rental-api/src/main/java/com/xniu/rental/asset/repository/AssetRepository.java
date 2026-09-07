@@ -92,6 +92,54 @@ public class AssetRepository {
         return assets.stream().findFirst();
     }
 
+    public Optional<AssetItem> findByIdForUpdate(Long id) {
+        /* The locking read itself must return every mutable business field.
+         * A second plain read of asset_item could use an older REPEATABLE READ
+         * snapshot established before lock wait and incorrectly see IDLE.
+         * Keep type-definition metadata in a separate, non-locking lookup so
+         * unrelated assets of the same type are not serialized. */
+        var rows = jdbcTemplate.query("""
+            SELECT *
+            FROM asset_item
+            WHERE id = ?
+            FOR UPDATE
+            """, (rs, rowNum) -> new LockedAssetRow(
+            rs.getLong("id"),
+            rs.getString("asset_code"),
+            AssetType.valueOf(rs.getString("asset_type")),
+            rs.getLong("asset_type_id"),
+            rs.getString("serial_no"),
+            rs.getString("arrival_batch_no"),
+            nullableLong(rs, "investor_id"),
+            nullableLong(rs, "current_merchant_id"),
+            nullableLong(rs, "current_store_id"),
+            AssetStatus.valueOf(rs.getString("status")),
+            rs.getBigDecimal("purchase_amount"),
+            rs.getBigDecimal("maintenance_fee_amount"),
+            rs.getBigDecimal("residual_value"),
+            rs.getObject("purchased_at", LocalDate.class),
+            rs.getObject("scrapped_at", LocalDateTime.class),
+            rs.getObject("sold_at", LocalDateTime.class),
+            rs.getObject("created_at", LocalDateTime.class),
+            rs.getObject("updated_at", LocalDateTime.class)
+        ), id);
+        if (rows.isEmpty()) {
+            return Optional.empty();
+        }
+        var row = rows.getFirst();
+        var definition = jdbcTemplate.query("""
+            SELECT type_code, type_name, serial_label
+            FROM asset_type_definition
+            WHERE id = ?
+            """, (rs, rowNum) -> new AssetTypeMetadata(
+            rs.getString("type_code"),
+            rs.getString("type_name"),
+            rs.getString("serial_label")
+        ), row.assetTypeId()).stream().findFirst()
+            .orElseThrow(() -> new IllegalStateException("资产类型定义不存在: " + row.assetTypeId()));
+        return Optional.of(row.toAssetItem(definition));
+    }
+
     public Optional<AssetItem> findBySerialNoAndType(String serialNo, AssetType assetType) {
         var assets = jdbcTemplate.query(
             ASSET_SELECT + " WHERE a.serial_no = ? AND a.asset_type = ?",
@@ -248,6 +296,9 @@ public class AssetRepository {
               + (SELECT COUNT(*) FROM asset_maintenance_record WHERE asset_id = ?)
               + (SELECT COUNT(*) FROM settlement_rule_snapshot WHERE frame_asset_id = ? OR battery_asset_id = ?)
               + (SELECT COUNT(*) FROM settlement_statement_line WHERE asset_id = ?)
+              + (SELECT COUNT(*) FROM external_order_asset_change WHERE old_asset_id = ? OR new_asset_id = ?)
+              + (SELECT COUNT(*) FROM external_order_renewal_investor_allocation WHERE asset_id = ?)
+              + (SELECT COUNT(*) FROM external_order_initial_investor_allocation WHERE asset_id = ?)
             """, Integer.class,
             assetId, assetId,
             assetId, assetId,
@@ -257,6 +308,9 @@ public class AssetRepository {
             assetId,
             assetId,
             assetId, assetId,
+            assetId,
+            assetId, assetId,
+            assetId,
             assetId
         );
         return count == null ? 0 : count;
@@ -346,6 +400,11 @@ public class AssetRepository {
         }
     }
 
+    private static Long nullableLong(ResultSet rs, String column) throws SQLException {
+        var value = rs.getLong(column);
+        return rs.wasNull() ? null : value;
+    }
+
     private static class AssetMapper implements RowMapper<AssetItem> {
         @Override
         public AssetItem mapRow(ResultSet rs, int rowNum) throws SQLException {
@@ -359,7 +418,7 @@ public class AssetRepository {
                 rs.getString("definition_serial_label"),
                 rs.getString("serial_no"),
                 rs.getString("arrival_batch_no"),
-                rs.getLong("investor_id"),
+                getNullableLong(rs, "investor_id"),
                 getNullableLong(rs, "current_merchant_id"),
                 getNullableLong(rs, "current_store_id"),
                 AssetStatus.valueOf(rs.getString("status")),
@@ -391,6 +450,56 @@ public class AssetRepository {
                 rs.getString("to_value"),
                 rs.getString("remark"),
                 rs.getObject("created_at", LocalDateTime.class)
+            );
+        }
+    }
+
+    private record AssetTypeMetadata(String typeCode, String typeName, String serialLabel) {
+    }
+
+    private record LockedAssetRow(
+        Long id,
+        String assetCode,
+        AssetType assetType,
+        Long assetTypeId,
+        String serialNo,
+        String arrivalBatchNo,
+        Long investorId,
+        Long currentMerchantId,
+        Long currentStoreId,
+        AssetStatus status,
+        BigDecimal purchaseAmount,
+        BigDecimal maintenanceFeeAmount,
+        BigDecimal residualValue,
+        LocalDate purchasedAt,
+        LocalDateTime scrappedAt,
+        LocalDateTime soldAt,
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt
+    ) {
+        private AssetItem toAssetItem(AssetTypeMetadata definition) {
+            return new AssetItem(
+                id,
+                assetCode,
+                assetType,
+                assetTypeId,
+                definition.typeCode(),
+                definition.typeName(),
+                definition.serialLabel(),
+                serialNo,
+                arrivalBatchNo,
+                investorId,
+                currentMerchantId,
+                currentStoreId,
+                status,
+                purchaseAmount,
+                maintenanceFeeAmount,
+                residualValue,
+                purchasedAt,
+                scrappedAt,
+                soldAt,
+                createdAt,
+                updatedAt
             );
         }
     }

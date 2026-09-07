@@ -306,6 +306,32 @@ public class ExternalRentalOrderRepository {
         return count != null && count > 0;
     }
 
+    public boolean existsOtherActiveByAssetForUpdate(Long assetId, Long excludedOrderId) {
+        var ids = jdbcTemplate.queryForList("""
+            SELECT id
+            FROM external_rental_order
+            WHERE order_status = 'ACTIVE'
+              AND id <> ?
+              AND (frame_asset_id = ? OR battery_asset_id = ?)
+            FOR UPDATE
+            """, Long.class, excludedOrderId, assetId, assetId);
+        return !ids.isEmpty();
+    }
+
+    public ExternalRentalOrder updateAssets(
+        Long id,
+        Long frameAssetId,
+        Long batteryAssetId,
+        Long updatedByAccountId
+    ) {
+        jdbcTemplate.update("""
+            UPDATE external_rental_order
+            SET frame_asset_id = ?, battery_asset_id = ?, updated_by_account_id = ?
+            WHERE id = ?
+            """, frameAssetId, batteryAssetId, updatedByAccountId, id);
+        return findById(id).orElseThrow();
+    }
+
     public List<ExternalRentalOrderView> listByAsset(Long assetId) {
         return jdbcTemplate.query("""
             SELECT eo.*,
@@ -494,6 +520,8 @@ public class ExternalRentalOrderRepository {
 
     public void delete(Long id) {
         jdbcTemplate.update("DELETE FROM external_order_pricing_revision WHERE external_order_id = ?", id);
+        jdbcTemplate.update("DELETE FROM external_order_initial_investor_allocation WHERE external_order_id = ?", id);
+        jdbcTemplate.update("DELETE FROM external_order_asset_change WHERE external_order_id = ?", id);
         jdbcTemplate.update("DELETE FROM external_rental_order WHERE id = ?", id);
     }
 

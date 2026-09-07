@@ -6,6 +6,7 @@ public enum ExternalOrderOperationType {
     AUTO_RENEW,
     MANUAL_RENEW,
     RENEWAL_PRICING_ADJUSTMENT,
+    REPLACE_ASSET,
     COMPLETE,
     TERMINATE
 }

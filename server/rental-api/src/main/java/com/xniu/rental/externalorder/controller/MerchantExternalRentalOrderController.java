@@ -19,6 +19,9 @@ import com.xniu.rental.externalorder.dto.ExternalOrderManualRenewalRequest;
 import com.xniu.rental.externalorder.service.ExternalOrderManualRenewalService;
 import com.xniu.rental.externalorder.service.ExternalOrderRenewalPricingService;
 import com.xniu.rental.externalorder.service.ExternalRentalOrderService;
+import com.xniu.rental.externalorder.service.ExternalOrderAssetReplacementService;
+import com.xniu.rental.externalorder.dto.ExternalOrderAssetChangeResponse;
+import com.xniu.rental.asset.dto.AssetReplaceRequest;
 import com.xniu.rental.merchant.service.MerchantService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -42,17 +45,20 @@ public class MerchantExternalRentalOrderController {
     private final MerchantService merchantService;
     private final ExternalOrderRenewalPricingService pricingService;
     private final ExternalOrderManualRenewalService manualRenewalService;
+    private final ExternalOrderAssetReplacementService assetReplacementService;
 
     public MerchantExternalRentalOrderController(
         ExternalRentalOrderService externalRentalOrderService,
         MerchantService merchantService,
         ExternalOrderRenewalPricingService pricingService,
-        ExternalOrderManualRenewalService manualRenewalService
+        ExternalOrderManualRenewalService manualRenewalService,
+        ExternalOrderAssetReplacementService assetReplacementService
     ) {
         this.externalRentalOrderService = externalRentalOrderService;
         this.merchantService = merchantService;
         this.pricingService = pricingService;
         this.manualRenewalService = manualRenewalService;
+        this.assetReplacementService = assetReplacementService;
     }
 
     @GetMapping
@@ -96,6 +102,14 @@ public class MerchantExternalRentalOrderController {
         @Valid @RequestBody ExternalRentalOrderUpdateRequest request
     ) {
         return ApiResponse.ok(externalRentalOrderService.updateOrder(id, request));
+    }
+
+    @PostMapping("/{id}/replace-asset")
+    public ApiResponse<ExternalOrderAssetChangeResponse> replaceAsset(
+        @PathVariable Long id,
+        @Valid @RequestBody AssetReplaceRequest request
+    ) {
+        return ApiResponse.ok(assetReplacementService.replace(id, request));
     }
 
     @DeleteMapping("/{id}")

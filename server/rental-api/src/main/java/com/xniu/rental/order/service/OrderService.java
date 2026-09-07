@@ -185,7 +185,12 @@ public class OrderService {
         if (assetId == null) {
             return null;
         }
-        var asset = assetRepository.findById(assetId)
+        /* Formal orders pre-bind assets while they are still IDLE.  A current
+         * locking read is therefore the serialization point shared with
+         * supplemental replacement: whichever transaction owns the asset
+         * first commits its decision, and the waiter validates the committed
+         * status/occupancy rather than an old REPEATABLE_READ snapshot. */
+        var asset = assetRepository.findByIdForUpdate(assetId)
             .orElseThrow(() -> BusinessException.badRequest("资产不存在"));
         if (!asset.assetType().canBindAs(expectedType)) {
             throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择主资产或自定义资产" : "请选择电池资产");

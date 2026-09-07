@@ -8,6 +8,7 @@ import {
   EditOutlined,
   RiseOutlined,
   ShopOutlined,
+  SwapOutlined,
   ThunderboltOutlined,
   WalletOutlined
 } from '@ant-design/icons';
@@ -31,6 +32,7 @@ import { http } from '../services/request';
 import type {
   Asset,
   BatteryPayableSummary,
+  CurrentAccount,
   DeductRecord,
   ExternalOrderRenewal,
   ExternalRentalOrder,
@@ -135,7 +137,11 @@ const initialData: DashboardData = {
   incomeEntries: []
 };
 
-export function Dashboard() {
+type Props = {
+  account: CurrentAccount;
+};
+
+export function Dashboard({ account }: Props) {
   const [data, setData] = useState<DashboardData>(initialData);
   const [period, setPeriod] = useState<CockpitPeriod>('MONTH');
   const [customRange, setCustomRange] = useState<CockpitCustomRange>(null);
@@ -144,6 +150,7 @@ export function Dashboard() {
   const [selectedInvestorId, setSelectedInvestorId] = useState<number>();
   const [detailRecord, setDetailRecord] = useState<DashboardBusinessRecord | null>(null);
   const [editingRecord, setEditingRecord] = useState<DashboardBusinessRecord | null>(null);
+  const [replacementOrder, setReplacementOrder] = useState<ExternalRentalOrder | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
@@ -154,6 +161,7 @@ export function Dashboard() {
     error: string;
   }>({ queryKey: '', data: null, error: '' });
   const batteryPayableRequestId = useRef(0);
+  const canOperateOrders = account.permissions.includes('order.operate') || account.permissions.includes('system.admin');
   const batteryPayableMonth = monthKey(selectedMonth);
   const batteryPayableQueryKey = `${batteryPayableMonth}:${selectedStoreId ?? 'ALL'}`;
 
@@ -744,10 +752,11 @@ export function Dashboard() {
               { title: '业务时间', dataIndex: 'occurredAt', width: 170, render: dateTimeText },
               {
                 title: '操作',
-                width: 150,
+                width: 220,
                 fixed: 'right',
                 render: (_, record) => {
                   const editable = canEditDashboardBusiness(record.businessRecord);
+                  const externalOrder = record.businessRecord.sourceType === 'EXTERNAL' ? record.businessRecord.order : null;
                   return (
                     <Space size={4}>
                       <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setDetailRecord(record.businessRecord)}>详情</Button>
@@ -756,6 +765,16 @@ export function Dashboard() {
                           <Button size="small" type="link" icon={<EditOutlined />} disabled={!editable} onClick={() => setEditingRecord(record.businessRecord)}>编辑</Button>
                         </span>
                       </Tooltip>
+                      {canOperateOrders && externalOrder?.orderStatus === 'ACTIVE' ? (
+                        <Button
+                          size="small"
+                          type="link"
+                          icon={<SwapOutlined />}
+                          onClick={() => setReplacementOrder(externalOrder)}
+                        >
+                          更换资产
+                        </Button>
+                      ) : null}
                     </Space>
                   );
                 }
@@ -786,10 +805,12 @@ export function Dashboard() {
       <BusinessOrderDialogs
         detailRecord={detailRecord}
         editingRecord={editingRecord}
+        replacementOrder={replacementOrder}
         storeSkus={data.storeSkus}
         assets={data.assets}
         onCloseDetail={() => setDetailRecord(null)}
         onCloseEdit={() => setEditingRecord(null)}
+        onCloseReplacement={() => setReplacementOrder(null)}
         onUpdated={loadData}
       />
     </Space>

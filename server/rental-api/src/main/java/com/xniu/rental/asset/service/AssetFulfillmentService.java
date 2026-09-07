@@ -78,7 +78,7 @@ public class AssetFulfillmentService {
     @Transactional
     public AssetHandoverResponse pickup(Long orderId, AssetPickupRequest request) {
         authorizationService.requirePermission("order.operate");
-        var order = ensureOrder(orderId);
+        var order = ensureOrderForUpdate(orderId);
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         if (order.orderStatus() != OrderStatus.PENDING_PICKUP) {
             throw BusinessException.badRequest("只有待取车订单可以取车绑定");
@@ -89,7 +89,7 @@ public class AssetFulfillmentService {
     @Transactional
     public AssetHandoverResponse shipWithoutPayment(Long orderId, AssetPickupRequest request) {
         authorizationService.requirePermission("order.operate");
-        var order = ensureOrder(orderId);
+        var order = ensureOrderForUpdate(orderId);
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         if (order.orderStatus() != OrderStatus.PENDING_PAYMENT) {
             throw BusinessException.badRequest("只有待支付订单可以选择免付款发货");
@@ -149,7 +149,12 @@ public class AssetFulfillmentService {
     @Transactional
     public AssetChangeResponse replaceAsset(Long orderId, AssetReplaceRequest request) {
         authorizationService.requirePermission("order.operate");
-        var order = ensureOrder(orderId);
+        /* Serialize two operators replacing the same formal order (A -> B and
+         * A -> C) before either one locks a target asset.  Without the order
+         * lock the loser could still release A after the winner already bound
+         * B, leaking an occupied asset state. */
+        var order = orderRepository.findByIdForUpdate(orderId)
+            .orElseThrow(() -> BusinessException.badRequest("订单不存在"));
         authorizationService.requireStoreAccess(order.merchantId(), order.storeId());
         if (order.orderStatus() != OrderStatus.RENTING && order.orderStatus() != OrderStatus.PENDING_RETURN && order.orderStatus() != OrderStatus.PENDING_SUPPLEMENT) {
             throw BusinessException.badRequest("只有履约中的订单可以更换资产");
@@ -196,7 +201,7 @@ public class AssetFulfillmentService {
     public AssetHandoverResponse returnAssets(Long orderId, AssetReturnRequest request) {
         authorizationService.requirePermission("order.operate");
         request = request == null ? new AssetReturnRequest(null, null, null, null) : request;
-        var order = ensureOrder(orderId);
+        var order = ensureOrderForUpdate(orderId);
         var returnStore = resolveReturnStore(order, request);
         authorizationService.requireStoreAccess(order.merchantId(), returnStore.id());
         if (order.orderStatus() != OrderStatus.RENTING
@@ -261,7 +266,7 @@ public class AssetFulfillmentService {
     }
 
     private void returnAssetToStore(Long assetId, AssetStatus nextStatus, Long returnMerchantId, Long returnStoreId, String remark) {
-        var asset = ensureAsset(assetId);
+        var asset = ensureAssetForUpdate(assetId);
         if (asset.status() != nextStatus) {
             assetRepository.updateStatus(assetId, nextStatus, LocalDateTime.now());
             assetRepository.insertStatusLog(assetId, asset.status(), nextStatus, currentAccountId(), remark);
@@ -280,7 +285,8 @@ public class AssetFulfillmentService {
     }
 
     private AssetItem ensureAssetReadyForOrder(Long assetId, AssetType expectedType, RentalOrder order) {
-        var asset = ensureAsset(assetId);
+        var asset = assetRepository.findByIdForUpdate(assetId)
+            .orElseThrow(() -> BusinessException.badRequest("资产不存在"));
         if (!asset.assetType().canBindAs(expectedType)) {
             throw BusinessException.badRequest(expectedType == AssetType.VEHICLE_FRAME ? "请选择主资产或自定义资产" : "请选择电池资产");
         }
@@ -342,7 +348,7 @@ public class AssetFulfillmentService {
     }
 
     private void markAssetStatus(Long assetId, AssetStatus nextStatus, String remark) {
-        var asset = ensureAsset(assetId);
+        var asset = ensureAssetForUpdate(assetId);
         if (asset.status() == nextStatus) {
             return;
         }
@@ -350,12 +356,20 @@ public class AssetFulfillmentService {
         assetRepository.insertStatusLog(assetId, asset.status(), nextStatus, currentAccountId(), remark);
     }
 
-    private RentalOrder ensureOrder(Long orderId) {
-        return orderRepository.findById(orderId).orElseThrow(() -> BusinessException.badRequest("订单不存在"));
+    /** All formal-order fulfillment mutations acquire the order before any
+     * asset row, matching replaceAsset and preventing order/asset lock cycles. */
+    private RentalOrder ensureOrderForUpdate(Long orderId) {
+        return orderRepository.findByIdForUpdate(orderId)
+            .orElseThrow(() -> BusinessException.badRequest("订单不存在"));
     }
 
     private AssetItem ensureAsset(Long assetId) {
         return assetRepository.findById(assetId).orElseThrow(() -> BusinessException.badRequest("资产不存在"));
+    }
+
+    private AssetItem ensureAssetForUpdate(Long assetId) {
+        return assetRepository.findByIdForUpdate(assetId)
+            .orElseThrow(() -> BusinessException.badRequest("资产不存在"));
     }
 
     private LocalDateTime expectedReturnAt(LocalDateTime startedAt, RentalOrder order) {

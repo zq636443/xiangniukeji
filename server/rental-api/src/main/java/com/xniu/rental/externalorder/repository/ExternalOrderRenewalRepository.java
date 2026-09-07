@@ -154,6 +154,22 @@ public class ExternalOrderRenewalRepository {
             """, mapper, externalOrderId);
     }
 
+    /** Lock every accrued event that is wholly or partly effective after a replacement. */
+    public List<ExternalOrderRenewalEvent> listEffectiveAfterForUpdate(
+        Long externalOrderId,
+        LocalDateTime effectiveAt
+    ) {
+        return jdbcTemplate.query("""
+            SELECT *
+            FROM external_order_renewal_event
+            WHERE external_order_id = ?
+              AND event_status = 'ACCRUED'
+              AND period_end_at > ?
+            ORDER BY period_start_at, id
+            FOR UPDATE
+            """, mapper, externalOrderId, effectiveAt);
+    }
+
     /** Only unreversed accrued periods make the order's future schedule
      * immutable. Terminated orders retain reversed events for audit, but those
      * rows must not block a later correction of the order record. */
@@ -339,6 +355,13 @@ public class ExternalOrderRenewalRepository {
               AND e.entry_status = 'PENDING'
             """, externalOrderId);
         jdbcTemplate.update("""
+            DELETE allocation_row
+            FROM external_order_renewal_investor_allocation allocation_row
+            JOIN external_order_renewal_event event_row
+              ON event_row.id = allocation_row.renewal_event_id
+            WHERE event_row.external_order_id = ?
+            """, externalOrderId);
+        jdbcTemplate.update("""
             DELETE s
             FROM settlement_rule_snapshot s
             JOIN external_order_renewal_event r ON r.id = s.source_id
@@ -353,6 +376,13 @@ public class ExternalOrderRenewalRepository {
     }
 
     public void deleteByExternalOrder(Long externalOrderId) {
+        jdbcTemplate.update("""
+            DELETE allocation_row
+            FROM external_order_renewal_investor_allocation allocation_row
+            JOIN external_order_renewal_event event_row
+              ON event_row.id = allocation_row.renewal_event_id
+            WHERE event_row.external_order_id = ?
+            """, externalOrderId);
         jdbcTemplate.update(
             "DELETE FROM external_order_renewal_event WHERE external_order_id = ?",
             externalOrderId

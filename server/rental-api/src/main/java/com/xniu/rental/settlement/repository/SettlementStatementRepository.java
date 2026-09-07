@@ -49,6 +49,31 @@ public class SettlementStatementRepository {
         return count != null && count > 0;
     }
 
+    /** Current locking read for mutation paths after the month lock. */
+    public boolean hasLockedStatementsForUpdate(String statementMonth) {
+        return statementStatusesForUpdate(statementMonth).stream().anyMatch(status -> switch (status) {
+            case "CONFIRMED", "PAYABLE", "PAID", "CLOSED" -> true;
+            default -> false;
+        });
+    }
+
+    /** Current locking read for mutation paths after the month lock. */
+    public boolean hasDraftStatementsForUpdate(String statementMonth) {
+        return statementStatusesForUpdate(statementMonth).stream().anyMatch(status ->
+            "DRAFT".equals(status) || "RECONCILING".equals(status)
+        );
+    }
+
+    private List<String> statementStatusesForUpdate(String statementMonth) {
+        return jdbcTemplate.queryForList("""
+            SELECT status
+            FROM settlement_statement
+            WHERE statement_month = ?
+            ORDER BY id
+            FOR UPDATE
+            """, String.class, statementMonth);
+    }
+
     public void deleteDraftStatements(String statementMonth) {
         jdbcTemplate.update("""
             DELETE l

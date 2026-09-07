@@ -26,6 +26,7 @@ import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
 import com.xniu.rental.externalorder.repository.ExternalOrderRenewalRepository;
 import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
 import com.xniu.rental.externalorder.service.ExternalOrderManualRenewalService;
+import com.xniu.rental.externalorder.service.ExternalOrderRenewalAllocationService;
 import com.xniu.rental.product.model.ProductSku;
 import com.xniu.rental.product.repository.ProductRepository;
 import com.xniu.rental.settlement.dto.SettlementSnapshotResponse;
@@ -80,6 +81,9 @@ class ExternalOrderManualRenewalServiceContractTests {
 
     @Mock
     private AuthorizationService authorizationService;
+
+    @Mock
+    private ExternalOrderRenewalAllocationService renewalAllocationService;
 
     @Mock
     private ExternalRentalOrder order;
@@ -162,14 +166,17 @@ class ExternalOrderManualRenewalServiceContractTests {
             42L,
             10L,
             new BigDecimal("397.30"),
-            new BigDecimal("210.80")
+            new BigDecimal("210.80"),
+            51L,
+            52L
         );
         writes.verify(settlementIncomeService).createExternalRenewalEntries(
             42L,
             "ERN-contract",
             99L,
             START,
-            new BigDecimal("397.30")
+            new BigDecimal("397.30"),
+            List.of()
         );
         writes.verify(orderRepository).advanceExpectedReturnAt(1L, end);
     }
@@ -214,8 +221,12 @@ class ExternalOrderManualRenewalServiceContractTests {
         verify(renewalRepository, never()).create(
             anyLong(), anyString(), anyInt(), any(), any(), any(), any(), any(), any(), any(), any()
         );
-        verify(settlementService, never()).createExternalRenewalSnapshot(anyLong(), anyLong(), any(), any());
-        verify(settlementIncomeService, never()).createExternalRenewalEntries(anyLong(), anyString(), anyLong(), any(), any());
+        verify(settlementService, never()).createExternalRenewalSnapshot(
+            anyLong(), anyLong(), any(), any(), any(), any()
+        );
+        verify(settlementIncomeService, never()).createExternalRenewalEntries(
+            anyLong(), anyString(), anyLong(), any(), any(), any()
+        );
         verify(orderRepository, never()).advanceExpectedReturnAt(anyLong(), any());
     }
 
@@ -250,7 +261,7 @@ class ExternalOrderManualRenewalServiceContractTests {
         when(order.orderStatus()).thenReturn(ExternalRentalOrderStatus.ACTIVE);
         when(order.expectedReturnAt()).thenReturn(START);
         when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
-        when(settlementStatementRepository.hasLockedStatements("2026-08")).thenReturn(true);
+        when(settlementStatementRepository.hasLockedStatementsForUpdate("2026-08")).thenReturn(true);
 
         assertThatThrownBy(() -> service.create(1L, new ExternalOrderManualRenewalRequest(
             START,
@@ -273,7 +284,7 @@ class ExternalOrderManualRenewalServiceContractTests {
         prepareActiveOrder(null, null);
         var end = START.plusDays(20);
         prepareCreatedEvent(end, new BigDecimal("96.00"), BigDecimal.ZERO.setScale(2), "草稿月续租");
-        when(settlementStatementRepository.hasDraftStatements("2026-08")).thenReturn(true);
+        when(settlementStatementRepository.hasDraftStatementsForUpdate("2026-08")).thenReturn(true);
 
         service.create(1L, new ExternalOrderManualRenewalRequest(
             START,
@@ -294,6 +305,8 @@ class ExternalOrderManualRenewalServiceContractTests {
         when(order.orderStatus()).thenReturn(ExternalRentalOrderStatus.ACTIVE);
         when(order.expectedReturnAt()).thenReturn(START);
         when(order.settlementSnapshotId()).thenReturn(10L);
+        lenient().when(order.frameAssetId()).thenReturn(51L);
+        lenient().when(order.batteryAssetId()).thenReturn(52L);
         lenient().when(order.renewalAmount()).thenReturn(new BigDecimal("129.00"));
         when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
 
@@ -341,8 +354,9 @@ class ExternalOrderManualRenewalServiceContractTests {
             eq(remark)
         )).thenReturn(event);
         when(eventSnapshot.id()).thenReturn(99L);
-        when(settlementService.createExternalRenewalSnapshot(42L, 10L, amount, batteryCost))
+        when(settlementService.createExternalRenewalSnapshot(42L, 10L, amount, batteryCost, 51L, 52L))
             .thenReturn(eventSnapshot);
         when(renewalRepository.attachSnapshot(42L, 99L)).thenReturn(event);
+        when(renewalAllocationService.freezeCurrentAssets(event, 99L)).thenReturn(List.of());
     }
 }

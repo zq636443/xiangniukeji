@@ -6,6 +6,8 @@ import com.xniu.rental.asset.repository.AssetRepository;
 import com.xniu.rental.auth.security.AuthContext;
 import com.xniu.rental.auth.security.AuthorizationService;
 import com.xniu.rental.common.BusinessException;
+import com.xniu.rental.externalorder.repository.ExternalOrderAssetChangeRepository;
+import com.xniu.rental.externalorder.repository.ExternalOrderRenewalAllocationRepository;
 import com.xniu.rental.settlement.dto.BatteryPayableResponse;
 import com.xniu.rental.settlement.dto.SettlementOverviewResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementGenerateResponse;
@@ -13,6 +15,9 @@ import com.xniu.rental.settlement.dto.SettlementStatementLineResponse;
 import com.xniu.rental.settlement.dto.SettlementStatementResponse;
 import com.xniu.rental.settlement.dto.StoreProfitOverviewResponse;
 import com.xniu.rental.settlement.model.SettlementRuleSnapshot;
+import com.xniu.rental.settlement.model.IncomeBeneficiaryType;
+import com.xniu.rental.settlement.model.IncomeLineType;
+import com.xniu.rental.settlement.model.IncomeSourceType;
 import com.xniu.rental.settlement.model.SettlementStatement;
 import com.xniu.rental.settlement.model.SettlementStatementLine;
 import com.xniu.rental.settlement.model.SettlementStatementLineType;
@@ -51,6 +56,8 @@ public class SettlementStatementService {
     private final AssetFulfillmentRepository assetFulfillmentRepository;
     private final AssetRepository assetRepository;
     private final AuthorizationService authorizationService;
+    private final ExternalOrderRenewalAllocationRepository renewalAllocationRepository;
+    private final ExternalOrderAssetChangeRepository externalOrderAssetChangeRepository;
 
     public SettlementStatementService(
         SettlementStatementRepository statementRepository,
@@ -59,7 +66,9 @@ public class SettlementStatementService {
         SettlementIncomeService settlementIncomeService,
         AssetFulfillmentRepository assetFulfillmentRepository,
         AssetRepository assetRepository,
-        AuthorizationService authorizationService
+        AuthorizationService authorizationService,
+        ExternalOrderRenewalAllocationRepository renewalAllocationRepository,
+        ExternalOrderAssetChangeRepository externalOrderAssetChangeRepository
     ) {
         this.statementRepository = statementRepository;
         this.incomeRepository = incomeRepository;
@@ -68,6 +77,8 @@ public class SettlementStatementService {
         this.assetFulfillmentRepository = assetFulfillmentRepository;
         this.assetRepository = assetRepository;
         this.authorizationService = authorizationService;
+        this.renewalAllocationRepository = renewalAllocationRepository;
+        this.externalOrderAssetChangeRepository = externalOrderAssetChangeRepository;
     }
 
     @Transactional
@@ -120,7 +131,7 @@ public class SettlementStatementService {
         // locked month must never be deleted while another transaction is
         // confirming or paying one of its statements.
         statementRepository.lockStatementsByMonthForUpdate(month);
-        if (statementRepository.hasLockedStatements(month)) {
+        if (statementRepository.hasLockedStatementsForUpdate(month)) {
             throw BusinessException.badRequest("该月份已存在已确认或已支付月结单，不能重新生成");
         }
         statementRepository.deleteDraftStatements(month);
@@ -387,7 +398,7 @@ public class SettlementStatementService {
                     BigDecimal.ZERO
                 );
             }
-            for (var allocation : buildInvestorAllocations(snapshot, null, settlementBase, null)) {
+            for (var allocation : externalOrderInvestorAllocations(snapshot, settlementBase)) {
                 if (allocation.grossRentAmount().signum() <= 0) {
                     continue;
                 }
@@ -463,7 +474,7 @@ public class SettlementStatementService {
                     BigDecimal.ZERO
                 );
             }
-            for (var allocation : buildInvestorAllocations(snapshot, null, settlementBase, null)) {
+            for (var allocation : externalRenewalInvestorAllocations(snapshot, settlementBase)) {
                 if (allocation.grossRentAmount().signum() <= 0) {
                     continue;
                 }
@@ -981,6 +992,107 @@ public class SettlementStatementService {
         return rentByInvestor.entrySet().stream()
             .map(entry -> new InvestorAllocation(entry.getKey(), money(entry.getValue()), money(grossByInvestor.get(entry.getKey()))))
             .toList();
+    }
+
+    private List<InvestorAllocation> externalRenewalInvestorAllocations(
+        SettlementRuleSnapshot snapshot,
+        BigDecimal settlementBase
+    ) {
+        var frozen = renewalAllocationRepository.listTotalsBySnapshot(snapshot.id());
+        if (!frozen.isEmpty()) {
+            return frozen.stream()
+                .map(item -> new InvestorAllocation(
+                    item.investorId(),
+                    money(item.rentBaseAmount()),
+                    money(item.investorShareAmount())
+                ))
+                .toList();
+        }
+        var incomeFrozen = frozenIncomeInvestorAllocations(
+            IncomeSourceType.EXTERNAL_RENEWAL, snapshot, settlementBase
+        );
+        if (!incomeFrozen.isEmpty()) {
+            return incomeFrozen;
+        }
+        if (expectedExternalInvestorGross(snapshot, settlementBase).signum() > 0
+            && externalOrderAssetChangeRepository.existsForRenewalEventOrder(snapshot.sourceId())) {
+            throw BusinessException.badRequest("补录续租出资方冻结归属缺失，不能按当前资产归属生成月结");
+        }
+        return buildInvestorAllocations(snapshot, null, settlementBase, null);
+    }
+
+    private List<InvestorAllocation> externalOrderInvestorAllocations(
+        SettlementRuleSnapshot snapshot,
+        BigDecimal settlementBase
+    ) {
+        var frozen = frozenIncomeInvestorAllocations(
+            IncomeSourceType.EXTERNAL_ORDER, snapshot, settlementBase
+        );
+        if (!frozen.isEmpty()) {
+            return frozen;
+        }
+        if (expectedExternalInvestorGross(snapshot, settlementBase).signum() > 0
+            && externalOrderAssetChangeRepository.existsByExternalOrder(snapshot.sourceId())) {
+            throw BusinessException.badRequest("补录订单初始出资方冻结归属缺失，不能按当前资产归属生成月结");
+        }
+        return buildInvestorAllocations(snapshot, null, settlementBase, null);
+    }
+
+    private List<InvestorAllocation> frozenIncomeInvestorAllocations(
+        IncomeSourceType sourceType,
+        SettlementRuleSnapshot snapshot,
+        BigDecimal settlementBase
+    ) {
+        var expectedLineType = snapshot.calculationVersion().usesProfitSharing()
+            ? IncomeLineType.INVESTOR_SHARE
+            : IncomeLineType.INVESTOR_NET_RENT;
+        var grossByInvestor = new LinkedHashMap<Long, BigDecimal>();
+        incomeRepository.listBySource(sourceType, snapshot.sourceId()).stream()
+            .filter(entry -> snapshot.id().equals(entry.snapshotId()))
+            .filter(entry -> entry.beneficiaryType() == IncomeBeneficiaryType.INVESTOR)
+            .filter(entry -> entry.lineType() == expectedLineType)
+            .filter(entry -> entry.beneficiaryId() != null)
+            .forEach(entry -> grossByInvestor.merge(
+                entry.beneficiaryId(), money(entry.amount()), BigDecimal::add
+            ));
+        grossByInvestor.entrySet().removeIf(entry -> entry.getValue().signum() <= 0);
+        if (grossByInvestor.isEmpty()) {
+            return List.of();
+        }
+        var totalGross = grossByInvestor.values().stream()
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+        var rows = grossByInvestor.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .toList();
+        var remainingBase = money(settlementBase);
+        var result = new ArrayList<InvestorAllocation>();
+        for (var index = 0; index < rows.size(); index += 1) {
+            var row = rows.get(index);
+            var rentBase = index == rows.size() - 1
+                ? remainingBase
+                : money(settlementBase).multiply(row.getValue())
+                    .divide(totalGross, 2, RoundingMode.DOWN);
+            if (rentBase.signum() < 0 || rentBase.compareTo(remainingBase) > 0) {
+                throw BusinessException.badRequest("补录订单出资方月结分配不守恒");
+            }
+            remainingBase = remainingBase.subtract(rentBase);
+            result.add(new InvestorAllocation(
+                row.getKey(), money(rentBase), money(row.getValue())
+            ));
+        }
+        if (remainingBase.signum() != 0) {
+            throw BusinessException.badRequest("补录订单出资方月结分配不守恒");
+        }
+        return List.copyOf(result);
+    }
+
+    private BigDecimal expectedExternalInvestorGross(
+        SettlementRuleSnapshot snapshot,
+        BigDecimal settlementBase
+    ) {
+        return money(snapshot.calculationVersion().usesProfitSharing()
+            ? snapshot.investorShareAmount()
+            : money(settlementBase).multiply(snapshot.investorRentShareRate()));
     }
 
     private boolean externalFrozenInvestorShare(SettlementRuleSnapshot snapshot) {
