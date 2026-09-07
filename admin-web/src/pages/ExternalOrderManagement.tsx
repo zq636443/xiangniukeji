@@ -1,5 +1,6 @@
-import { DeleteOutlined, DollarOutlined, EditOutlined, SwapOutlined } from '@ant-design/icons';
-import { Alert, Button, Checkbox, DatePicker, Descriptions, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { DeleteOutlined, DollarOutlined, EditOutlined, MoreOutlined, SwapOutlined } from '@ant-design/icons';
+import { Alert, Button, Checkbox, DatePicker, Descriptions, Dropdown, Empty, Form, Grid, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
+import type { MenuProps } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { ExternalOrderAssetReplacementModal } from '../components/ExternalOrderAssetReplacementModal';
@@ -126,6 +127,8 @@ const returnStatusOptions = [
 ] as const;
 
 export function ExternalOrderManagement({ account, scope, storeId }: Props) {
+  const screens = Grid.useBreakpoint();
+  const useFixedTableColumns = screens.md !== false;
   const [orders, setOrders] = useState<ExternalRentalOrder[]>([]);
   const [renewals, setRenewals] = useState<ExternalOrderRenewal[]>([]);
   const [storeSkus, setStoreSkus] = useState<StoreSku[]>([]);
@@ -136,6 +139,7 @@ export function ExternalOrderManagement({ account, scope, storeId }: Props) {
   const [selectedOrder, setSelectedOrder] = useState<ExternalRentalOrder | null>(null);
   const [editingOrder, setEditingOrder] = useState<ExternalRentalOrder | null>(null);
   const [replacementOrder, setReplacementOrder] = useState<ExternalRentalOrder | null>(null);
+  const [deleteOrderTarget, setDeleteOrderTarget] = useState<ExternalRentalOrder | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -163,6 +167,7 @@ export function ExternalOrderManagement({ account, scope, storeId }: Props) {
   const [batchPricingForm] = Form.useForm<PricingForm>();
   const [confirmPricingForm] = Form.useForm<ConfirmPricingForm>();
   const canOperate = account.permissions.includes('order.operate') || account.permissions.includes('system.admin');
+  const deletingCurrentOrder = Boolean(deleteOrderTarget && deletingOrderId === deleteOrderTarget.id);
 
   const selectedStoreSkuId = Form.useWatch('storeSkuId', createForm);
   const selectedPackageId = Form.useWatch('packageId', createForm);
@@ -670,11 +675,62 @@ export function ExternalOrderManagement({ account, scope, storeId }: Props) {
         setSelectedOrder(null);
         setDetailOpen(false);
       }
+      setDeleteOrderTarget(null);
       await loadAll();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '补录订单删除失败');
     } finally {
       setDeletingOrderId(null);
+    }
+  }
+
+  function moreActionItems(record: ExternalRentalOrder): MenuProps['items'] {
+    const activeItems: MenuProps['items'] = record.orderStatus === 'ACTIVE'
+      ? [
+          { key: 'pricing', icon: <DollarOutlined />, label: '续租调价' },
+          { key: 'manual-renewal', label: '人工续租' },
+          { key: 'complete', label: '完结订单' },
+          { key: 'terminate', danger: true, label: '提前终止' }
+        ]
+      : [];
+    return [
+      { key: 'edit', icon: <EditOutlined />, label: '编辑订单资料' },
+      { type: 'divider' as const },
+      ...activeItems,
+      ...(activeItems.length ? [{ type: 'divider' as const }] : []),
+      {
+        key: 'delete',
+        danger: true,
+        disabled: deletingOrderId === record.id,
+        icon: <DeleteOutlined />,
+        label: '删除补录订单'
+      }
+    ];
+  }
+
+  function handleMoreAction(key: string, record: ExternalRentalOrder) {
+    if (key === 'edit') {
+      openEdit(record);
+      return;
+    }
+    if (key === 'pricing') {
+      openPricing(record);
+      return;
+    }
+    if (key === 'manual-renewal') {
+      openManualRenewal(record);
+      return;
+    }
+    if (key === 'complete') {
+      openComplete(record);
+      return;
+    }
+    if (key === 'terminate') {
+      openTerminate(record);
+      return;
+    }
+    if (key === 'delete') {
+      setDeleteOrderTarget(record);
     }
   }
 
@@ -790,16 +846,27 @@ export function ExternalOrderManagement({ account, scope, storeId }: Props) {
           loading={loading}
           dataSource={orders}
           rowSelection={{
+            fixed: useFixedTableColumns,
             selectedRowKeys: selectedOrderIds,
             onChange: (keys) => setSelectedOrderIds(keys.map(Number))
           }}
           pagination={false}
           locale={{ emptyText: <Empty description="暂无补录订单" /> }}
           columns={[
-            { title: '台账号', dataIndex: 'recordNo', width: 140 },
+            {
+              title: '客户信息',
+              width: 180,
+              fixed: useFixedTableColumns ? 'left' : undefined,
+              render: (_, record) => (
+                <div>
+                  <div>{record.customerName || '-'}</div>
+                  <Typography.Text type="secondary">{record.customerPhone || '-'}</Typography.Text>
+                </div>
+              )
+            },
+            { title: '台账号', dataIndex: 'recordNo', width: 140, fixed: useFixedTableColumns ? 'left' : undefined },
             { title: '来源', dataIndex: 'sourcePlatform', width: 100, render: sourceTag },
             { title: '外部单号', dataIndex: 'externalOrderNo', width: 160, render: textOrDash },
-            { title: '客户', width: 150, render: (_, record) => `${record.customerName} / ${record.customerPhone}` },
             ...(scope === 'admin'
               ? [{ title: '门店', width: 180, render: (_: unknown, record: ExternalRentalOrder) => `${record.storeName || '-'} / ${record.storeSkuDisplayName || '-'}` }]
               : [{ title: '商品', width: 180, render: (_: unknown, record: ExternalRentalOrder) => `${record.storeSkuDisplayName || '-'} / ${record.packageName || '-'}` }]),
@@ -832,45 +899,67 @@ export function ExternalOrderManagement({ account, scope, storeId }: Props) {
             { title: '预计归还', dataIndex: 'expectedReturnAt', width: 170, render: dateText },
             {
               title: '操作',
-              width: 660,
-              fixed: 'right',
+              width: 250,
+              fixed: useFixedTableColumns ? 'right' : undefined,
               render: (_, record) => (
-                <Space>
-                  <Button size="small" onClick={() => openDetail(record)}>详情</Button>
-                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>编辑</Button>
-                  {record.orderStatus === 'ACTIVE' ? (
-                    <>
-                      <Button size="small" icon={<DollarOutlined />} onClick={() => openPricing(record)}>续租调价</Button>
-                      <Button size="small" type="primary" ghost onClick={() => openManualRenewal(record)}>人工续租</Button>
-                      {canOperate ? <Button size="small" icon={<SwapOutlined />} onClick={() => setReplacementOrder(record)}>更换资产</Button> : null}
-                      <Button size="small" onClick={() => openComplete(record)}>完结</Button>
-                      <Button size="small" danger onClick={() => openTerminate(record)}>提前终止</Button>
-                    </>
-                  ) : null}
-                  <Popconfirm
-                    title="确认删除补录订单？"
-                    description="删除会撤销未结算收益，并释放进行中订单占用的资产；已进入月结单或收益已结算的订单不能删除。"
-                    okText="删除"
-                    cancelText="取消"
-                    okButtonProps={{ danger: true }}
-                    onConfirm={() => deleteOrder(record)}
-                  >
-                    <Button
-                      size="small"
-                      danger
-                      icon={<DeleteOutlined />}
-                      loading={deletingOrderId === record.id}
-                    >
-                      删除
+                <Space size={4}>
+                  <Button size="small" type="link" onClick={() => openDetail(record)}>详情</Button>
+                  {record.orderStatus === 'ACTIVE' && canOperate ? (
+                    <Button size="small" type="primary" ghost icon={<SwapOutlined />} onClick={() => setReplacementOrder(record)}>
+                      更换资产
                     </Button>
-                  </Popconfirm>
+                  ) : null}
+                  <Dropdown
+                    trigger={['click']}
+                    menu={{
+                      items: moreActionItems(record),
+                      onClick: ({ key }) => handleMoreAction(key, record)
+                    }}
+                  >
+                    <Button size="small" type="link" icon={<MoreOutlined />}>更多</Button>
+                  </Dropdown>
                 </Space>
               )
             }
           ]}
-          scroll={{ x: 2300 }}
+          scroll={{ x: 2500 }}
         />
       </div>
+
+      <Modal
+        title="确认删除补录订单？"
+        open={Boolean(deleteOrderTarget)}
+        onCancel={() => {
+          if (!deletingCurrentOrder) {
+            setDeleteOrderTarget(null);
+          }
+        }}
+        onOk={() => deleteOrderTarget ? deleteOrder(deleteOrderTarget) : undefined}
+        confirmLoading={deletingCurrentOrder}
+        okText="删除"
+        cancelText="取消"
+        okButtonProps={{ danger: true }}
+        cancelButtonProps={{ disabled: deletingCurrentOrder }}
+        closable={!deletingCurrentOrder}
+        keyboard={!deletingCurrentOrder}
+        maskClosable={!deletingCurrentOrder}
+        destroyOnHidden
+      >
+        {deleteOrderTarget ? (
+          <Descriptions size="small" column={1} bordered>
+            <Descriptions.Item label="台账号">{deleteOrderTarget.recordNo}</Descriptions.Item>
+            <Descriptions.Item label="客户">
+              {deleteOrderTarget.customerName || '-'} / {deleteOrderTarget.customerPhone || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="绑定资产">
+              {[deleteOrderTarget.frameAssetSerialNo, deleteOrderTarget.batteryAssetSerialNo].filter(Boolean).join(' / ') || '-'}
+            </Descriptions.Item>
+          </Descriptions>
+        ) : null}
+        <Typography.Paragraph>
+          删除会撤销未结算收益，并释放进行中订单占用的资产；已进入月结单或收益已结算的订单不能删除。
+        </Typography.Paragraph>
+      </Modal>
 
       <Modal
         title={editingOrder ? '编辑补录订单' : '新建补录订单'}

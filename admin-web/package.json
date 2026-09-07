@@ -9,6 +9,7 @@
     "test:dayjs-dedupe": "node scripts/assert-single-dayjs-runtime.mjs",
     "test:store-revenue": "node --test --experimental-strip-types scripts/store-revenue.test.mts",
     "test:battery-payable": "node --test --experimental-strip-types scripts/battery-payable.test.mts",
+    "test:external-order-table": "node --test --experimental-strip-types scripts/external-order-table.test.mts",
     "test:store-product-publishing": "node --test --experimental-strip-types scripts/store-product-publishing.test.mts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
