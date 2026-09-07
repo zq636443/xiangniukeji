@@ -54,7 +54,7 @@ test('buildDefaultPackagePrices derives the complete publishing defaults from th
     autoRenewEnabled: true,
     renewalUnit: 'DAY',
     renewalValue: 2,
-    renewalAmount: 50,
+    renewalAmount: 100,
     renewalBillingMode: 'PERIOD',
     renewalDailyCapEnabled: true,
     renewalGraceHours: 0
@@ -62,7 +62,7 @@ test('buildDefaultPackagePrices derives the complete publishing defaults from th
 
   const [rounded] = buildDefaultPackagePrices(100, [packageTemplate({ priceAmount: 100, totalPeriods: 3 })]);
   assert.equal(rounded.periodAmount, 33.33);
-  assert.equal(rounded.renewalAmount, 33.33);
+  assert.equal(rounded.renewalAmount, 100);
 });
 
 test('buildDefaultPackagePrices rounds positive amounts HALF_UP from integer cents', () => {
@@ -72,18 +72,18 @@ test('buildDefaultPackagePrices rounds positive amounts HALF_UP from integer cen
   ]);
 
   assert.deepEqual(result.map((item) => item.periodAmount), [1.01, 5.03]);
-  assert.deepEqual(result.map((item) => item.renewalAmount), [1.01, 5.03]);
+  assert.deepEqual(result.map((item) => item.renewalAmount), [2.01, 10.05]);
 });
 
-test('buildDefaultPackagePrices disables auto-renew when the default period amount is zero', () => {
+test('buildDefaultPackagePrices uses the first-month amount to decide the auto-renew default', () => {
   const result = buildDefaultPackagePrices(100, [
     packageTemplate({ id: 41, priceAmount: 0, totalPeriods: 2 }),
     packageTemplate({ id: 42, priceAmount: 0.01, totalPeriods: 3 })
   ]);
 
   assert.deepEqual(result.map((item) => item.periodAmount), [0, 0]);
-  assert.deepEqual(result.map((item) => item.autoRenewEnabled), [false, false]);
-  assert.deepEqual(result.map((item) => item.renewalAmount), [0, 0]);
+  assert.deepEqual(result.map((item) => item.autoRenewEnabled), [false, true]);
+  assert.deepEqual(result.map((item) => item.renewalAmount), [0, 0.01]);
 });
 
 test('reconcilePackagePrices removes deselected SKUs, preserves selected custom values, and defaults new SKUs', () => {
@@ -134,7 +134,7 @@ test('reconcilePackagePrices removes deselected SKUs, preserves selected custom 
     autoRenewEnabled: true,
     renewalUnit: 'DAY',
     renewalValue: 1,
-    renewalAmount: 33,
+    renewalAmount: 99,
     renewalBillingMode: 'PERIOD',
     renewalDailyCapEnabled: true,
     renewalGraceHours: 0

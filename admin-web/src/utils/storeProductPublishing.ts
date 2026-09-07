@@ -39,10 +39,10 @@ function buildDefaultPackagePrice(template: PackageTemplate): StorePackagePriceF
     rentalAmount,
     periodAmount,
     depositAmount: 0,
-    autoRenewEnabled: periodAmount > 0,
+    autoRenewEnabled: rentalAmount > 0,
     renewalUnit: template.leaseUnit,
     renewalValue: Math.max(1, Math.floor(Number(template.leaseValue || 0) / totalPeriods)),
-    renewalAmount: periodAmount,
+    renewalAmount: rentalAmount,
     renewalBillingMode: 'PERIOD',
     renewalDailyCapEnabled: true,
     renewalGraceHours: 0

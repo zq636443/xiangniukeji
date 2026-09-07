@@ -159,10 +159,10 @@ class DailyBatteryCostV66MigrationTests {
               AND source_id = ?
               AND line_type = 'STORE_OPERATION_SHARE'
             """, ORDER_ID);
-        // V67/V68 may already be present when this historical migration test
+        // Later migrations may already be present when this historical test
         // runs against the current migration set. Remove all later history
-        // rows before replaying V66; both schema migrations are idempotent.
-        update("DELETE FROM flyway_schema_history WHERE version IN ('66', '67', '68')");
+        // rows before replaying V66; every later migration is retry-safe.
+        update("DELETE FROM flyway_schema_history WHERE version IN ('66', '67', '68', '69')");
         flyway(null).migrate();
 
         assertThat(singleLong("""

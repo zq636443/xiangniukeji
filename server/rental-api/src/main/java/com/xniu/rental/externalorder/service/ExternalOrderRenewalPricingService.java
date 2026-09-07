@@ -92,6 +92,12 @@ public class ExternalOrderRenewalPricingService {
             throw BusinessException.badRequest("当前调价记录不能确认生效");
         }
         ensureActive(order);
+        /* A pending proposal is an optimistic comparison against the rule it
+         * displayed to the operator/customer.  Never let an old proposal
+         * overwrite a newer system baseline or another applied adjustment. */
+        if (!sameRule(fromOrder(order), revision.previousRule())) {
+            throw BusinessException.conflict("当前续租规则已变化，请取消旧提案后重新提交");
+        }
         var method = normalizeConfirmationMethod(request.confirmationMethod());
         var reference = requireConfirmationReference(request.confirmationReference());
         var confirmedAt = request.customerConfirmedAt() == null ? LocalDateTime.now() : request.customerConfirmedAt();

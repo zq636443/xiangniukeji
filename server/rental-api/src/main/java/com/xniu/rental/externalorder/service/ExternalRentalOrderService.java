@@ -756,11 +756,11 @@ public class ExternalRentalOrderService {
         var packageTemplate = ensureStoreSkuPackage(storeSku, request.packageId());
         var packagePricing = storeSkuPackageAmount(storeSku.id(), request.packageId());
         var leaseMultiplier = normalizeLeaseMultiplier(request.leaseMultiplier());
-        // Older store-SKU rows may have a null renewal amount; the product
-        // service treats the period amount as the compatible system fallback.
-        var systemRenewalAmount = packagePricing.renewalAmount() == null
-            ? packagePricing.periodAmount()
-            : packagePricing.renewalAmount();
+        // Freeze the product's first-period price as this order's automatic
+        // renewal baseline.  A manually entered verification amount or a
+        // manual renewal event is effective only through its own audited
+        // timeline and must not redefine the reusable system default.
+        var systemRenewalAmount = packagePricing.rentalAmount();
         validateRequestAssets(request.frameAssetId(), request.batteryAssetId(), sku);
         lockAssetRows(request.frameAssetId(), request.batteryAssetId());
         var expectedReturnAt = request.expectedReturnAt() == null

@@ -758,7 +758,10 @@ class ExternalRentalOrderIntegrationTests {
 
         assertThat(created.externalRentalAmount()).isEqualByComparingTo("129.00");
         assertThat(created.verificationAmount()).isEqualByComparingTo("96.00");
-        assertThat(created.renewalAmount()).isEqualByComparingTo("99.00");
+        // 129 is the product's first-month default.  The legacy 99 renewal
+        // field and the manually verified 96 must not redefine the system
+        // baseline frozen on a newly created supplemental order.
+        assertThat(created.renewalAmount()).isEqualByComparingTo("129.00");
     }
 
     @Test

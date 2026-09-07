@@ -6,13 +6,17 @@ import com.xniu.rental.common.BusinessException;
 import com.xniu.rental.externalorder.dto.ExternalOrderManualRenewalRequest;
 import com.xniu.rental.externalorder.dto.ExternalOrderRenewalResponse;
 import com.xniu.rental.externalorder.model.ExternalOrderOperationType;
+import com.xniu.rental.externalorder.model.ExternalOrderRenewalEvent;
 import com.xniu.rental.externalorder.model.ExternalOrderRenewalSource;
 import com.xniu.rental.externalorder.model.ExternalRentalOrderStatus;
 import com.xniu.rental.externalorder.repository.ExternalOrderRenewalRepository;
 import com.xniu.rental.externalorder.repository.ExternalRentalOrderRepository;
 import com.xniu.rental.product.repository.ProductRepository;
+import com.xniu.rental.settlement.model.IncomeEntryStatus;
+import com.xniu.rental.settlement.model.IncomeSourceType;
 import com.xniu.rental.settlement.model.SettlementCalculationVersion;
 import com.xniu.rental.settlement.model.SnapshotSourceType;
+import com.xniu.rental.settlement.repository.SettlementIncomeRepository;
 import com.xniu.rental.settlement.repository.SettlementRepository;
 import com.xniu.rental.settlement.repository.SettlementStatementRepository;
 import com.xniu.rental.settlement.service.BatteryCostCalculator;
@@ -24,6 +28,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashSet;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +44,7 @@ public class ExternalOrderManualRenewalService {
     private final SettlementRepository settlementRepository;
     private final SettlementService settlementService;
     private final SettlementIncomeService settlementIncomeService;
+    private final SettlementIncomeRepository settlementIncomeRepository;
     private final SettlementStatementRepository settlementStatementRepository;
     private final SettlementStatementService settlementStatementService;
     private final AuthorizationService authorizationService;
@@ -51,6 +57,7 @@ public class ExternalOrderManualRenewalService {
         SettlementRepository settlementRepository,
         SettlementService settlementService,
         SettlementIncomeService settlementIncomeService,
+        SettlementIncomeRepository settlementIncomeRepository,
         SettlementStatementRepository settlementStatementRepository,
         SettlementStatementService settlementStatementService,
         AuthorizationService authorizationService,
@@ -62,6 +69,7 @@ public class ExternalOrderManualRenewalService {
         this.settlementRepository = settlementRepository;
         this.settlementService = settlementService;
         this.settlementIncomeService = settlementIncomeService;
+        this.settlementIncomeRepository = settlementIncomeRepository;
         this.settlementStatementRepository = settlementStatementRepository;
         this.settlementStatementService = settlementStatementService;
         this.authorizationService = authorizationService;
@@ -83,33 +91,101 @@ public class ExternalOrderManualRenewalService {
         if (request == null || request.periodEndAt() == null) {
             throw BusinessException.badRequest("请输入本次续租结束时间");
         }
-        if (request.expectedPeriodStartAt() == null
-            || !order.expectedReturnAt().withNano(0).equals(request.expectedPeriodStartAt().withNano(0))) {
-            throw BusinessException.badRequest("订单续租起点已变化，请刷新订单后重新确认租期和核销金额");
+        if (request.expectedPeriodStartAt() == null) {
+            throw BusinessException.badRequest("续租起点已失效，请刷新订单后重试");
         }
-        var periodStartAt = order.expectedReturnAt();
+        var requestedPeriodStartAt = request.expectedPeriodStartAt().withNano(0);
         var periodEndAt = request.periodEndAt().withNano(0);
-        if (!periodEndAt.isAfter(periodStartAt)) {
-            throw BusinessException.badRequest("本次续租结束时间必须晚于当前预计归还时间");
+        if (!periodEndAt.isAfter(requestedPeriodStartAt)) {
+            throw BusinessException.badRequest("本次续租结束时间必须晚于续租起点");
         }
         var renewalAmount = money(request.verificationAmount());
         if (renewalAmount == null || renewalAmount.signum() <= 0) {
             throw BusinessException.badRequest("本次续租毛额必须大于 0");
         }
         var remark = normalizeRemark(request.remark());
-        var statementMonth = periodStartAt.format(STATEMENT_MONTH_FORMAT);
-        settlementStatementRepository.lockStatementsByMonthForUpdate(statementMonth);
-        if (settlementStatementRepository.hasLockedStatementsForUpdate(statementMonth)) {
-            throw BusinessException.badRequest("本次续租起点所在月份已锁定，不能直接补记；请通过结算调整单处理");
+
+        var replacingSystemEvent = !sameSecond(order.expectedReturnAt(), requestedPeriodStartAt);
+        ExternalOrderRenewalEvent systemEvent = null;
+        var affectedStatementMonths = new LinkedHashSet<String>();
+        affectedStatementMonths.add(requestedPeriodStartAt.format(STATEMENT_MONTH_FORMAT));
+        if (replacingSystemEvent) {
+            var effectiveEvents = renewalRepository.listByExternalOrder(order.id()).stream()
+                .filter(event -> "ACCRUED".equals(event.eventStatus()))
+                .filter(event -> event.periodEndAt().isAfter(requestedPeriodStartAt))
+                .toList();
+            if (effectiveEvents.size() != 1) {
+                throw staleStartConflict();
+            }
+            systemEvent = effectiveEvents.getFirst();
+            if (!isReplaceableSystemTail(order.expectedReturnAt(), requestedPeriodStartAt, systemEvent)) {
+                throw staleStartConflict();
+            }
+            affectedStatementMonths.addAll(settlementStatementRepository.listDraftStatementMonthsBySource(
+                SnapshotSourceType.EXTERNAL_RENEWAL.name(),
+                systemEvent.id()
+            ));
         }
-        var regenerateDraftStatement = settlementStatementRepository.hasDraftStatementsForUpdate(statementMonth);
-        var sourceSnapshot = order.settlementSnapshotId() == null
+
+        affectedStatementMonths.stream().sorted()
+            .forEach(settlementStatementRepository::lockStatementsByMonthForUpdate);
+        var draftStatementMonths = new LinkedHashSet<String>();
+        for (var statementMonth : affectedStatementMonths.stream().sorted().toList()) {
+            if (settlementStatementRepository.hasLockedStatementsForUpdate(statementMonth)) {
+                if (replacingSystemEvent) {
+                    throw BusinessException.conflict("系统自动续租已进入锁定月结，不能改为人工续租；请通过结算调整单处理");
+                }
+                throw BusinessException.badRequest("本次续租起点所在月份已锁定，不能直接补记；请通过结算调整单处理");
+            }
+            if (settlementStatementRepository.hasDraftStatementsForUpdate(statementMonth)) {
+                draftStatementMonths.add(statementMonth);
+            }
+        }
+
+        if (replacingSystemEvent) {
+            var lockedEvents = renewalRepository.listEffectiveAfterForUpdate(order.id(), requestedPeriodStartAt);
+            if (lockedEvents.size() != 1
+                || !lockedEvents.getFirst().id().equals(systemEvent.id())
+                || !isReplaceableSystemTail(order.expectedReturnAt(), requestedPeriodStartAt, lockedEvents.getFirst())) {
+                throw staleStartConflict();
+            }
+            systemEvent = lockedEvents.getFirst();
+            if (renewalRepository.hasLockedStatementLinesByEventForUpdate(systemEvent.id())) {
+                throw BusinessException.conflict("系统自动续租已进入锁定月结，不能改为人工续租");
+            }
+            var incomeEntries = settlementIncomeRepository.listBySourceForUpdate(
+                IncomeSourceType.EXTERNAL_RENEWAL,
+                systemEvent.id()
+            );
+            var systemSnapshotId = systemEvent.settlementSnapshotId();
+            if (incomeEntries.isEmpty()
+                || incomeEntries.stream().anyMatch(entry -> entry.entryStatus() != IncomeEntryStatus.PENDING)
+                || incomeEntries.stream().anyMatch(entry -> !systemSnapshotId.equals(entry.snapshotId()))) {
+                throw BusinessException.conflict("系统自动续租收益已锁定或不完整，不能改为人工续租");
+            }
+        } else if (!renewalRepository.listEffectiveAfterForUpdate(order.id(), requestedPeriodStartAt).isEmpty()) {
+            // The order row prevents the scheduler from adding a new period
+            // after this check. Any existing event at/following the current
+            // boundary is therefore conflicting legacy data, not a slot for
+            // a second manual fact.
+            throw BusinessException.conflict("该续租起点已存在续租记录，请刷新后核对");
+        }
+
+        var periodStartAt = replacingSystemEvent ? systemEvent.periodStartAt() : order.expectedReturnAt();
+        var sourceSnapshotId = replacingSystemEvent ? systemEvent.settlementSnapshotId() : order.settlementSnapshotId();
+        var sourceSnapshot = sourceSnapshotId == null
             ? null
-            : settlementRepository.findSnapshot(order.settlementSnapshotId()).orElse(null);
+            : settlementRepository.findSnapshot(sourceSnapshotId).orElse(null);
+        var expectedSnapshotType = replacingSystemEvent
+            ? SnapshotSourceType.EXTERNAL_RENEWAL
+            : SnapshotSourceType.EXTERNAL_ORDER;
+        var expectedSnapshotSourceId = replacingSystemEvent ? systemEvent.id() : order.id();
         if (sourceSnapshot == null
-            || sourceSnapshot.sourceType() != SnapshotSourceType.EXTERNAL_ORDER
-            || !order.id().equals(sourceSnapshot.sourceId())) {
-            throw BusinessException.badRequest("补录订单原始分润快照不存在");
+            || sourceSnapshot.sourceType() != expectedSnapshotType
+            || !expectedSnapshotSourceId.equals(sourceSnapshot.sourceId())) {
+            throw BusinessException.badRequest(replacingSystemEvent
+                ? "系统自动续租分润快照不完整，不能改为人工续租"
+                : "补录订单原始分润快照不存在");
         }
         if (!sourceSnapshot.calculationVersion().usesProfitSharing()) {
             throw BusinessException.badRequest("补录订单分润快照不是当前分润口径，请先修复快照后再人工续租");
@@ -160,29 +236,60 @@ public class ExternalOrderManualRenewalService {
         }
 
         var operatorAccountId = currentAccountId();
-        var event = renewalRepository.create(
-            order.id(),
-            nextEventNo(),
-            renewalRepository.nextPeriodNo(order.id()),
-            periodStartAt,
-            periodEndAt,
-            renewalAmount,
-            order.renewalAmount() == null ? renewalAmount : money(order.renewalAmount()),
-            batteryCost,
-            ExternalOrderRenewalSource.MANUAL,
-            operatorAccountId,
-            remark
-        );
-        var snapshot = settlementService.createExternalRenewalSnapshot(
-            event.id(),
-            order.settlementSnapshotId(),
-            event.renewalAmount(),
-            event.batteryCostAmount(),
-            order.frameAssetId(),
-            order.batteryAssetId()
-        );
-        event = renewalRepository.attachSnapshot(event.id(), snapshot.id());
+        ExternalOrderRenewalEvent event;
+        com.xniu.rental.settlement.dto.SettlementSnapshotResponse snapshot;
+        if (replacingSystemEvent) {
+            snapshot = settlementService.rebuildExternalRenewalSnapshot(
+                systemEvent.id(),
+                systemEvent.settlementSnapshotId(),
+                renewalAmount,
+                batteryCost
+            );
+            var replaced = renewalRepository.replaceAccruedSystemWithManual(
+                systemEvent.id(),
+                order.id(),
+                systemEvent.settlementSnapshotId(),
+                systemEvent.periodStartAt(),
+                systemEvent.periodEndAt(),
+                periodEndAt,
+                renewalAmount,
+                batteryCost,
+                snapshot.id(),
+                operatorAccountId,
+                remark
+            );
+            if (replaced != 1) {
+                throw BusinessException.conflict("系统自动续租已变化，请刷新后重新提交人工续租");
+            }
+            event = renewalRepository.findById(systemEvent.id()).orElseThrow();
+        } else {
+            event = renewalRepository.create(
+                order.id(),
+                nextEventNo(),
+                renewalRepository.nextPeriodNo(order.id()),
+                periodStartAt,
+                periodEndAt,
+                renewalAmount,
+                order.renewalAmount() == null ? renewalAmount : money(order.renewalAmount()),
+                batteryCost,
+                ExternalOrderRenewalSource.MANUAL,
+                operatorAccountId,
+                remark
+            );
+            snapshot = settlementService.createExternalRenewalSnapshot(
+                event.id(),
+                order.settlementSnapshotId(),
+                event.renewalAmount(),
+                event.batteryCostAmount(),
+                order.frameAssetId(),
+                order.batteryAssetId()
+            );
+            event = renewalRepository.attachSnapshot(event.id(), snapshot.id());
+        }
         var investorAllocations = renewalAllocationService.freezeCurrentAssets(event, snapshot.id());
+        if (replacingSystemEvent) {
+            settlementIncomeRepository.deleteBySource(IncomeSourceType.EXTERNAL_RENEWAL, event.id());
+        }
         settlementIncomeService.createExternalRenewalEntries(
             event.id(),
             event.eventNo(),
@@ -198,12 +305,37 @@ public class ExternalOrderManualRenewalService {
             order.orderStatus(),
             ExternalOrderOperationType.MANUAL_RENEW,
             operatorAccountId,
-            "人工续租至 " + periodEndAt + "；本次核销毛额 " + renewalAmount
+            replacingSystemEvent
+                ? "人工续租已替换同起点系统自动续租；原结束时间 " + systemEvent.periodEndAt()
+                    + "；原系统毛额 " + systemEvent.renewalAmount()
+                    + "；人工续租至 " + periodEndAt + "；本次核销毛额 " + renewalAmount
+                : "人工续租至 " + periodEndAt + "；本次核销毛额 " + renewalAmount
         );
-        if (regenerateDraftStatement) {
+        for (var statementMonth : draftStatementMonths) {
             settlementStatementService.regenerateUnlockedMonthAlreadyLocked(statementMonth);
         }
         return toResponse(order, event);
+    }
+
+    private boolean isReplaceableSystemTail(
+        LocalDateTime currentExpectedReturnAt,
+        LocalDateTime requestedPeriodStartAt,
+        ExternalOrderRenewalEvent event
+    ) {
+        return event != null
+            && "ACCRUED".equals(event.eventStatus())
+            && event.renewalSource() == ExternalOrderRenewalSource.SYSTEM
+            && event.settlementSnapshotId() != null
+            && sameSecond(event.periodStartAt(), requestedPeriodStartAt)
+            && sameSecond(event.periodEndAt(), currentExpectedReturnAt);
+    }
+
+    private boolean sameSecond(LocalDateTime left, LocalDateTime right) {
+        return left != null && right != null && left.withNano(0).equals(right.withNano(0));
+    }
+
+    private BusinessException staleStartConflict() {
+        return BusinessException.conflict("订单续租起点已变化，且不存在可安全替换的尾部系统续租；请刷新后核对");
     }
 
     private ExternalOrderRenewalResponse toResponse(

@@ -188,7 +188,12 @@ public class ProductRepository {
             SET package_name = ?, price_amount = ?, sign_fee_amount = ?, lease_unit = ?, lease_value = ?, total_periods = ?, bill_day_mode = ?, bill_day = ?
             WHERE id = ?
             """, name, priceAmount, signFeeAmount, unit.name(), leaseValue, totalPeriods, billDayMode.name(), billDay, id);
-        jdbcTemplate.update("UPDATE store_sku_package SET rental_amount = ? WHERE package_id = ?", priceAmount, id);
+        jdbcTemplate.update("""
+            UPDATE store_sku_package
+            SET rental_amount = ?,
+                renewal_amount = CASE WHEN auto_renew_enabled = 1 THEN ? ELSE renewal_amount END
+            WHERE package_id = ?
+            """, priceAmount, priceAmount, id);
         return findPackage(id).orElseThrow();
     }
 
@@ -362,6 +367,14 @@ public class ProductRepository {
 
     public List<StoreSkuPackage> listStoreSkuPackages(Long storeSkuId) {
         return jdbcTemplate.query("SELECT * FROM store_sku_package WHERE store_sku_id = ? ORDER BY id", storeSkuPackageMapper, storeSkuId);
+    }
+
+    public List<StoreSkuPackage> listStoreSkuPackagesByPackage(Long packageId) {
+        return jdbcTemplate.query(
+            "SELECT * FROM store_sku_package WHERE package_id = ? ORDER BY id",
+            storeSkuPackageMapper,
+            packageId
+        );
     }
 
     public record PackagePriceRow(

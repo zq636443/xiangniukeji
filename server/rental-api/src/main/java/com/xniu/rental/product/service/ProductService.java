@@ -185,6 +185,34 @@ public class ProductService {
         if (!existing.skuId().equals(request.skuId())) {
             throw BusinessException.badRequest("SKU 所属商品链接不可变更");
         }
+        /* The package price is the first-period/default renewal price for
+         * every published store SKU.  Validate dependent daily-capped rules
+         * before ProductRepository synchronizes their renewal amount: a cap
+         * below the configured full-period price would silently charge the
+         * daily subtotal instead of the newly saved default price. */
+        for (var packagePrice : productRepository.listStoreSkuPackagesByPackage(id)) {
+            if (!Boolean.TRUE.equals(packagePrice.autoRenewEnabled())) {
+                continue;
+            }
+            var firstPeriodAmount = normalizeMoney(request.priceAmount());
+            if (firstPeriodAmount.signum() <= 0) {
+                throw BusinessException.badRequest("已开启自动续租的门店 SKU 首月默认金额必须大于 0");
+            }
+            validateDailyRenewalRule(
+                packagePrice.renewalBillingMode(),
+                packagePrice.renewalDailyAmount(),
+                packagePrice.renewalDailyCapEnabled(),
+                packagePrice.renewalGraceHours(),
+                packagePrice.overdueDailyAmount(),
+                packagePrice.renewalUnit() == null
+                    ? parseLeaseUnit(request.leaseUnit())
+                    : packagePrice.renewalUnit(),
+                packagePrice.renewalValue() == null
+                    ? Math.max(1, request.leaseValue() / Math.max(request.totalPeriods(), 1))
+                    : packagePrice.renewalValue(),
+                firstPeriodAmount
+            );
+        }
         return toResponse(productRepository.updatePackage(
             id,
             request.packageName(),
@@ -414,7 +442,11 @@ public class ProductService {
                 ? template.leaseUnit()
                 : parseLeaseUnit(item.renewalUnit());
             var renewalValue = item.renewalValue() == null ? defaultRenewalValue(template) : item.renewalValue();
-            var renewalAmount = item.renewalAmount() == null ? item.periodAmount() : item.renewalAmount();
+            // The system default renewal price is always the product's
+            // first-period price.  Renewal amounts entered by an operator
+            // belong to the order-level manual renewal workflow instead of
+            // the reusable product configuration.
+            var renewalAmount = template.priceAmount();
             var renewalBillingMode = parseRenewalBillingMode(item.renewalBillingMode());
             if (renewalUnit == null || renewalValue <= 0) {
                 throw BusinessException.badRequest("自动续租周期必须大于 0");
@@ -479,7 +511,7 @@ public class ProductService {
                     ? (item.renewalValue() == null ? defaultRenewalValue(template) : item.renewalValue())
                     : null;
                 var renewalAmount = autoRenewEnabled
-                    ? normalizeMoney(item.renewalAmount() == null ? item.periodAmount() : item.renewalAmount())
+                    ? normalizeMoney(template.priceAmount())
                     : null;
                 var renewalBillingMode = autoRenewEnabled ? parseRenewalBillingMode(item.renewalBillingMode()) : RenewalBillingMode.PERIOD;
                 var renewalDailyAmount = autoRenewEnabled && renewalBillingMode == RenewalBillingMode.DAILY_CAPPED

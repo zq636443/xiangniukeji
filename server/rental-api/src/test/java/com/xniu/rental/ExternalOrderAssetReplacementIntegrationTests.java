@@ -97,6 +97,7 @@ class ExternalOrderAssetReplacementIntegrationTests {
             SET auto_renew_enabled = 1,
                 renewal_unit = 'DAY',
                 renewal_value = 30,
+                rental_amount = 400.00,
                 renewal_amount = 400.00,
                 renewal_billing_mode = 'PERIOD'
             WHERE store_sku_id = 2 AND package_id = 4

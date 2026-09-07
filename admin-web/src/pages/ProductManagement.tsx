@@ -445,7 +445,7 @@ export function ProductManagement({ mode = 'all' }: ProductManagementProps) {
         autoRenewEnabled: item.autoRenewEnabled,
         renewalUnit: item.renewalUnit ?? defaultPricesByPackageId.get(item.packageId)?.renewalUnit ?? item.leaseUnit,
         renewalValue: item.renewalValue ?? defaultPricesByPackageId.get(item.packageId)?.renewalValue ?? 1,
-        renewalAmount: item.renewalAmount ?? defaultPricesByPackageId.get(item.packageId)?.renewalAmount ?? item.periodAmount,
+        renewalAmount: item.rentalAmount,
         renewalBillingMode: item.renewalBillingMode ?? defaultPricesByPackageId.get(item.packageId)?.renewalBillingMode ?? 'PERIOD',
         renewalDailyAmount: item.renewalDailyAmount ?? undefined,
         renewalDailyCapEnabled: item.renewalDailyCapEnabled ?? defaultPricesByPackageId.get(item.packageId)?.renewalDailyCapEnabled ?? true,
@@ -1048,16 +1048,7 @@ function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFiel
                       label="分期金额"
                       rules={[{ required: true, message: '请输入每期金额' }]}
                     >
-                      <InputNumber
-                        min={0}
-                        style={{ width: '100%' }}
-                        onChange={(value) => {
-                          const renewalAmount = form.getFieldValue(['packages', field.name, 'renewalAmount']);
-                          if (renewalAmount == null) {
-                            form.setFieldValue(['packages', field.name, 'renewalAmount'], Number(value ?? 0));
-                          }
-                        }}
-                      />
+                      <InputNumber min={0} style={{ width: '100%' }} />
                     </Form.Item>
                     <Form.Item
                       style={{ width: '33%' }}
@@ -1091,11 +1082,12 @@ function StoreSkuFields({ packageOptions, packageTemplates, form }: StoreSkuFiel
                     <Form.Item
                       style={{ width: '40%' }}
                       name={[field.name, 'renewalAmount']}
-                      label="续租金额"
+                      label="自动续租金额（同首月）"
+                      extra="固定跟随 SKU 首月默认金额；单笔实际金额和租期请在补录订单中使用“人工续租”。"
                       dependencies={[['packages', field.name, 'autoRenewEnabled']]}
                       rules={[packagePriceValidationRule(field.name, 'renewalAmount')]}
                     >
-                      <InputNumber min={0.01} precision={2} style={{ width: '100%' }} />
+                      <InputNumber min={0.01} precision={2} disabled style={{ width: '100%' }} />
                     </Form.Item>
                   </Space.Compact>
                   <Space.Compact block>

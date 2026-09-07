@@ -140,6 +140,9 @@ class ProductLinkSkuIntegrationTests {
         assertThat(published.packages())
             .extracting(item -> item.rentalAmount())
             .containsExactlyInAnyOrder(new BigDecimal("399.00"), new BigDecimal("999.00"));
+        assertThat(published.packages())
+            .extracting(item -> item.renewalAmount())
+            .containsExactlyInAnyOrder(new BigDecimal("399.00"), new BigDecimal("999.00"));
 
         var updatedMonthlySku = productService.updatePackage(monthlySku.id(), new PackageRequest(
             link.id(),
@@ -159,6 +162,11 @@ class ProductLinkSkuIntegrationTests {
             .findFirst()
             .orElseThrow()
             .rentalAmount()).isEqualByComparingTo("459.00");
+        assertThat(refreshed.packages().stream()
+            .filter(item -> item.packageId().equals(monthlySku.id()))
+            .findFirst()
+            .orElseThrow()
+            .renewalAmount()).isEqualByComparingTo("459.00");
 
         assertThatThrownBy(() -> productService.publishStoreSku(new StoreSkuRequest(
             1L,

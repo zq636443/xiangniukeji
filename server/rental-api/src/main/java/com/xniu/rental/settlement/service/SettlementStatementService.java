@@ -430,6 +430,7 @@ public class SettlementStatementService {
                 throw BusinessException.badRequest("补录订单 " + renewal.recordNo() + " 的续租分润快照不存在或不匹配");
             }
             var settlementBase = money(renewal.renewalAmount());
+            var renewalLabel = "MANUAL".equals(renewal.renewalSource()) ? "人工续租" : "自动续租";
             if (snapshot.batteryCostAmount().signum() > 0) {
                 merchantDraft(merchantDrafts, renewal.merchantId(), renewal.storeId()).register(
                     new LineDraft(
@@ -457,7 +458,7 @@ public class SettlementStatementService {
                         renewal.merchantId(), renewal.storeId(), 0L,
                         SettlementStatementLineType.MERCHANT_RENT_SHARE,
                         merchantShare, renewal.periodStartAt(),
-                        "补录订单 " + renewal.recordNo() + " 自动续租门店运营分润"
+                        "补录订单 " + renewal.recordNo() + " " + renewalLabel + "门店运营分润"
                     ),
                     snapshot.batteryCostAmount().signum() > 0 ? BigDecimal.ZERO : settlementBase
                 );
@@ -469,7 +470,7 @@ public class SettlementStatementService {
                         renewal.merchantId(), renewal.storeId(), 0L,
                         SettlementStatementLineType.MERCHANT_MAINTENANCE_SHARE,
                         snapshot.maintenanceFundAmount(), renewal.periodStartAt(),
-                        "补录订单 " + renewal.recordNo() + " 自动续租门店维修分润"
+                        "补录订单 " + renewal.recordNo() + " " + renewalLabel + "门店维修分润"
                     ),
                     BigDecimal.ZERO
                 );
@@ -484,7 +485,7 @@ public class SettlementStatementService {
                         renewal.merchantId(), renewal.storeId(), allocation.investorId(),
                         SettlementStatementLineType.INVESTOR_GROSS_RENT,
                         allocation.grossRentAmount(), renewal.periodStartAt(),
-                        "补录订单 " + renewal.recordNo() + " 自动续租出资方分润"
+                        "补录订单 " + renewal.recordNo() + " " + renewalLabel + "出资方分润"
                     ),
                     allocation.rentBaseAmount()
                 );

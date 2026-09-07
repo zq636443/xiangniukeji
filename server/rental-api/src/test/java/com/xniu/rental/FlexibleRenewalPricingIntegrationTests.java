@@ -23,6 +23,7 @@ import com.xniu.rental.order.service.OrderRenewalService;
 import com.xniu.rental.order.service.OrderService;
 import com.xniu.rental.pricing.dto.RenewalPricingRuleRequest;
 import com.xniu.rental.pricing.service.OrderRenewalPricingService;
+import com.xniu.rental.product.dto.PackageRequest;
 import com.xniu.rental.product.dto.StoreSkuPackageRequest;
 import com.xniu.rental.product.dto.StoreSkuRequest;
 import com.xniu.rental.product.service.ProductService;
@@ -114,7 +115,9 @@ class FlexibleRenewalPricingIntegrationTests {
         var validPackages = invalidPackages.stream().map(item -> item.packageId().equals(2L)
             ? new StoreSkuPackageRequest(
                 item.packageId(), item.rentalAmount(), item.periodAmount(), item.depositAmount(), true,
-                "MONTH", 1, new BigDecimal("129.00"), "DAILY_CAPPED", new BigDecimal("5.00"),
+                // The submitted 129 is deliberately ignored: the reusable
+                // automatic-renewal default must follow the 399 first price.
+                "MONTH", 1, new BigDecimal("129.00"), "DAILY_CAPPED", new BigDecimal("14.00"),
                 true, 12, new BigDecimal("7.00")
             )
             : item).toList();
@@ -123,11 +126,50 @@ class FlexibleRenewalPricingIntegrationTests {
         var order = createOrder();
 
         assertThat(order.renewalBillingMode()).isEqualTo("DAILY_CAPPED");
-        assertThat(order.renewalAmount()).isEqualByComparingTo("129.00");
-        assertThat(order.renewalDailyAmount()).isEqualByComparingTo("5.00");
+        assertThat(order.renewalAmount()).isEqualByComparingTo("399.00");
+        assertThat(order.renewalDailyAmount()).isEqualByComparingTo("14.00");
         assertThat(order.overdueDailyAmount()).isEqualByComparingTo("7.00");
         assertThat(order.renewalGraceHours()).isEqualTo(12);
         assertThat(order.renewalDailyCapEnabled()).isTrue();
+    }
+
+    @Test
+    void packagePriceUpdateValidatesDailyCapBeforeSynchronizingAutomaticRenewalAmount() {
+        configureDailySku(true, "14.00", "7.00", 0);
+        var packageItem = productService.listPackages(1L).stream()
+            .filter(item -> item.id().equals(2L))
+            .findFirst()
+            .orElseThrow();
+
+        assertThatThrownBy(() -> productService.updatePackage(2L, new PackageRequest(
+            packageItem.skuId(), packageItem.packageName(), BigDecimal.ZERO,
+            packageItem.signFeeAmount(), packageItem.leaseUnit(), packageItem.leaseValue(),
+            packageItem.totalPeriods(), packageItem.billDayMode(), packageItem.billDay()
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("首月默认金额必须大于 0");
+
+        assertThatThrownBy(() -> productService.updatePackage(2L, new PackageRequest(
+            packageItem.skuId(), packageItem.packageName(), new BigDecimal("421.00"),
+            packageItem.signFeeAmount(), packageItem.leaseUnit(), packageItem.leaseValue(),
+            packageItem.totalPeriods(), packageItem.billDayMode(), packageItem.billDay()
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("日租累计整期金额不能低于整期续租价");
+
+        var updated = productService.updatePackage(2L, new PackageRequest(
+            packageItem.skuId(), packageItem.packageName(), new BigDecimal("420.00"),
+            packageItem.signFeeAmount(), packageItem.leaseUnit(), packageItem.leaseValue(),
+            packageItem.totalPeriods(), packageItem.billDayMode(), packageItem.billDay()
+        ));
+        assertThat(updated.priceAmount()).isEqualByComparingTo("420.00");
+        var amounts = jdbcTemplate.queryForMap("""
+            SELECT rental_amount, renewal_amount
+            FROM store_sku_package
+            WHERE store_sku_id = 1 AND package_id = 2
+            """);
+        assertThat((BigDecimal) amounts.get("rental_amount")).isEqualByComparingTo("420.00");
+        assertThat((BigDecimal) amounts.get("renewal_amount")).isEqualByComparingTo("420.00");
     }
 
     @Test

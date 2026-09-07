@@ -145,6 +145,52 @@ public class ExternalOrderRenewalRepository {
         return findById(id).orElseThrow();
     }
 
+    /** Replace a just-accrued mutable system period in place so the unique
+     * period/start keys continue to prevent duplicate renewal facts. */
+    public int replaceAccruedSystemWithManual(
+        Long id,
+        Long externalOrderId,
+        Long previousSnapshotId,
+        LocalDateTime previousPeriodStartAt,
+        LocalDateTime previousPeriodEndAt,
+        LocalDateTime periodEndAt,
+        java.math.BigDecimal renewalAmount,
+        java.math.BigDecimal batteryCostAmount,
+        Long replacementSnapshotId,
+        Long operatorAccountId,
+        String remark
+    ) {
+        return jdbcTemplate.update("""
+            UPDATE external_order_renewal_event
+            SET period_end_at = ?,
+                renewal_amount = ?,
+                battery_cost_amount = ?,
+                settlement_snapshot_id = ?,
+                renewal_source = 'MANUAL',
+                operator_account_id = ?,
+                remark = ?
+            WHERE id = ?
+              AND external_order_id = ?
+              AND event_status = 'ACCRUED'
+              AND renewal_source = 'SYSTEM'
+              AND settlement_snapshot_id = ?
+              AND period_start_at = ?
+              AND period_end_at = ?
+            """,
+            periodEndAt,
+            renewalAmount,
+            batteryCostAmount,
+            replacementSnapshotId,
+            operatorAccountId,
+            remark,
+            id,
+            externalOrderId,
+            previousSnapshotId,
+            previousPeriodStartAt,
+            previousPeriodEndAt
+        );
+    }
+
     public List<ExternalOrderRenewalEvent> listByExternalOrder(Long externalOrderId) {
         return jdbcTemplate.query("""
             SELECT *

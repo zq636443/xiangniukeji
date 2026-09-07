@@ -53,7 +53,7 @@ class ExternalOrderFlexibleRenewalPricingIntegrationTests {
                 auto_renew_enabled = 1,
                 renewal_unit = 'MONTH',
                 renewal_value = 1,
-                renewal_amount = 129.00,
+                renewal_amount = 99.00,
                 renewal_billing_mode = 'DAILY_CAPPED',
                 renewal_daily_amount = 5.00,
                 renewal_daily_cap_enabled = 1,
@@ -130,6 +130,31 @@ class ExternalOrderFlexibleRenewalPricingIntegrationTests {
         assertThat(appliedOrder.logs()).extracting("operationType")
             .contains("RENEWAL_PRICING_ADJUSTMENT");
         assertThat(pricingService.list(order.id())).hasSize(2);
+    }
+
+    @Test
+    void stalePendingAdjustmentCannotOverwriteCurrentSystemRule() {
+        var order = createOrder("OFFLINE", "旧提案并发校验", LocalDateTime.of(2026, 7, 2, 10, 0));
+        var pending = pricingService.adjust(order.id(), adjustment(
+            "139.00", "6.00", "8.00", false, "待确认涨价"
+        ));
+        assertThat(pending.revisionStatus()).isEqualTo("PENDING_CUSTOMER_CONFIRMATION");
+
+        // Simulate a newer system baseline/application write between proposal
+        // creation and customer confirmation.
+        jdbcTemplate.update(
+            "UPDATE external_rental_order SET renewal_amount = 159.00 WHERE id = ?",
+            order.id()
+        );
+
+        assertThatThrownBy(() -> pricingService.confirm(pending.id(), new ExternalOrderPricingConfirmRequest(
+            "WECHAT", "旧提案确认凭证", LocalDateTime.of(2026, 7, 2, 11, 0)
+        )))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("当前续租规则已变化");
+        assertThat(externalOrderService.getOrder(order.id()).renewalAmount()).isEqualByComparingTo("159.00");
+        assertThat(pricingService.list(order.id()).getFirst().revisionStatus())
+            .isEqualTo("PENDING_CUSTOMER_CONFIRMATION");
     }
 
     @Test

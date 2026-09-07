@@ -532,6 +532,7 @@ public class SettlementStatementRepository {
               r.external_order_id,
               r.period_start_at,
               r.renewal_amount,
+              r.renewal_source,
               r.settlement_snapshot_id,
               eo.record_no,
               eo.merchant_id,
@@ -552,6 +553,7 @@ public class SettlementStatementRepository {
             rs.getLong("merchant_id"),
             rs.getLong("store_id"),
             rs.getBigDecimal("renewal_amount"),
+            rs.getString("renewal_source"),
             rs.getLong("settlement_snapshot_id"),
             rs.getObject("period_start_at", LocalDateTime.class)
         ), startAt, endAt);
@@ -685,6 +687,7 @@ public class SettlementStatementRepository {
         Long merchantId,
         Long storeId,
         BigDecimal renewalAmount,
+        String renewalSource,
         Long settlementSnapshotId,
         LocalDateTime periodStartAt
     ) {
